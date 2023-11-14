@@ -36,34 +36,37 @@ def x1x2x3_to_ruv(x1, x2, x3):
     return r, u, v
 
 def ruv_to_x1x2dvphi(r, u, v):
-    # # 1
-    phi3 = np.arccos( (1 + (1+u*np.abs(v))**2 - u**2)/2/(1+u*np.abs(v)) )
+    x1, x2, x3 = (1+u*np.abs(v)), 1., u
+    phi3 = np.arccos( (x1**2+x2**2-x3**2)/2/x1/x2 )
     if v >= 0:
         dvphi = phi3 - np.pi
     else:
         dvphi = np.pi - phi3
-    x1 = r*(1+u*np.abs(v))
-    x2 = r
-
-    # 2
-    # phi3 = np.arccos( (1 + u**2 - (1+u*np.abs(v))**2)/2/u )
-    # if v >= 0:
-    #     dvphi = phi3 - np.pi
-    # else:
-    #     dvphi = np.pi - phi3
-    # x1 = r
-    # x2 = r*u
-
-    # 3
-    # phi3 = np.arccos( (u**2 + (1+u*np.abs(v))**2 - 1)/2/u/(1+u*np.abs(v)) )
-    # if v >= 0:
-    #     dvphi = phi3 - np.pi
-    # else:
-    #     dvphi = np.pi - phi3
-    # x1 = r*(1+u*np.abs(v))
-    # x2 = r*u
-
+    x1 *= r
+    x2 *= r
     return x1, x2, dvphi
+
+def ruv_to_x2x3dvphi(r, u, v):
+    x1, x2, x3 = (1+u*np.abs(v)), 1., u
+    phi1 = np.arccos( (x2**2+x3**2-x1**2)/2/x2/x3 )
+    if v >= 0:
+        dvphi = phi1 - np.pi
+    else:
+        dvphi = np.pi - phi1
+    x2 *= r
+    x3 *= r
+    return x2, x3, dvphi
+
+def ruv_to_x3x1dvphi(r, u, v):
+    x1, x2, x3 = (1+u*np.abs(v)), 1., u
+    phi2 = np.arccos( (x3**2+x1**2-x2**2)/2/x3/x1 )
+    if v >= 0:
+        dvphi = phi2 - np.pi
+    else:
+        dvphi = np.pi - phi2
+    x3 *= r
+    x1 *= r
+    return x3, x1, dvphi
 
 ##############
 

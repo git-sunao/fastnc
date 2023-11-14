@@ -142,6 +142,24 @@ class two_Bessel(object):
 	def __init__(self, x1, x2, fx1x2, nu1=1.01, nu2=1.01, N_extrap_low=0, N_extrap_high=0, c_window_width=0.25, N_pad=0):
 		self.two_sph = two_sph_bessel(x1, x2, (fx1x2.T * np.sqrt(x1)).T * np.sqrt(x2), nu1, nu2, N_extrap_low, N_extrap_high, c_window_width, N_pad)
 
+	def two_Bessel(self, ell1, ell2):
+		"""
+		Calculate F(y_1,y_2) = \int_0^\infty dx_1 / x_1 \int_0^\infty dx_2 / x_2 * f(x_1,x_2) * J_{\ell_1}(x_1y_1) * J_{\ell_2}(x_2y_2),
+		where J_\ell is the Bessel func of order ell.
+		array y is set as y[:] = 1/x[::-1]
+		"""
+		two_sph = self.two_sph
+
+		g1 = g_l(ell1-0.5,two_sph.z1)
+		g2 = g_l(ell2-0.5,two_sph.z2)
+
+		mat = np.conj((two_sph.c_mn*(two_sph.x20*two_sph.y20)**(-1j*two_sph.eta_n) * g2).T * (two_sph.x10*two_sph.y10)**(-1j*two_sph.eta_m) * g1).T
+		mat_right = mat[:,two_sph.N2//2:]
+		mat_adjust = np.vstack((mat_right[two_sph.N1//2:,:],mat_right[1:two_sph.N1//2,:]))
+		Fy1y2 = ((irfft2(mat_adjust) / 8./ two_sph.y2**(two_sph.nu2-0.5)).T / two_sph.y1**(two_sph.nu1-0.5)).T
+
+		return two_sph.y1[two_sph.N_extrap_high:two_sph.N1-two_sph.N_extrap_low], two_sph.y2[two_sph.N_extrap_high:two_sph.N2-two_sph.N_extrap_low], Fy1y2[two_sph.N_extrap_high:two_sph.N1-two_sph.N_extrap_low, two_sph.N_extrap_high:two_sph.N2-two_sph.N_extrap_low]
+
 	def two_Bessel_binave(self, ell1, ell2, binwidth_dlny1, binwidth_dlny2):
 		"""
 		Bin-averaging for 2D statistics: D = 2, alpha_pow = 2.5

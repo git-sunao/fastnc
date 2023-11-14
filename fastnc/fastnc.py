@@ -191,7 +191,7 @@ class NaturalComponentsCalcurator:
             if M != 0:
                 self.FMdata[i][-M] = FM.T
 
-    def Gamma0(self, dvarphi):
+    def Gamma0(self, dvarphi, multiply_prefactor=True):
         """
         Compute Gamma^0(x1, x2, dphi)
 
@@ -206,7 +206,7 @@ class NaturalComponentsCalcurator:
             Gamma^0(x1, x2, dphi).
         """
         # compute phibar
-        psi = np.arctan2(self.x1, self.x2)
+        psi = np.arctan2(self.x2, self.x1)
         sin2pb, cos2pb = sincos2angbar(psi, dvarphi)
 
         # compute Gamma^0(x1, x2, dphi)
@@ -219,13 +219,18 @@ class NaturalComponentsCalcurator:
             gamma+= FM * phase
 
         # multiply prefactor
-        # prefactor = 1/(2*np.pi)**3 * (cos2pb - 1j*sin2pb)
-        # gamma *= prefactor
+        # This multiplicative factor can have very sharp features
+        # in (l1,l2) grid and hence the interpolation may not work well.
+        # We recommend one to interpolate Gamma^0(x1, x2, dphi) without
+        # this prefactor and multiply it later.
+        if multiply_prefactor:
+            prefactor = -1/(2*np.pi)**3 * (cos2pb - 1j*sin2pb)
+            gamma *= prefactor
 
         # return
         return gamma
 
-    def Gamma0_treecorr(self, r, u, v):
+    def Gamma0_treecorr(self, r, u, v, tid=0, multiply_prefactor=True):
         """
         Compute Gamma^0(r, u, v) with treecorr convention.
 
@@ -245,13 +250,25 @@ class NaturalComponentsCalcurator:
         """
 
         # Compute x1, x2, dvphi
-        x1, x2, dvphi = trigutils.ruv_to_x1x2dvphi(r, u, v)
+        if tid == 0:
+            x1, x2, dvphi = trigutils.ruv_to_x1x2dvphi(r, u, v)
+        if tid == 1:
+            x1, x2, dvphi = trigutils.ruv_to_x2x3dvphi(r, u, v)
+        if tid == 2:
+            x1, x2, dvphi = trigutils.ruv_to_x3x1dvphi(r, u, v)
 
-        # Compute Gamma0
-        gamma0 = self.Gamma0(dvphi)
+        # Compute Gamma0 without prefactor
+        gamma0 = self.Gamma0(dvphi, multiply_prefactor=False)
 
         # Interpolate
-        f = rgi((self.x12_1d, self.x12_1d), gamma0, method='linear')
-        return f((x1, x2))
+        logx = np.log10(self.x12_1d)
+        f = rgi((logx, logx), gamma0, method='cubic')
+        gamma0 = f((np.log10(x1), np.log10(x2)))
 
+        # Compute and multiply prefactor
+        if multiply_prefactor:
+            sin2pb, cos2pb = sincos2angbar(np.arctan2(x2, x1), dvphi)
+            prefactor = -1/(2*np.pi)**3 * (cos2pb - 1j*sin2pb)
+            gamma0 *= prefactor
 
+        return gamma0
