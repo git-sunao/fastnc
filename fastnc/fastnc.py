@@ -39,7 +39,7 @@ class GLMCalculator:
         psi bins.
     """
 
-    def __init__(self, Lmax, Mmax, Npsi=100, tol=1e-3):
+    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-3):
         self.Lmax = Lmax
         self.Mmax = Mmax
         self.psi  = np.linspace(0, np.pi/2, Npsi)
@@ -48,7 +48,7 @@ class GLMCalculator:
     def integrand(self, x, psi, L, M):
         x, psi = np.meshgrid(x, psi, indexing='ij')
         sin2bb, cos2bb = sincos2angbar(psi, x)
-        out = 2*eval_legendre(L, np.cos(x)) * (cos2bb*np.cos(M*x) - sin2bb*np.sin(M*x))
+        out = 4*np.pi*eval_legendre(L, np.cos(x)) * (cos2bb*np.cos(M*x) - sin2bb*np.sin(M*x))
         return out
         
     def compute_GLM(self, tol, correct_bias=True, verbose=False):
@@ -160,7 +160,7 @@ class NaturalComponentsCalcurator:
         # Compute F_M using 2DFFTLog
         tb  = twobessel.two_Bessel(self.l12_1d, self.l12_1d, sumGLMbL*self.l1**2*self.l2**2, **self.fftlog_config)
         x1, x2, FM = tb.two_Bessel(np.abs(m), np.abs(n))
-
+        
         # Apply (-1)**m and (-1)**n 
         # These originate to J_m(x) = (-1)^m J_{-m}(x)
         if m < 0:
@@ -224,7 +224,7 @@ class NaturalComponentsCalcurator:
         # We recommend one to interpolate Gamma^0(x1, x2, dphi) without
         # this prefactor and multiply it later.
         if multiply_prefactor:
-            prefactor = -1/(2*np.pi)**3 * (cos2pb - 1j*sin2pb)
+            prefactor = -1/(2*np.pi)**4 * (cos2pb - 1j*sin2pb)
             gamma *= prefactor
 
         # return
@@ -268,7 +268,7 @@ class NaturalComponentsCalcurator:
         # Compute and multiply prefactor
         if multiply_prefactor:
             sin2pb, cos2pb = sincos2angbar(np.arctan2(x2, x1), dvphi)
-            prefactor = -1/(2*np.pi)**3 * (cos2pb - 1j*sin2pb)
+            prefactor = -1/(2*np.pi)**4 * (cos2pb - 1j*sin2pb)
             gamma0 *= prefactor
 
         return gamma0
