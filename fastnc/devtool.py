@@ -120,7 +120,7 @@ def rhol_NFWlike_2d(l, ts):
     return out
 
 # bispectrum
-def bispectrum_NFW(l, psi, mu, rs_arcmin=100.0, rhok=rhok_NFW):
+def bispectrum_NFW(l, psi, mu, rs_arcmin=10.0, rhok=rhok_NFW):
     l1, l2, l3 = trigutils.lpsimu_to_l1l2l3(l, psi, mu)
     bl = 1
     for i, _l in enumerate([l1, l2, l3]):
