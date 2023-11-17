@@ -1,3 +1,10 @@
+"""
+This is the module of fastnc, which calculate the natural components 
+of 3PCF using multipole decomposition and 2DFFTLog.
+
+Author: Sunao Sugiyama
+Last edit: 2023/11/16
+"""
 import numpy as np
 from scipy.special import eval_legendre
 from scipy.interpolate import RegularGridInterpolator as rgi
@@ -101,7 +108,7 @@ class GLMCalculator:
         else:
             return np.interp(np.pi/2-psi, self.psi, self.GLMdata[(L, -M)])
             
-class NaturalComponentsCalcurator:
+class FastNaturalComponentsCalcurator:
     def __init__(self, bispectrum, lmin, lmax, Lmax, Mmax, nbin=200):
         # initialize bins
         self.l12_1d = np.logspace(np.log10(lmin), np.log10(lmax), nbin)

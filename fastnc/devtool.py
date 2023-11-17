@@ -97,34 +97,42 @@ def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05),
     triangle = plt.Polygon(vtx, facecolor='none', transform=ax.transAxes, **kwargs)
     ax.add_patch(triangle)
 
-# Toy bispectrum
-# NFW profile
-def rhor_NFW(r, rs):
-    x = r/rs
-    return 1.0/x/(1+x)**2
-
+# Toy model: NFW
 def rhok_NFW(k, rs):
     y = k*rs
     si, ci = sici(y)
     return -np.cos(y)*ci + 0.5*np.sin(y)*(np.pi-2*si)
 
-# NFW like profile in 2d
-def rhor_NFWlike_2d(t, ts):
-    x = t/ts
-    return 1.0/x/(1+x)
-
-def rhol_NFWlike_2d(l, ts):
-    y = l*ts
-    out = np.pi/2 * ( - yv(0, y) + struve(0, y))
-    out*= 2*np.pi*ts**2
-    return out
-
-# bispectrum
-def bispectrum_NFW(l, psi, mu, rs_arcmin=10.0, rhok=rhok_NFW):
+def bispectrum_NFW(l, psi, mu, rs_arcmin=10.0):
     l1, l2, l3 = trigutils.lpsimu_to_l1l2l3(l, psi, mu)
     bl = 1
     for i, _l in enumerate([l1, l2, l3]):
         # assume rs = 10 arcmin on sky
         rs = np.deg2rad(rs_arcmin/60.0)
-        bl *= rhok(_l, rs)
+        bl *= rhok_NFW(_l, rs)
+    return bl
+
+# Toy model: Exponential
+def kappat_exp(t, ts):
+    x = t/ts
+    return np.exp(-x**2/2)
+
+def kappal_exp(l, ts):
+    x = l*ts
+    return 2*np.pi*ts**2*np.exp(-x**2/2)
+
+def gammatt_exp(t, ts):
+    """
+    gammat(t) = bar{kappa}(t) - kappa(t)
+    """
+    x = t/ts
+    e = np.exp(-x**2/2)
+    o = 2/x**2 * (1-e) - e
+    return o
+
+def bispectrum_exp(l, psi, mu, ts=0.003):
+    l1, l2, l3 = trigutils.lpsimu_to_l1l2l3(l, psi, mu)
+    bl = 1
+    for i, _l in enumerate([l1, l2, l3]):
+        bl *= kappal_exp(_l, ts)
     return bl

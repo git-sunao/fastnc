@@ -1,5 +1,47 @@
-import numpy as np
+"""
+This module provides the functions to manipulate the triangle configuration.
+Triangle can be specified by several different ways, and this module provides
+the conversion between them.
 
+1. `x1x2x3` -- (x1, x2, x3)
+    Side lengths of triangle. This specification of triangle 
+    is *unaware* of the triangle orientation.
+2. `xpsimu` -- (x, psi, mu)
+    With given side lengths of triangle, x1, x2, x3,
+        x1 = x * cos(psi), 
+        x2 = x * sin(psi), 
+        x3 = x * sqrt(1 - sin(2*psi)*mu)
+    and inversely
+        x   = sqrt(x1^2 + x2^2), 
+        psi = arctan(y=x2, x=x1), 
+        mu  = (cosine of inner anglebetween x1 and x2)
+    This specification of triangle is *unaware* of the triangle orientation.
+3. `x1x2phi3` -- (x1, x2, phi3)
+    With given side lengths of triangle, x1, x2, x3,
+        phi3 = arccos( (x1^2 + x2^2 - x3^2)/2/x1/x2 ),
+    i.e. phi3 is the angle between x1 and x2 sides.
+    This specification of triangle is *unaware* of the triangle orientation.
+4. `ruv` -- (r, u, v)
+    The convention of `treecorr`. With given side lengths of triangle, x1>x2>x3,
+        r = x2, 
+        u = x3/x2, 
+        v = \pm (x1-x2)/x3
+    where the sign of v is determined by the orientation of triangle: 
+    if the sides x1, x2, x3 are anti-clockwise, v is positive, otherwise negative. 
+    This specification of triangle is *aware* of the triangle orientation.
+5. `x1x2dvphi` -- (x1, x2, dvphi)
+    The convention of `fastnc`. With given side lengths of triangle, x1>x2>x3,
+        dvphi = phi3 - pi if v >= 0 else pi - phi3
+    Thus dvphi is the oriented outer angle of triangle.
+    This specification of triangle is *aware* of the triangle orientation.
+
+Note that the conversion between the orientation-unaware specifications can be ambiguous.
+
+Author: Sunao Sugiyama
+Last edit: 2023/11/06
+"""
+
+import numpy as np
 
 ##############
 def is_cyclic_permutation(x):
