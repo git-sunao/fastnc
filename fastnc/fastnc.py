@@ -9,6 +9,11 @@ import numpy as np
 from scipy.special import eval_legendre
 from scipy.interpolate import RegularGridInterpolator as rgi
 from scipy.interpolate import InterpolatedUnivariateSpline as ius
+from tqdm import tqdm
+import os
+import pickle
+from glob import glob
+import pandas as pd
 # fastnc modules
 from . import twobessel
 from . import utils
@@ -20,6 +25,77 @@ def sincos2angbar(psi, delta):
     sin2b = np.cos(2*psi) * np.sin(delta)
     norm  = np.sqrt(cos2b**2 + sin2b**2)
     return sin2b/norm, cos2b/norm
+
+def _save_pickle(filename, obj):
+    with open(filename, 'wb') as f:
+        pickle.dump(obj, f)
+
+def _load_pickle(filename):
+    with open(filename, 'rb') as f:
+        obj = pickle.load(f)
+    return obj
+
+import os
+import csv
+
+import pandas as pd
+import os
+
+class GLMdatabase:
+    def __init__(self, csv_filename):
+        self.csv_filename = csv_filename
+        self.df = self.load_database()
+
+    def load_database(self):
+        # Load the CSV file into memory if it exists, otherwise initialize an empty dataframe
+        if os.path.exists(self.csv_filename):
+            return pd.read_csv(self.csv_filename)
+        else:
+            return pd.DataFrame(columns=['Npsi', 'tol', 'filename'])
+
+    def find_entry(self, Npsi, tol):
+        # Check if entry with given Npsi and tol already exists
+        existing_entry = self.df[(self.df['Npsi'] == Npsi) & (self.df['tol'] == tol)]
+
+        if not existing_entry.empty:
+            # If entry exists, return the filename associated with it
+            return existing_entry['filename'].values[0]
+        else:
+            return None
+
+    def find_or_create_entry(self, Npsi, tol):
+        # Check if entry with given Npsi and tol already exists
+        existing_entry = self.df[(self.df['Npsi'] == Npsi) & (self.df['tol'] == tol)]
+
+        if not existing_entry.empty:
+            # If entry exists, return the filename associated with it
+            return existing_entry['filename'].values[0]
+        else:
+            # If entry does not exist, generate a new unique filename
+            new_filename = self.generate_unique_filename()
+            
+            # Add a new row to the dataframe with the provided Npsi, tol, and generated filename
+            new_row = pd.DataFrame({'Npsi': [Npsi], 'tol': [tol], 'filename': [new_filename]})
+            self.df = pd.concat([self.df, new_row], ignore_index=True)
+
+            # Write the updated dataframe to the CSV file
+            self.write()
+
+            # Return the newly generated filename
+            return new_filename
+
+    def generate_unique_filename(self):
+        # Generate a new filename that does not already exist in the dataframe
+        i = 1
+        while True:
+            new_filename = f"GLMdata-{i}.pkl"
+            if new_filename not in self.df['filename'].values:
+                return new_filename
+            i += 1
+
+    def write(self):
+        # Write the current dataframe to the CSV file
+        self.df.to_csv(self.csv_filename, index=False)
 
 class GLMCalculator:
     """
@@ -46,11 +122,27 @@ class GLMCalculator:
         psi bins.
     """
 
-    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-3):
+    cachedir = os.path.join(os.path.dirname(__file__), 'cache')
+    databasename = os.path.join(cachedir, 'GLMdatabase.csv')
+
+    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-3, verbose=False, cache=True):
         self.Lmax = Lmax
         self.Mmax = Mmax
         self.psi  = np.linspace(0, np.pi/2, Npsi)
-        self.compute_GLM(tol)
+        self.tol  = tol
+
+        # initialize GLMdata
+        self.GLMdata = dict()
+
+        # load GLMdata from cache if exists
+        self.load_cache()
+
+        # compute/update GLM 
+        self.compute_GLM(self.tol, verbose=verbose)
+
+        # save cache
+        if cache:
+            self.save_cache()
 
     def integrand(self, x, psi, L, M):
         x, psi = np.meshgrid(x, psi, indexing='ij')
@@ -66,12 +158,13 @@ class GLMCalculator:
                 todo.append([L, M])
 
         # compute GLM
-        self.GLMdata = dict()
-        for L, M in todo:
+        pbar = tqdm(todo, desc='[GLM]', disable=not verbose)
+        for L, M in pbar:
+            pbar.set_postfix({'L':L, 'M':M})
+            if (L,M) in self.GLMdata:
+                continue
             args = {'L':L, 'M':M, 'psi':self.psi}
             o, c = utils.aint(self.integrand, 0, np.pi, 2, tol=tol, **args)
-            if (not c) and verbose:
-                print(L, M)
             self.GLMdata[(L, M)] = o
 
         # Correction
@@ -90,6 +183,29 @@ class GLMCalculator:
                 self.GLMdata[(L,M)] -= bias
                 if (M,L) in self.GLMdata:
                     self.GLMdata[(M,L)] -= bias
+        
+    def save_cache(self):
+        # load database
+        database = GLMdatabase(self.databasename)
+
+        # find or create entry in the database
+        filename = database.find_or_create_entry(len(self.psi), self.tol)
+
+        # save
+        _save_pickle(os.path.join(self.cachedir, filename), self.GLMdata)
+
+    def load_cache(self):
+        # load database
+        database = GLMdatabase(self.databasename)
+
+        # filename
+        filename = database.find_entry(len(self.psi), self.tol)
+
+        # load
+        if filename is not None:
+            print('Load GLMdata from cache: {}'.format(filename))
+            self.GLMdata = _load_pickle(os.path.join(self.cachedir, filename))
+
 
     def __call__(self, L, M, psi):
         if L>self.Lmax:
@@ -124,7 +240,7 @@ class FastNaturalComponentsCalcurator:
         self.FMdata = dict()
 
         # instantiate GLM calculator
-        self.GLM = GLMCalculator(Lmax, Mmax)
+        self.GLM = GLMCalculator(Lmax, Mmax, verbose=True)
 
         # set bispectrum
         self.set_bispectrum(bispectrum)
