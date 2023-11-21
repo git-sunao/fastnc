@@ -128,7 +128,7 @@ def gammatt_exp(t, ts):
     x = t/ts
     e = np.exp(-x**2/2)
     o = 2/x**2 * (1-e) - e
-    return o
+    return -o
 
 def bispectrum_exp(l, psi, mu, ts=0.003):
     l1, l2, l3 = trigutils.lpsimu_to_l1l2l3(l, psi, mu)

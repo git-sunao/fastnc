@@ -8,12 +8,10 @@ Last edit: 2023/11/16
 import numpy as np
 from scipy.special import eval_legendre
 from scipy.interpolate import RegularGridInterpolator as rgi
-from scipy.interpolate import InterpolatedUnivariateSpline as ius
 from tqdm import tqdm
-import os
-import pickle
 from glob import glob
 import pandas as pd
+import os, pickle
 # fastnc modules
 from . import twobessel
 from . import utils
@@ -34,12 +32,6 @@ def _load_pickle(filename):
     with open(filename, 'rb') as f:
         obj = pickle.load(f)
     return obj
-
-import os
-import csv
-
-import pandas as pd
-import os
 
 class GLMdatabase:
     def __init__(self, csv_filename):
@@ -392,8 +384,8 @@ class FastNaturalComponentsCalcurator:
 
         # Interpolate
         logx = np.log10(self.x12_1d)
-        f = rgi((logx, logx), gamma0, method='cubic')
-        gamma0 = f((np.log10(x1), np.log10(x2)))
+        f = rgi((logx, logx), (self.x1*self.x2)**0.5*gamma0, method='cubic')
+        gamma0 = f((np.log10(x1), np.log10(x2))) / (x1*x2)**0.5
 
         # Compute and multiply prefactor
         if multiply_prefactor:
