@@ -2,77 +2,103 @@ import numpy as np
 from scipy.special import eval_legendre
 from scipy.interpolate import RegularGridInterpolator as rgi
 from . import utils
+from tqdm import tqdm
 
-def P_L_0_int(L, x):
-    """
-    p_L^0 = (2L+1)\int dx P_L(x)
-    """
-    if L == 0:
-        out = x
-    else:
-        out = eval_legendre(L+1, x) - eval_legendre(L-1, x)
-    return out
+class MultipoleDeomposer:
+    def __init__(self, x, Lmax, method='linear'):
+        self.method = method
+        self.x      = x
+        self.Lmax   = Lmax
+        self.init_legendreP_table()
 
-def P_L_1_int(L, x):
-    """
-    p_L^1 = (2L+1)\int dx P_L(x) x
-    """
-    if L == 0:
-        out = x**2/2
-    elif L == 1:
-        out = x**3
-    else:
-        pL   = eval_legendre(L, x)
-        pLm1 = eval_legendre(L-1, x)
-        pLm2 = eval_legendre(L-2, x)
-        pLp1 = eval_legendre(L+1, x)
-        pLp2 = eval_legendre(L+2, x)
-        out = (pL - pLm2)/(2*L-1) \
-             + x*(pLp1 - pLm1) \
-             + (pL - pLp2)/(2*L+3)
-    return out
+    def init_legendreP_table(self):
+        if self.method == 'linear':
+            Lmax = self.Lmax + 2
+        elif self.method == 'riemann':
+            Lmax = self.Lmax
+        self.legendreP = dict()
+        pbar = tqdm(np.arange(Lmax+1), desc='[legendreP]')
+        for L in pbar:
+            pbar.set_postfix({'L':L})
+            p = eval_legendre(L, self.x)
+            self.legendreP[L] = p
 
-def get_linear_interp_coeffs(x, y, axis):
-    """
-    Get the coefficients for a linear interpolation of y(x).
-    """
-    a = np.diff(y, axis=axis)/np.diff(x,axis=axis)
-    b = (y*np.roll(x,-1,axis=axis) - np.roll(y,-1,axis=axis)*x)
-    b = np.delete(b, -1, axis=axis)
-    b = b/np.diff(x,axis=axis)
-    return a, b
+    def get_legendreP(self, L):
+        return self.legendreP[L]
 
-def _decompose_multipole_linear(x, f, L, axis=0):
-    """
-    Decompose a function f(x) into multipole moments.
-    """
-    a, b = get_linear_interp_coeffs(x,f,axis=axis)
+    def get_legendreP_int0(self, L):
+        """
+        p_L^0 = (2L+1)\int dx P_L(x)
+        """
+        if L == 0:
+            out = self.x
+        else:
+            out = self.get_legendreP(L+1) - self.get_legendreP(L-1)
+        return out
 
-    p_L_0 = np.diff(P_L_0_int(L, x), axis=axis) # this part can be faster
-    p_L_1 = np.diff(P_L_1_int(L, x), axis=axis)
+    def get_legendreP_int1(self, L):
+        """
+        p_L^1 = (2L+1)\int dx P_L(x) x
+        """
+        if L == 0:
+            out = self.x**2/2
+        elif L == 1:
+            out = self.x**3
+        else:
+            pL   = self.get_legendreP(L)
+            pLm1 = self.get_legendreP(L-1)
+            pLm2 = self.get_legendreP(L-2)
+            pLp1 = self.get_legendreP(L+1)
+            pLp2 = self.get_legendreP(L+2)
+            out = (pL - pLm2)/(2*L-1) \
+                + self.x*(pLp1 - pLm1) \
+                + (pL - pLp2)/(2*L+3)
+        return out
+    
+    def get_linear_interp_coeffs(self, x, y, axis):
+        """
+        Get the coefficients for a linear interpolation of y(x).
+        """
+        a = np.diff(y, axis=axis)/np.diff(x,axis=axis)
+        b = (y*np.roll(x,-1,axis=axis) - np.roll(y,-1,axis=axis)*x)
+        b = np.delete(b, -1, axis=axis)
+        b = b/np.diff(x,axis=axis)
+        return a, b
+    
+    def _decompose_linear(self, y, L, axis=0):
+        """
+        Decompose a function y=f(x) into multipole moments.
+        """
+        a, b = self.get_linear_interp_coeffs(self.x, y, axis=axis)
 
-    out = 0.5*np.sum(a*p_L_1 + b*p_L_0, axis=axis)
+        p_L_0 = np.diff(self.get_legendreP_int0(L), axis=axis)
+        p_L_1 = np.diff(self.get_legendreP_int1(L), axis=axis)
 
-    return out
+        out = 0.5*np.sum(a*p_L_1 + b*p_L_0, axis=axis)
 
-def _decompose_multipole_riemann(x, f, L, axis=0):
-    p = eval_legendre(L, x)
-    out = np.sum(f*p,axis=axis) * (2*L+1)/2 * (x[1]-x[0])
-    return out
+        return out
 
-def decompose_multipole(x, f, L, axis=0, method='linear'):
-    if method == 'linear':
-        fnc = _decompose_multipole_linear
-    elif method == 'riemann':
-        fnc = _decompose_multipole_riemann
+    def _decompose_riemann(self, y, L, axis=0):
+        p = self.get_legendreP(L)
+        out = np.sum(f*p,axis=axis) * (2*L+1)/2 * (x[1]-x[0])
+        return out
 
-    if np.isscalar(L):
-        return fnc(x, f, L, axis=axis)
-    else:
-        out = []
-        for l in L:
-            out.append(fnc(x, f, l, axis=axis))
-        return np.array(out)
+    def _decompose(self, f, L, axis=0):
+        if self.method == 'linear':
+            return self._decompose_linear(f, L, axis=axis)
+        elif self.method == 'riemann':
+            return self._decompose_riemann(f, L, axis=axis)
+    
+    def decompose(self, f, L, axis=0):
+        if np.isscalar(L):
+            return self._decompose(f, L, axis=axis)
+        else:
+            out = []
+            pbar = tqdm(L, desc='[multipole]')
+            for l in pbar:
+                pbar.set_postfix({'L':l})
+                out.append(self._decompose(f, l, axis=axis))
+            return np.array(out)
 
 class BispectrumMultipoleCalculator:
     """
@@ -123,7 +149,7 @@ class BispectrumMultipoleCalculator:
     multipoles : ndarray
         An array of shape (Nl, Lmax+1) containing the bispectrum multipoles.
     """
-    def __init__(self, bispectrum, Lmax, lmin, lmax, psimin, Nl=100, Npsi=80, Nmu=100, mupad=1e-4):
+    def __init__(self, bispectrum, Lmax, lmin, lmax, psimin, Nl=100, Npsi=80, Nmu=100, mupad=1e-7, method='linear'):
         # Define highest multipole
         self.Lmax = Lmax
 
@@ -134,17 +160,21 @@ class BispectrumMultipoleCalculator:
         self.psi = utils.loglinear(psimin, 1e-3, 1e-2, np.pi/4, Npsi_low, Npsi_high)
         self.mu  = np.linspace(-1+mupad, 1-mupad, Nmu)
 
-        # Define bispectrum
+        # instantiate multipole decomposer
+        _, _, mu = np.meshgrid(self.l, self.psi, self.mu, indexing='ij')
+        self.multipole_decomposer = MultipoleDeomposer(mu, self.Lmax, method=method)
+
+        # Define bispectrum and compute multipoles
         self.set_bispectrum(bispectrum)
-        self.compute_mutlipoles()
 
     def set_bispectrum(self, bispectrum):
+        """
+        Set and compute the bispectrum multipoles.
+        """
+        # set bispectrum
         self.bispectrum = bispectrum
 
-    def compute_mutlipoles(self, method='linear'):
-        """
-        Compute the bispectrum multipoles.
-        """
+        # set bins
         l, psi, mu = np.meshgrid(self.l, self.psi, self.mu, indexing='ij')
 
         # Note that the bispectrum is specified by two sides and its inner angle,
@@ -154,7 +184,7 @@ class BispectrumMultipoleCalculator:
 
         # Compute multipoles
         L = np.arange(self.Lmax+1)
-        m = decompose_multipole(mu, b, L, axis=2, method=method)
+        m = self.multipole_decomposer.decompose(b, L, axis=2)
         self.multipoles_data = m
 
     def __single_L_call__(self, L, l, psi, extrapolate=False):
@@ -207,6 +237,7 @@ class BispectrumMultipoleCalculator:
         # compute interpolated multipole
         x = np.log(l)
         y = np.log(psi)
+
         return f((x, y))
 
     def __call__(self, L, l, psi, extrapolate=False):

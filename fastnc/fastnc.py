@@ -206,7 +206,6 @@ class GLMCalculator:
             print('Load GLMdata from cache: {}'.format(filename))
             self.GLMdata = _load_pickle(os.path.join(self.cachedir, filename))
 
-
     def __call__(self, L, M, psi):
         if L>self.Lmax:
             raise ValueError('L={} is larger than Lmax={}'.format(L, self.Lmax))
@@ -242,17 +241,25 @@ class FastNaturalComponentsCalcurator:
         # instantiate GLM calculator
         self.GLM = GLMCalculator(Lmax, Mmax, verbose=True)
 
-        # set bispectrum
+        # initialize bispectrum multipole
         self.set_bispectrum(bispectrum)
 
         # 2DFFTLog config
         self.fftlog_config = {'nu1':1.01, 'nu2':1.01, 'N_pad':0}
 
     def set_bispectrum(self, bispectrum):
-        Lmax = self.Lmax
-        lmin, lmax = self.l.min()/1.01, self.l.max()*1.01
-        psimin = self.psi.min()/1.01
-        self.bispectrum_multipole = BispectrumMultipoleCalculator(bispectrum, Lmax, lmin, lmax, psimin)
+        """
+        Set and compute the bispectrum multipoles.
+        """
+        if not hasattr(self, 'bispectrum_multipole'):
+            # initialize bispectrum multipole
+            Lmax = self.Lmax
+            lmin, lmax = self.l.min()/1.01, self.l.max()*1.01
+            psimin = self.psi.min()/1.01
+            self.bispectrum_multipole = BispectrumMultipoleCalculator(bispectrum, Lmax, lmin, lmax, psimin)
+        else:
+            # update bispectrum multipole
+            self.bispectrum_multipole.set_bispectrum(bispectrum)
         
     def sumGLMbL(self, M, l, psi, Lmax=None):
         # Get Lmax
