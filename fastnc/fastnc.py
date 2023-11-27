@@ -311,12 +311,17 @@ class FastNaturalComponentsCalcurator:
         # Initialize
         self.FMdata[i] = dict()
 
+        if i==0 or i==3:
+            Mlist = range(self.Mmax+1)
+        elif i==1 or i==2:
+            Mlist = range(-self.Mmax, self.Mmax+1)
+
         # Compute FM
-        for M in range(self.Mmax+1):
+        for M in Mlist:
             FM = self.FM(i, M, Lmax=Lmax)
             self.FMdata[i][M] = FM
 
-            if M != 0:
+            if (i==0 or i==3) and M != 0:
                 self.FMdata[i][-M] = FM.T
 
     def _phase_orthocenter2centroid(self, i, x1, x2, dvarphi):
@@ -347,7 +352,10 @@ class FastNaturalComponentsCalcurator:
     def _Gamma_prefactor(self, i, x1, x2, dvarphi, center='centroid'):
         # Compute prefactor
         sin2pb, cos2pb = sincos2angbar(np.arctan2(x2, x1), dvarphi)
-        prefactor = 1/(2*np.pi)**4 * (cos2pb - 1j*sin2pb)
+        if i==0 or i==1 or i==2:
+            prefactor = 1/(2*np.pi)**4 * (cos2pb - 1j*sin2pb)
+        elif i==3:
+            prefactor = 1/(2*np.pi)**4 * (cos2pb + 1j*sin2pb)
 
         # Compute phase
         # Phase to be multiplied to Gamma predicted with orthocenter.
@@ -360,6 +368,51 @@ class FastNaturalComponentsCalcurator:
             
         # return
         return phase*prefactor
+
+    def Gamma(self, i, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
+        """
+        Compute Gamma(x1, x2, dphi)
+
+        Parameters
+        ----------
+        dvarphi : float
+            The value of dvarphi.
+        
+        Returns
+        -------
+        Gamma0 : ndarray
+            Gamma(x1, x2, dphi).
+        """
+        # for test
+        if Mmax is None:
+            Mmax = self.Mmax
+
+        # compute Gamma^0(x1, x2, dphi)
+        gamma = np.zeros(self.x1.shape, dtype=np.complex128)
+        for M, FM in self.FMdata[0].items():
+            # for testing
+            if M > Mmax:
+                continue
+
+            # Compute phase
+            if i==0 or i==1 or i==2:
+                phase  = (-1.)**M * np.exp(1j*M*dvarphi)
+            elif i==3:
+                phase  = (-1.)**M * np.exp(-1j*M*dvarphi)
+
+            # add
+            gamma+= FM * phase
+
+        # multiply prefactor
+        # This multiplicative factor can have very sharp features
+        # in (l1,l2) grid and hence the interpolation may not work well.
+        # We recommend one to interpolate Gamma^0(x1, x2, dphi) without
+        # this prefactor and multiply it later.
+        if multiply_prefactor:
+            gamma *= self._Gamma_prefactor(i, self.x1, self.x2, dvarphi, center=center)
+
+        # return
+        return gamma
 
     def Gamma0(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
         """
@@ -375,35 +428,93 @@ class FastNaturalComponentsCalcurator:
         Gamma0 : ndarray
             Gamma^0(x1, x2, dphi).
         """
-        # for test
-        if Mmax is None:
-            Mmax = self.Mmax
+        return self.Gamma(0, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
 
-        # compute Gamma^0(x1, x2, dphi)
-        gamma = np.zeros(self.x1.shape, dtype=np.complex128)
-        for M, FM in self.FMdata[0].items():
-            # for testing
-            if M > Mmax:
-                continue
+    def Gamma1(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
+        """
+        Compute Gamma^1(x1, x2, dphi)
 
-            # Compute phase
-            phase  = (-1.)**M * np.exp(1j*M*dvarphi)
+        Parameters
+        ----------
+        dvarphi : float
+            The value of dvarphi.
+        
+        Returns
+        -------
+        Gamma1 : ndarray
+            Gamma^1(x1, x2, dphi).
+        """
+        return self.Gamma(1, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+    
+    def Gamma2(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
+        """
+        Compute Gamma^2(x1, x2, dphi)
 
-            # add
-            gamma+= FM * phase
+        Parameters
+        ----------
+        dvarphi : float
+            The value of dvarphi.
+        
+        Returns
+        -------
+        Gamma2 : ndarray
+            Gamma^2(x1, x2, dphi).
+        """
+        return self.Gamma(2, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+    
+    def Gamma3(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
+        """
+        Compute Gamma^3(x1, x2, dphi)
 
-        # multiply prefactor
-        # This multiplicative factor can have very sharp features
-        # in (l1,l2) grid and hence the interpolation may not work well.
-        # We recommend one to interpolate Gamma^0(x1, x2, dphi) without
-        # this prefactor and multiply it later.
+        Parameters
+        ----------
+        dvarphi : float
+            The value of dvarphi.
+        
+        Returns
+        -------
+        Gamma3 : ndarray
+            Gamma^3(x1, x2, dphi).
+        """
+        return self.Gamma(3, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+
+    def Gamma_treecorr(self, i, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
+        """
+        Compute Gamma^0(r, u, v) with treecorr convention.
+
+        Parameters
+        ----------
+        r : array
+            The value of r.
+        u : float
+            The value of u.
+        v : float
+            The value of v.
+        
+        Returns
+        -------
+        Gamma0 : ndarray
+            Gamma^{(i)}(r, u, v).
+        """
+
+        # Compute x1, x2, dvphi
+        x1, x2, dvphi = trigutils.ruv_to_x1x2dvphi(r, u, v)
+
+        # Compute Gamma0 without prefactor
+        gamma0 = self.Gamma(i, dvphi, multiply_prefactor=False, Mmax=Mmax)
+
+        # Interpolate
+        logx = np.log10(self.x12_1d)
+        f = rgi((logx, logx), (self.x1*self.x2)**0.5*gamma0, method='cubic')
+        gamma0 = f((np.log10(x1), np.log10(x2))) / (x1*x2)**0.5
+
+        # Compute and multiply prefactor
         if multiply_prefactor:
-            gamma *= self._Gamma_prefactor(0, self.x1, self.x2, dvarphi, center=center)
+            gamma0 *= self._Gamma_prefactor(i, x1, x2, dvphi, center=center)
 
-        # return
-        return gamma
+        return gamma0
 
-    def Gamma0_treecorr(self, r, u, v, tid=0, multiply_prefactor=True, Mmax=None, center='centroid'):
+    def Gamma0_treecorr(self, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
         """
         Compute Gamma^0(r, u, v) with treecorr convention.
 
@@ -421,25 +532,65 @@ class FastNaturalComponentsCalcurator:
         Gamma0 : ndarray
             Gamma^0(r, u, v).
         """
+        return self.Gamma_treecorr(0, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
 
-        # Compute x1, x2, dvphi
-        if tid == 0:
-            x1, x2, dvphi = trigutils.ruv_to_x1x2dvphi(r, u, v)
-        if tid == 1:
-            x1, x2, dvphi = trigutils.ruv_to_x2x3dvphi(r, u, v)
-        if tid == 2:
-            x1, x2, dvphi = trigutils.ruv_to_x3x1dvphi(r, u, v)
+    def Gamma1_treecorr(self, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
+        """
+        Compute Gamma^1(r, u, v) with treecorr convention.
 
-        # Compute Gamma0 without prefactor
-        gamma0 = self.Gamma0(dvphi, multiply_prefactor=False, Mmax=Mmax)
+        Parameters
+        ----------
+        r : array
+            The value of r.
+        u : float
+            The value of u.
+        v : float
+            The value of v.
+        
+        Returns
+        -------
+        Gamma1 : ndarray
+            Gamma^1(r, u, v).
+        """
+        return self.Gamma_treecorr(1, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
 
-        # Interpolate
-        logx = np.log10(self.x12_1d)
-        f = rgi((logx, logx), (self.x1*self.x2)**0.5*gamma0, method='cubic')
-        gamma0 = f((np.log10(x1), np.log10(x2))) / (x1*x2)**0.5
+    def Gamma2_treecorr(self, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
+        """
+        Compute Gamma^2(r, u, v) with treecorr convention.
 
-        # Compute and multiply prefactor
-        if multiply_prefactor:
-            gamma0 *= self._Gamma_prefactor(0, x1, x2, dvphi, center=center)
+        Parameters
+        ----------
+        r : array
+            The value of r.
+        u : float
+            The value of u.
+        v : float
+            The value of v.
+        
+        Returns
+        -------
+        Gamma2 : ndarray
+            Gamma^2(r, u, v).
+        """
+        return self.Gamma_treecorr(2, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
 
-        return gamma0
+    def Gamma3_treecorr(self, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
+        """
+        Compute Gamma^3(r, u, v) with treecorr convention.
+
+        Parameters
+        ----------
+        r : array
+            The value of r.
+        u : float
+            The value of u.
+        v : float
+            The value of v.
+        
+        Returns
+        -------
+        Gamma3 : ndarray
+            Gamma^3(r, u, v).
+        """
+        return self.Gamma_treecorr(3, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+        
