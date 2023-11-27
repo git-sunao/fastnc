@@ -113,3 +113,9 @@ def ruv_to_x3x1dvphi(r, u, v):
 def x1x2dvphi_to_x1x2x3(x1, x2, dvphi):
     x3 = np.sqrt(x1**2 + x2**2 + 2*x1*x2*np.cos(dvphi))
     return x1, x2, x3
+
+def xpsimu_to_x1x2x3(x, psi, mu):
+    x1 = x * np.cos(psi)
+    x2 = x * np.sin(psi)
+    x3 = x * np.sqrt(1 - np.sin(2*psi)*mu)
+    return x1, x2, x3

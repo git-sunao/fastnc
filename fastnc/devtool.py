@@ -104,7 +104,7 @@ def rhok_NFW(k, rs):
     return -np.cos(y)*ci + 0.5*np.sin(y)*(np.pi-2*si)
 
 def bispectrum_NFW(l, psi, mu, rs_arcmin=10.0):
-    l1, l2, l3 = trigutils.lpsimu_to_l1l2l3(l, psi, mu)
+    l1, l2, l3 = trigutils.xpsimu_to_x1x2x3(l, psi, mu)
     bl = 1
     for i, _l in enumerate([l1, l2, l3]):
         # assume rs = 10 arcmin on sky
@@ -131,7 +131,7 @@ def gammatt_exp(t, ts):
     return -o
 
 def bispectrum_exp(l, psi, mu, ts=0.003):
-    l1, l2, l3 = trigutils.lpsimu_to_l1l2l3(l, psi, mu)
+    l1, l2, l3 = trigutils.xpsimu_to_x1x2x3(l, psi, mu)
     bl = 1
     for i, _l in enumerate([l1, l2, l3]):
         bl *= kappal_exp(_l, ts)
