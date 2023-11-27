@@ -3,7 +3,7 @@ This is the module of fastnc, which calculate the natural components
 of 3PCF using multipole decomposition and 2DFFTLog.
 
 Author: Sunao Sugiyama
-Last edit: 2023/11/16
+Last edit: 2023/11/27
 """
 import numpy as np
 from scipy.special import eval_legendre
@@ -593,4 +593,3 @@ class FastNaturalComponentsCalcurator:
             Gamma^3(r, u, v).
         """
         return self.Gamma_treecorr(3, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
-        
