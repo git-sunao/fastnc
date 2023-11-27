@@ -11,6 +11,7 @@ import numpy as np
 from . import fftlog
 from scipy.interpolate import InterpolatedUnivariateSpline as ius
 from scipy.integrate import simps
+from . import trigutils
 
 class SHCalculator:
     def __init__(self, bispectrum, lmin, lmax):
@@ -97,3 +98,25 @@ class SHCalculator:
         out *= np.exp(1j*(phi1-phi2))
 
         return out
+
+    def Gamma0_treecorr(self, r, u, v, Nvarphi=50, Npsi=51, pad=1e-4, tid=0):
+        if tid==0:
+            x1, x2, dvarphi = trigutils.ruv_to_x1x2dvphi(r, u, v)
+            if v>0:
+                phi3 = np.pi+dvarphi
+            else:
+                phi3 = np.pi-dvarphi
+        elif tid==1:
+            x1, x2, dvarphi = trigutils.ruv_to_x2x3dvphi(r, u, v)
+            if v>0:
+                phi3 = np.pi+dvarphi
+            else:
+                phi3 = np.pi-dvarphi
+        elif tid==2:
+            x1, x2, dvarphi = trigutils.ruv_to_x3x1dvphi(r, u, v)
+            if v>0:
+                phi3 = np.pi+dvarphi
+            else:
+                phi3 = np.pi-dvarphi
+
+        return self.Gamma0(x1, x2, phi3, Nvarphi=Nvarphi, Npsi=Npsi, pad=pad)

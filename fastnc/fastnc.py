@@ -123,6 +123,9 @@ class GLMCalculator:
         self.psi  = np.linspace(0, np.pi/2, Npsi)
         self.tol  = tol
 
+        # general setup
+        self.verbose = verbose
+
         # initialize GLMdata
         self.GLMdata = dict()
 
@@ -130,7 +133,7 @@ class GLMCalculator:
         self.load_cache()
 
         # compute/update GLM 
-        self.compute_GLM(self.tol, verbose=verbose)
+        self.compute_GLM(self.tol, verbose=self.verbose)
 
         # save cache
         if cache:
@@ -195,7 +198,7 @@ class GLMCalculator:
 
         # load
         if filename is not None:
-            print('Load GLMdata from cache: {}'.format(filename))
+            print('Load GLMdata from cache: {}'.format(filename)) if self.verbose else None
             self.GLMdata = _load_pickle(os.path.join(self.cachedir, filename))
 
     def __call__(self, L, M, psi):
@@ -216,12 +219,15 @@ class GLMCalculator:
             return np.interp(np.pi/2-psi, self.psi, self.GLMdata[(L, -M)])
             
 class FastNaturalComponentsCalcurator:
-    def __init__(self, bispectrum, lmin, lmax, Lmax, Mmax, nbin=200):
+    def __init__(self, bispectrum, lmin, lmax, Lmax, Mmax, nbin=200, verbose=True):
         # initialize bins
         self.l12_1d = np.logspace(np.log10(lmin), np.log10(lmax), nbin)
         self.l1, self.l2 = np.meshgrid(self.l12_1d, self.l12_1d, indexing='ij')
         self.l   = np.sqrt(self.l1**2 + self.l2**2)
         self.psi = np.arctan2(self.l2, self.l1)
+
+        # general setup
+        self.verbose = verbose
 
         # initialize Lmax, Mmax
         self.Lmax = Lmax
@@ -231,7 +237,7 @@ class FastNaturalComponentsCalcurator:
         self.FMdata = dict()
 
         # instantiate GLM calculator
-        self.GLM = GLMCalculator(Lmax, Mmax, verbose=True)
+        self.GLM = GLMCalculator(Lmax, Mmax, verbose=self.verbose)
 
         # initialize bispectrum multipole
         self.set_bispectrum(bispectrum)
@@ -248,7 +254,7 @@ class FastNaturalComponentsCalcurator:
             Lmax = self.Lmax
             lmin, lmax = self.l.min()/1.01, self.l.max()*1.01
             psimin = self.psi.min()/1.01
-            self.bispectrum_multipole = BispectrumMultipoleCalculator(bispectrum, Lmax, lmin, lmax, psimin)
+            self.bispectrum_multipole = BispectrumMultipoleCalculator(bispectrum, Lmax, lmin, lmax, psimin, verbose=self.verbose)
         else:
             # update bispectrum multipole
             self.bispectrum_multipole.set_bispectrum(bispectrum)
@@ -313,7 +319,49 @@ class FastNaturalComponentsCalcurator:
             if M != 0:
                 self.FMdata[i][-M] = FM.T
 
-    def Gamma0(self, dvarphi, multiply_prefactor=True):
+    def _phase_orthocenter2centroid(self, i, x1, x2, dvarphi):
+        #https://arxiv.org/pdf/astro-ph/0207454.pdf between eq 12 and 13
+        x1, x2, x3 = trigutils.x1x2dvphi_to_x1x2x3(x1, x2, dvarphi)
+
+        def temp(x1, x2, x3):
+            phi3 = np.arccos( (x1**2+x2**2-x3**2)/2/x1/x2 )
+            cos2psi = ((x2**2-x1**2)**2 - 4*x1**2*x2**2*np.sin(phi3)**2)/4.0
+            sin2psi = (x2**2-x1**2) * x1*x2 * np.sin(phi3)
+            norm = np.sqrt(cos2psi**2 + sin2psi**2)
+            exp2psi = cos2psi/norm + 1j*sin2psi/norm
+            return exp2psi
+
+        exp2psi3 = temp(x1, x2, x3)
+        exp2psi1 = temp(x2, x3, x1)
+        exp2psi2 = temp(x3, x1, x2)
+
+        out = 1
+        for j, phase in enumerate([1.0, exp2psi1, exp2psi2, exp2psi3]):
+            if j == i:
+                out *= phase
+            else:
+                out *= np.conj(phase)
+
+        return out
+
+    def _Gamma_prefactor(self, i, x1, x2, dvarphi, center='centroid'):
+        # Compute prefactor
+        sin2pb, cos2pb = sincos2angbar(np.arctan2(x2, x1), dvarphi)
+        prefactor = 1/(2*np.pi)**4 * (cos2pb - 1j*sin2pb)
+
+        # Compute phase
+        # Phase to be multiplied to Gamma predicted with orthocenter.
+        if center == 'centroid':
+            phase = self._phase_orthocenter2centroid(i, x1, x2, dvarphi)
+        elif center == 'orthocenter':
+            phase = 1
+        else:
+            print('Error: center={} is not expected'.format(center))
+            
+        # return
+        return phase*prefactor
+
+    def Gamma0(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
         """
         Compute Gamma^0(x1, x2, dphi)
 
@@ -327,13 +375,17 @@ class FastNaturalComponentsCalcurator:
         Gamma0 : ndarray
             Gamma^0(x1, x2, dphi).
         """
-        # compute phibar
-        psi = np.arctan2(self.x2, self.x1)
-        sin2pb, cos2pb = sincos2angbar(psi, dvarphi)
+        # for test
+        if Mmax is None:
+            Mmax = self.Mmax
 
         # compute Gamma^0(x1, x2, dphi)
-        gamma = np.zeros(psi.shape, dtype=np.complex128)
+        gamma = np.zeros(self.x1.shape, dtype=np.complex128)
         for M, FM in self.FMdata[0].items():
+            # for testing
+            if M > Mmax:
+                continue
+
             # Compute phase
             phase  = (-1.)**M * np.exp(1j*M*dvarphi)
 
@@ -346,13 +398,12 @@ class FastNaturalComponentsCalcurator:
         # We recommend one to interpolate Gamma^0(x1, x2, dphi) without
         # this prefactor and multiply it later.
         if multiply_prefactor:
-            prefactor = -1/(2*np.pi)**4 * (cos2pb - 1j*sin2pb)
-            gamma *= prefactor
+            gamma *= self._Gamma_prefactor(0, self.x1, self.x2, dvarphi, center=center)
 
         # return
         return gamma
 
-    def Gamma0_treecorr(self, r, u, v, tid=0, multiply_prefactor=True):
+    def Gamma0_treecorr(self, r, u, v, tid=0, multiply_prefactor=True, Mmax=None, center='centroid'):
         """
         Compute Gamma^0(r, u, v) with treecorr convention.
 
@@ -364,7 +415,7 @@ class FastNaturalComponentsCalcurator:
             The value of u.
         v : float
             The value of v.
-
+        
         Returns
         -------
         Gamma0 : ndarray
@@ -380,7 +431,7 @@ class FastNaturalComponentsCalcurator:
             x1, x2, dvphi = trigutils.ruv_to_x3x1dvphi(r, u, v)
 
         # Compute Gamma0 without prefactor
-        gamma0 = self.Gamma0(dvphi, multiply_prefactor=False)
+        gamma0 = self.Gamma0(dvphi, multiply_prefactor=False, Mmax=Mmax)
 
         # Interpolate
         logx = np.log10(self.x12_1d)
@@ -389,8 +440,6 @@ class FastNaturalComponentsCalcurator:
 
         # Compute and multiply prefactor
         if multiply_prefactor:
-            sin2pb, cos2pb = sincos2angbar(np.arctan2(x2, x1), dvphi)
-            prefactor = -1/(2*np.pi)**4 * (cos2pb - 1j*sin2pb)
-            gamma0 *= prefactor
+            gamma0 *= self._Gamma_prefactor(0, x1, x2, dvphi, center=center)
 
         return gamma0

@@ -4,11 +4,12 @@ from scipy.interpolate import RegularGridInterpolator as rgi
 from . import utils
 from tqdm import tqdm
 
-class MultipoleDeomposer:
-    def __init__(self, x, Lmax, method='linear'):
+class MultipoleDecomposer:
+    def __init__(self, x, Lmax, method='linear', verbose=True):
         self.method = method
         self.x      = x
         self.Lmax   = Lmax
+        self.verbose = verbose
         self.init_legendreP_table()
 
     def init_legendreP_table(self):
@@ -17,7 +18,7 @@ class MultipoleDeomposer:
         elif self.method == 'riemann':
             Lmax = self.Lmax
         self.legendreP = dict()
-        pbar = tqdm(np.arange(Lmax+1), desc='[legendreP]')
+        pbar = tqdm(np.arange(Lmax+1), desc='[legendreP]', disable=not self.verbose)
         for L in pbar:
             pbar.set_postfix({'L':L})
             p = eval_legendre(L, self.x)
@@ -94,7 +95,7 @@ class MultipoleDeomposer:
             return self._decompose(f, L, axis=axis)
         else:
             out = []
-            pbar = tqdm(L, desc='[multipole]')
+            pbar = tqdm(L, desc='[multipole]', disable=not self.verbose)
             for l in pbar:
                 pbar.set_postfix({'L':l})
                 out.append(self._decompose(f, l, axis=axis))
@@ -149,9 +150,12 @@ class BispectrumMultipoleCalculator:
     multipoles : ndarray
         An array of shape (Nl, Lmax+1) containing the bispectrum multipoles.
     """
-    def __init__(self, bispectrum, Lmax, lmin, lmax, psimin, Nl=100, Npsi=80, Nmu=100, mupad=1e-7, method='linear'):
+    def __init__(self, bispectrum, Lmax, lmin, lmax, psimin, Nl=100, Npsi=80, Nmu=100, mupad=1e-7, method='linear', verbose=True):
         # Define highest multipole
         self.Lmax = Lmax
+
+        # general settings
+        self.verbose = verbose
 
         # Define bins
         self.l   = np.logspace(np.log10(lmin), np.log10(lmax), Nl)
@@ -162,7 +166,7 @@ class BispectrumMultipoleCalculator:
 
         # instantiate multipole decomposer
         _, _, mu = np.meshgrid(self.l, self.psi, self.mu, indexing='ij')
-        self.multipole_decomposer = MultipoleDeomposer(mu, self.Lmax, method=method)
+        self.multipole_decomposer = MultipoleDecomposer(mu, self.Lmax, method=method, verbose=self.verbose)
 
         # Define bispectrum and compute multipoles
         self.set_bispectrum(bispectrum)
