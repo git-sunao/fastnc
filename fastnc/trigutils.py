@@ -43,7 +43,7 @@ Last edit: 2023/11/27
 
 import numpy as np
 
-##############
+##################################################################
 def is_cyclic_permutation(x):
     N = len(x)
     
@@ -60,20 +60,28 @@ def ruv_to_x1x2x3(r, u, v):
     x3 = r*u
     return x1, x2, x3
 
-def x1x2x3_to_ruv(x1, x2, x3):
+def x1x2x3_to_ruv(x1, x2, x3, signed=True, all_physical=True):
     """
     x1, x2, x3 are clockwise side lengths of triangle
     """
-    # check the (d1 > d2 > d3) triangle is clockwise or not
-    idx = np.argsort([x1, x2, x3], axis=0).T
-    clk = [is_cyclic_permutation(_idx) for _idx in idx]
-    sign = np.ones_like(clk, dtype=int)
-    sign[np.logical_not(clk)] = -1
     # Get sorted side length
     d3, d2, d1 = np.sort([x1,x2,x3], axis=0)
     r = d2
     u = d3/d2
-    v = sign*(d1-d2)/d3
+    v = (d1-d2)/d3
+
+    if all_physical:
+        u[u>1] = 1
+        v[v<0] = 0
+        v[v>1] = 1
+
+    if signed:
+        # check the (d1 > d2 > d3) triangle is clockwise or not
+        idx = np.argsort([x1, x2, x3], axis=0).T
+        clk = [is_cyclic_permutation(_idx) for _idx in idx]
+        sign = np.ones_like(clk, dtype=int)
+        sign[np.logical_not(clk)] = -1
+        v *= sign
 
     return r, u, v
 
@@ -119,3 +127,9 @@ def xpsimu_to_x1x2x3(x, psi, mu):
     x2 = x * np.sin(psi)
     x3 = x * np.sqrt(1 - np.sin(2*psi)*mu)
     return x1, x2, x3
+
+def x1x2x3_to_xpsimu(x1, x2, x3):
+    x = np.sqrt(x1**2 + x2**2)
+    psi = np.arctan2(x2, x1)
+    mu = (x1**2+x2**2-x3**2)/2/x1/x2
+    return x, psi, mu

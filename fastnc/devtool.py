@@ -56,7 +56,10 @@ def imshow_g0(x1, x2, g0, suptitle=None, xlabel=r'$x_1$', ylabel=r'$x_2$'):
     return fig, axes
 
 # triangle plotter
-def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05), scale=0.2, **kwargs):
+def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05), scale=0.2, sort=True, **kwargs):
+    if sort:
+        x3, x2, x1 = np.sort([x1, x2, x3])
+
     # ax aspect ratio
     w, h = ax.get_figure().get_size_inches()
     aspect = h/w
@@ -97,42 +100,47 @@ def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05),
     triangle = plt.Polygon(vtx, facecolor='none', transform=ax.transAxes, **kwargs)
     ax.add_patch(triangle)
 
-# Toy model: NFW
-def rhok_NFW(k, rs):
-    y = k*rs
-    si, ci = sici(y)
-    return -np.cos(y)*ci + 0.5*np.sin(y)*(np.pi-2*si)
+# # Toy model: NFW
+# def rhok_NFW(k, rs):
+#     y = k*rs
+#     si, ci = sici(y)
+#     return -np.cos(y)*ci + 0.5*np.sin(y)*(np.pi-2*si)
 
-def bispectrum_NFW(l, psi, mu, rs_arcmin=10.0):
-    l1, l2, l3 = trigutils.xpsimu_to_x1x2x3(l, psi, mu)
-    bl = 1
-    for i, _l in enumerate([l1, l2, l3]):
-        # assume rs = 10 arcmin on sky
-        rs = np.deg2rad(rs_arcmin/60.0)
-        bl *= rhok_NFW(_l, rs)
-    return bl
+# def bispectrum_NFW(l, psi, mu, rs_arcmin=10.0):
+#     l1, l2, l3 = trigutils.xpsimu_to_x1x2x3(l, psi, mu)
+#     return bispectrum_NFW_l1l2l3(l1, l2, l3, rs_arcmin=rs_arcmin)
 
-# Toy model: Exponential
-def kappat_exp(t, ts):
-    x = t/ts
-    return np.exp(-x**2/2)
+# def bispectrum_NFW_l1l2l3(l1, l2, l3, rs_arcmin=10.0):
+#     bl = 1
+#     for i, _l in enumerate([l1, l2, l3]):
+#         # assume rs = 10 arcmin on sky
+#         rs = np.deg2rad(rs_arcmin/60.0)
+#         bl *= rhok_NFW(_l, rs)
+#     return bl
 
-def kappal_exp(l, ts):
-    x = l*ts
-    return 2*np.pi*ts**2*np.exp(-x**2/2)
 
-def gammatt_exp(t, ts):
-    """
-    gammat(t) = bar{kappa}(t) - kappa(t)
-    """
-    x = t/ts
-    e = np.exp(-x**2/2)
-    o = 2/x**2 * (1-e) - e
-    return -o
 
-def bispectrum_exp(l, psi, mu, ts=0.003):
-    l1, l2, l3 = trigutils.xpsimu_to_x1x2x3(l, psi, mu)
-    bl = 1
-    for i, _l in enumerate([l1, l2, l3]):
-        bl *= kappal_exp(_l, ts)
-    return bl
+# # Toy model: Exponential
+# def kappat_exp(t, ts):
+#     x = t/ts
+#     return np.exp(-x**2/2)
+
+# def kappal_exp(l, ts):
+#     x = l*ts
+#     return 2*np.pi*ts**2*np.exp(-x**2/2)
+
+# def gammatt_exp(t, ts):
+#     """
+#     gammat(t) = bar{kappa}(t) - kappa(t)
+#     """
+#     x = t/ts
+#     e = np.exp(-x**2/2)
+#     o = 2/x**2 * (1-e) - e
+#     return -o
+
+# def bispectrum_exp(l, psi, mu, ts=0.003):
+#     l1, l2, l3 = trigutils.xpsimu_to_x1x2x3(l, psi, mu)
+#     bl = 1
+#     for i, _l in enumerate([l1, l2, l3]):
+#         bl *= kappal_exp(_l, ts)
+#     return bl

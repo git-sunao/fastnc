@@ -16,7 +16,8 @@ import os, pickle
 from . import twobessel
 from . import utils
 from . import trigutils
-from .multipole import BispectrumMultipoleCalculator
+from .interpolation import SemiDiagonalInterpolator as sdi
+# from .multipole import BispectrumMultipole
 
 def sincos2angbar(psi, delta):
     cos2b = np.cos(delta) + np.sin(2*psi)
@@ -202,29 +203,42 @@ class GLMCalculator:
             self.GLMdata = _load_pickle(os.path.join(self.cachedir, filename))
 
     def __call__(self, L, M, psi):
-        if L>self.Lmax:
+        isscalar = np.isscalar(L)
+        if isscalar:
+            L = np.array([L])
+
+        if np.any(L>self.Lmax):
             raise ValueError('L={} is larger than Lmax={}'.format(L, self.Lmax))
-        if L<0:
+        if np.any(L<0):
             raise ValueError('L={} is smaller than 0'.format(L))
         if M>self.Mmax:
             raise ValueError('M={} is larger than Mmax={}'.format(M, self.Mmax))
         if M<-self.Mmax:
             raise ValueError('M={} is smaller than -Mmax={}'.format(M, self.Mmax))
         
-        # Use the symmetry for M<0
-        # G_{LM}(psi) = G_{L(-M)}(np.pi/2-psi)
-        if M>0:
-            return np.interp(psi, self.psi, self.GLMdata[(L, M)])
-        else:
-            return np.interp(np.pi/2-psi, self.psi, self.GLMdata[(L, -M)])
+        out = []
+        for _L in L:
+            # Use the symmetry for M<0
+            # G_{LM}(psi) = G_{L(-M)}(np.pi/2-psi)
+            if M>0:
+                o = np.interp(psi, self.psi, self.GLMdata[(_L, M)])
+            else:
+                o = np.interp(np.pi/2-psi, self.psi, self.GLMdata[(_L, -M)])
+            out.append(o)
+        out = np.array(out)
+
+        if isscalar:
+            out = out[0]
+
+        return out
             
-class FastNaturalComponentsCalcurator:
-    def __init__(self, bispectrum, lmin, lmax, Lmax, Mmax, nbin=200, verbose=True):
+class FastNaturalComponents:
+    def __init__(self, ell12min, ell12max, Lmax, Mmax, bispectrum=None, nell12bin=200, verbose=True):
         # initialize bins
-        self.l12_1d = np.logspace(np.log10(lmin), np.log10(lmax), nbin)
-        self.l1, self.l2 = np.meshgrid(self.l12_1d, self.l12_1d, indexing='ij')
-        self.l   = np.sqrt(self.l1**2 + self.l2**2)
-        self.psi = np.arctan2(self.l2, self.l1)
+        self.ell1 = self.ell2 = np.logspace(np.log10(ell12min), np.log10(ell12max), nell12bin)
+        self.ELL1, self.ELL2 = np.meshgrid(self.ell1, self.ell2, indexing='ij')
+        self.ELL  = np.sqrt(self.ELL1**2 + self.ELL2**2)
+        self.PSI = np.arctan2(self.ELL2, self.ELL1)
 
         # general setup
         self.verbose = verbose
@@ -239,55 +253,43 @@ class FastNaturalComponentsCalcurator:
         # instantiate GLM calculator
         self.GLM = GLMCalculator(Lmax, Mmax, verbose=self.verbose)
 
-        # initialize bispectrum multipole
-        self.set_bispectrum(bispectrum)
-
         # 2DFFTLog config
         self.fftlog_config = {'nu1':1.01, 'nu2':1.01, 'N_pad':0}
+
+        # set bispectrum
+        if bispectrum is not None:
+            self.set_bispectrum(bispectrum)
 
     def set_bispectrum(self, bispectrum):
         """
         Set and compute the bispectrum multipoles.
         """
-        if not hasattr(self, 'bispectrum_multipole'):
-            # initialize bispectrum multipole
-            Lmax = self.Lmax
-            lmin, lmax = self.l.min()/1.01, self.l.max()*1.01
-            psimin = self.psi.min()/1.01
-            self.bispectrum_multipole = BispectrumMultipoleCalculator(bispectrum, Lmax, lmin, lmax, psimin, verbose=self.verbose)
-        else:
-            # update bispectrum multipole
-            self.bispectrum_multipole.set_bispectrum(bispectrum)
-        
-    def sumGLMbL(self, M, l, psi, Lmax=None):
+        # update bispectrum multipole
+        self.bispectrum = bispectrum
+        self.bispectrum.decompose(self.Lmax)
+    
+    def sumGLMbL(self, M, ell, psi, Lmax=None):
         # Get Lmax
         if Lmax is None:
             Lmax = self.Lmax
 
         # Sum up GLM*bL over L
-        sumGLMbL = 0
-        for L in range(Lmax+1):
-            # Compute GLM
-            GLM = self.GLM(L, M, self.psi)
-
-            # Compute bL
-            bL = self.bispectrum_multipole(L, self.l, self.psi)
-
-            # Add
-            sumGLMbL += GLM*bL
-        
+        L = np.arange(Lmax+1)
+        GLM = self.GLM(L, M, self.PSI)
+        bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI)
+        sumGLMbL = np.sum(GLM*bL, axis=0)
         return sumGLMbL
 
     def FM(self, i, M, Lmax=None):
         # Compute sumGLMbL = \sum_L G_LM * b_L(l1, l2)
-        sumGLMbL = self.sumGLMbL(M, self.l, self.psi, Lmax=Lmax)
+        sumGLMbL = self.sumGLMbL(M, self.ELL, self.PSI, Lmax=Lmax)
 
         # Get (n,m) from M.
         m, n = [(M-3,-M-3), (M+1,-M-3), (M-3,-M+1), (M-1,-M+1)][i]
 
         # Compute F_M using 2DFFTLog
-        tb  = twobessel.two_Bessel(self.l12_1d, self.l12_1d, sumGLMbL*self.l1**2*self.l2**2, **self.fftlog_config)
-        x1, x2, FM = tb.two_Bessel(np.abs(m), np.abs(n))
+        tb  = twobessel.two_Bessel(self.ell1, self.ell2, sumGLMbL*self.ELL1**2*self.ELL2**2, **self.fftlog_config)
+        self.x1, self.x2, FM = tb.two_Bessel(np.abs(m), np.abs(n))
         
         # Apply (-1)**m and (-1)**n 
         # These originate to J_m(x) = (-1)^m J_{-m}(x)
@@ -297,12 +299,11 @@ class FastNaturalComponentsCalcurator:
             FM *= (-1.)**n
 
         # Transpose
-        # Note that (l1, l2) is couple to (x2,x1), 
+        # Note that (l1, l2) is couple to (x2,x1) in fastnc formalism, 
         # not to (x1, x2) which is convention of 2DFFTLog.
         FM = FM.T
 
-        self.x1, self.x2 = np.meshgrid(x1, x2, indexing='ij')
-        self.x12_1d = x1
+        self.X1, self.X2 = np.meshgrid(self.x1, self.x2, indexing='ij')
 
         # return
         return FM
@@ -388,8 +389,8 @@ class FastNaturalComponentsCalcurator:
             Mmax = self.Mmax
 
         # compute Gamma^0(x1, x2, dphi)
-        gamma = np.zeros(self.x1.shape, dtype=np.complex128)
-        for M, FM in self.FMdata[0].items():
+        gamma = np.zeros(self.X1.shape, dtype=np.complex128)
+        for M, FM in self.FMdata[i].items():
             # for testing
             if M > Mmax:
                 continue
@@ -409,7 +410,7 @@ class FastNaturalComponentsCalcurator:
         # We recommend one to interpolate Gamma^0(x1, x2, dphi) without
         # this prefactor and multiply it later.
         if multiply_prefactor:
-            gamma *= self._Gamma_prefactor(i, self.x1, self.x2, dvarphi, center=center)
+            gamma *= self._Gamma_prefactor(i, self.X1, self.X2, dvarphi, center=center)
 
         # return
         return gamma
@@ -478,7 +479,7 @@ class FastNaturalComponentsCalcurator:
         """
         return self.Gamma(3, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
 
-    def Gamma_treecorr(self, i, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
+    def Gamma_treecorr(self, i, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid', method='sdi', skip=1):
         """
         Compute Gamma^0(r, u, v) with treecorr convention.
 
@@ -504,9 +505,17 @@ class FastNaturalComponentsCalcurator:
         gamma0 = self.Gamma(i, dvphi, multiply_prefactor=False, Mmax=Mmax)
 
         # Interpolate
-        logx = np.log10(self.x12_1d)
-        f = rgi((logx, logx), (self.x1*self.x2)**0.5*gamma0, method='cubic')
-        gamma0 = f((np.log10(x1), np.log10(x2))) / (x1*x2)**0.5
+        if method == 'sdi':
+            logx = np.log10(self.x1)
+            f = (self.X1*self.X2)**0.5*gamma0
+            f = sdi(logx[::skip], logx[::skip], f[::skip, ::skip])
+            gamma0 = f(np.log10(x1), np.log10(x2)) / (x1*x2)**0.5
+        elif method == 'rgi':
+            # This gives artificial oscillations
+            logx = np.log10(self.x1)
+            f = f(self.X1*self.X2)**0.5*gamma0
+            f = rgi((logx[::skip], logx[::skip]), f[::skip, ::skip], method='linear')
+            gamma0 = f((np.log10(x1), np.log10(x2))) / (x1*x2)**0.5
 
         # Compute and multiply prefactor
         if multiply_prefactor:

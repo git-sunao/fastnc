@@ -4,7 +4,7 @@ from scipy.interpolate import RegularGridInterpolator as rgi
 from . import utils
 from tqdm import tqdm
 
-class MultipoleDecomposer:
+class Multipole:
     def __init__(self, x, Lmax, method='linear', verbose=True):
         self.method = method
         self.x      = x
@@ -101,207 +101,215 @@ class MultipoleDecomposer:
                 out.append(self._decompose(f, l, axis=axis))
             return np.array(out)
 
-class BispectrumMultipoleCalculator:
-    """
-    Bispectrum multipole calculator.
+# class BispectrumMultipole:
+#     """
+#     Bispectrum multipole.
 
-    This class provides a way to compute the bispectrum multipoles of a given bispectrum
-    in a set of bins in l and psi, and for a range of values of mu. The computation is
-    performed using the Limber approximation.
+#     This class provides a way to compute the bispectrum multipoles of a given bispectrum
+#     in a set of bins in l and psi, and for a range of values of mu. The computation is
+#     performed using the Limber approximation.
 
-    Parameters
-    ----------
-    bispectrum : callable
-        A callable object that takes three arguments (l, psi, mu). Here, (l, psi, mu) 
-        are related to the (l1, l2, l3) parameter set as
-            l1 = l*cos(psi)
-            l2 = l*sin(psi)
-            l3 = l*(1 - sin(2psi)*mu)
-        Thus mu is the cosine of inner angle of triangle between l1 and l2 sides.
-    Lmax : int
-        The highest multipole to compute.
-    lmin : float
-        The minimum value of l for the first bin.
-    lmax : float
-        The maximum value of l for the last bin.
-    Nl : int
-        The number of bins in l.
-    Npsi : int, optional
-        The total number of bins in psi. The bins are distributed logarithmically 
-        and linearly between arctan(lmin/lmax) and pi/4. Default is 80.
-    Nmu : int, optional
-        The number of bins in mu. Default is 100.
-    mupad : float, optional
-        A small padding value added to the edges of the mu bins to avoid numerical
-        issues with the limiting bispectrum configuration. Default is 1e-4.
+#     Parameters
+#     ----------
+#     bispectrum : callable
+#         A callable object that takes three arguments (l, psi, mu). Here, (l, psi, mu) 
+#         are related to the (l1, l2, l3) parameter set as
+#             l1 = l*cos(psi)
+#             l2 = l*sin(psi)
+#             l3 = l*(1 - sin(2psi)*mu)
+#         Thus mu is the cosine of inner angle of triangle between l1 and l2 sides.
+#     Lmax : int
+#         The highest multipole to compute.
+#     lmin : float
+#         The minimum value of l for the first bin.
+#     lmax : float
+#         The maximum value of l for the last bin.
+#     Nl : int
+#         The number of bins in l.
+#     Npsi : int, optional
+#         The total number of bins in psi. The bins are distributed logarithmically 
+#         and linearly between arctan(lmin/lmax) and pi/4. Default is 80.
+#     Nmu : int, optional
+#         The number of bins in mu. Default is 100.
+#     mupad : float, optional
+#         A small padding value added to the edges of the mu bins to avoid numerical
+#         issues with the limiting bispectrum configuration. Default is 1e-4.
 
-    Attributes
-    ----------
-    Lmax : int
-        The highest multipole to compute.
-    l : ndarray
-        An array of shape (Nl,) containing the values of l for each bin.
-    psi : ndarray
-        An array of shape (Npsi,) containing the values of psi for each bin.
-    mu : ndarray
-        An array of shape (Nmu,) containing the values of mu for each bin.
-    bispectrum : callable
-        The bispectrum function used for the computation.
-    multipoles : ndarray
-        An array of shape (Nl, Lmax+1) containing the bispectrum multipoles.
-    """
-    def __init__(self, bispectrum, Lmax, lmin, lmax, psimin, Nl=100, Npsi=80, Nmu=100, mupad=1e-7, method='linear', verbose=True):
-        # Define highest multipole
-        self.Lmax = Lmax
+#     Attributes
+#     ----------
+#     Lmax : int
+#         The highest multipole to compute.
+#     l : ndarray
+#         An array of shape (Nl,) containing the values of l for each bin.
+#     psi : ndarray
+#         An array of shape (Npsi,) containing the values of psi for each bin.
+#     mu : ndarray
+#         An array of shape (Nmu,) containing the values of mu for each bin.
+#     bispectrum : callable
+#         The bispectrum function used for the computation.
+#     multipoles : ndarray
+#         An array of shape (Nl, Lmax+1) containing the bispectrum multipoles.
+#     """
+#     def __init__(self, bispectrum, Lmax, ellmin, ellmax, psimin, nellbin=100, npsibin=80, nmubin=100, epmu=1e-7, method='linear', verbose=True, validate=True):
+#         # Define highest multipole
+#         self.Lmax = Lmax
 
-        # general settings
-        self.verbose = verbose
+#         # general settings
+#         self.verbose = verbose
 
-        # Define bins
-        self.l   = np.logspace(np.log10(lmin), np.log10(lmax), Nl)
-        Npsi_low = Npsi//10
-        Npsi_high= Npsi - Npsi_low
-        self.psi = utils.loglinear(psimin, 1e-3, 1e-2, np.pi/4, Npsi_low, Npsi_high)
-        self.mu  = np.linspace(-1+mupad, 1-mupad, Nmu)
+#         # Define bins
+#         self.ell = np.logspace(np.log10(ellmin), np.log10(ellmax), nellbin)
+#         self.psi = utils.loglinear(psimin, 1e-3, 1e-2, np.pi/4, npsibin//10, npsibin - npsibin//10)
+#         self.mu  = np.linspace(-1+epmu, 1, nmubin)
 
-        # instantiate multipole decomposer
-        _, _, mu = np.meshgrid(self.l, self.psi, self.mu, indexing='ij')
-        self.multipole_decomposer = MultipoleDecomposer(mu, self.Lmax, method=method, verbose=self.verbose)
+#         # instantiate multipole decomposer
+#         _, _, MU = np.meshgrid(self.ell, self.psi, self.mu, indexing='ij')
+#         self.multipole = Multipole(MU, self.Lmax, method=method, verbose=self.verbose)
 
-        # Define bispectrum and compute multipoles
-        self.set_bispectrum(bispectrum)
+#         # Define bispectrum and compute multipoles
+#         if bispectrum is not None:
+#             self.set_bispectrum(bispectrum)
 
-    def set_bispectrum(self, bispectrum):
-        """
-        Set and compute the bispectrum multipoles.
-        """
-        # set bispectrum
-        self.bispectrum = bispectrum
+#     def set_bispectrum(self, bispectrum):
+#         """
+#         Set and compute the bispectrum multipoles.
+#         """
+#         # set bispectrum
+#         self.bispectrum = bispectrum
 
-        # set bins
-        l, psi, mu = np.meshgrid(self.l, self.psi, self.mu, indexing='ij')
+#         # set bins
+#         ELL, SPI, MU = np.meshgrid(self.ell, self.psi, self.mu, indexing='ij')
 
-        # Note that the bispectrum is specified by two sides and its inner angle,
-        # while the multipole decomposition is defined with the outer angle.
-        # Thus, we need a minus sign for mu.
-        b = self.bispectrum(l, psi, -mu)
+#         # Note that the bispectrum is specified by two sides and its inner angle,
+#         # while the multipole decomposition is defined with the outer angle.
+#         # Thus, we need a minus sign for mu.
+#         b = self.bispectrum(ELL, SPI, -MU)
 
-        # Compute multipoles
-        L = np.arange(self.Lmax+1)
-        m = self.multipole_decomposer.decompose(b, L, axis=2)
-        self.multipoles_data = m
+#         # Compute multipoles
+#         L = np.arange(self.Lmax+1)
+#         m = self.multipole.decompose(b, L, axis=2)
+#         self.multipoles_data = m
 
-    def __single_L_call__(self, L, l, psi, extrapolate=False):
-        """
-        Compute the multipole decomposition of the bispectrum for a single value of L.
+#     def __single_L_call__(self, L, ell, psi, extrapolate=False, replace_close=True):
+#         """
+#         Compute the multipole decomposition of the bispectrum for a single value of L.
 
-        Parameters
-        ----------
-        L : int
-            The value of L.
-        l : float or ndarray
-            The value(s) of l.
-        psi : float or ndarray
-            The value(s) of psi.
-        extrapolate : bool, optional
-            If True, extrapolate the multipole decomposition outside the range of
-            l and psi. Default is False.
+#         Parameters
+#         ----------
+#         L : int
+#             The value of L.
+#         l : float or ndarray
+#             The value(s) of l.
+#         psi : float or ndarray
+#             The value(s) of psi.
+#         extrapolate : bool, optional
+#             If True, extrapolate the multipole decomposition outside the range of
+#             l and psi. Default is False.
         
-        Returns
-        -------
-        multipole : float or ndarray
-            The multipole decomposition of the bispectrum.
-        """
-        # test L
-        if L > self.Lmax:
-            raise ValueError(f"L = {L} > Lmax = {self.Lmax}")
+#         Returns
+#         -------
+#         multipole : float or ndarray
+#             The multipole decomposition of the bispectrum.
+#         """
+#         # test L
+#         if L > self.Lmax:
+#             raise ValueError(f"L = {L} > Lmax = {self.Lmax}")
 
-        # cast
-        l = np.asarray(l).copy()
-        psi = np.asarray(psi).copy()
+#         # cast
+#         ell = np.asarray(ell).copy()
+#         psi = np.asarray(psi).copy()
 
-        # settings for interpolation
-        if extrapolate:
-            bounds_error = False
-            fill_value = None
-        else:
-            bounds_error = True
-            fill_value = np.nan
+#         # settings for interpolation
+#         if extrapolate:
+#             bounds_error = False
+#             fill_value = None
+#         else:
+#             bounds_error = True
+#             fill_value = np.nan
         
-        # make interpolator
-        x = np.log(self.l)
-        y = np.log(self.psi)
-        z = self.multipoles_data[L, :, :]
-        f = rgi((x, y), z, bounds_error=bounds_error, fill_value=fill_value)
+#         # make interpolator
+#         x = np.log(self.ell)
+#         y = np.log(self.psi)
+#         z = self.multipoles_data[L, :, :]
+#         f = rgi((x, y), z, bounds_error=bounds_error, fill_value=fill_value)
 
-        # convert psi to pi/2-psi if psi > pi/4
-        sel = np.pi/4 < psi
-        psi[sel] = np.pi/2 - psi[sel]
+#         # convert psi to pi/2-psi if psi > pi/4
+#         sel = np.pi/4 < psi
+#         psi[sel] = np.pi/2 - psi[sel]
 
-        # compute interpolated multipole
-        x = np.log(l)
-        y = np.log(psi)
+#         # compute interpolated multipole
+#         xin = np.log(ell)
+#         yin = np.log(psi)
 
-        return f((x, y))
+#         # check boundary
+#         if replace_close:
+#             # Sometimes the input l, psi value can slightly outside the support range
+#             # due to the numerical error. This causes the interpolation to fail.
+#             # Here we check if the input l, psi value is close to the boundary and
+#             # set it to the boundary value if it is.
+#             xin = utils.replace_close(xin, x.min(), x.max())
+#             yin = utils.replace_close(yin, y.min(), y.max())
 
-    def __call__(self, L, l, psi, extrapolate=False):
-        """
-        Compute the multipole decomposition of the bispectrum.
+#         return f((xin, yin))
 
-        Parameters
-        ----------
-        L : int or ndarray
-            The value(s) of L.
-        l : float or ndarray
-            The value(s) of l.
-        psi : float or ndarray
-            The value(s) of psi.
-        extrapolate : bool, optional
-            If True, extrapolate the multipole decomposition outside the range of
-            l and psi. Default is False.
+#     def __call__(self, L, ell, psi, extrapolate=False):
+#         """
+#         Compute the multipole decomposition of the bispectrum.
+
+#         Parameters
+#         ----------
+#         L : int or ndarray
+#             The value(s) of L.
+#         l : float or ndarray
+#             The value(s) of l.
+#         psi : float or ndarray
+#             The value(s) of psi.
+#         extrapolate : bool, optional
+#             If True, extrapolate the multipole decomposition outside the range of
+#             l and psi. Default is False.
         
-        Returns
-        -------
-        multipole : float or ndarray
-            The multipole decomposition of the bispectrum.
-        """
+#         Returns
+#         -------
+#         multipole : float or ndarray
+#             The multipole decomposition of the bispectrum.
+#         """
 
-        if np.isscalar(L):
-            return self.__single_L_call__(L, l, psi, extrapolate)
-        else:
-            out = []
-            for _L in L:
-                o = self.__single_L_call__(_L, l, psi, extrapolate)
-                out.append(o)
-            return np.array(out)
+#         if np.isscalar(L):
+#             return self.__single_L_call__(L, ell, psi, extrapolate)
+#         else:
+#             out = []
+#             for _L in L:
+#                 o = self.__single_L_call__(_L, ell, psi, extrapolate)
+#                 out.append(o)
+#             return np.array(out)
 
-    def resum(self, l, psi, mu, return_terms=False):
-        """
-        Compute the resummed bispectrum.
+#     def resum(self, ell, psi, mu, return_terms=False):
+#         """
+#         Compute the resummed bispectrum.
 
-        Parameters
-        ----------
-        l : float or ndarray
-            The value(s) of l.
-        psi : float or ndarray
-            The value(s) of psi.
-        mu : float or ndarray
-            The value(s) of mu.
+#         Parameters
+#         ----------
+#         l : float or ndarray
+#             The value(s) of l.
+#         psi : float or ndarray
+#             The value(s) of psi.
+#         mu : float or ndarray
+#             The value(s) of mu.
 
-        Returns
-        -------
-        resummed : float or ndarray
-            The resummed bispectrum.
-        """
-        L = np.arange(self.Lmax)
-        out = []
-        for _L in L:
-            m = self.__call__(_L, l, psi)
-            p = eval_legendre(_L, mu)
-            out.append(m*p)
+#         Returns
+#         -------
+#         resummed : float or ndarray
+#             The resummed bispectrum.
+#         """
+#         L = np.arange(self.Lmax)
+#         out = []
+#         for _L in L:
+#             m = self.__call__(_L, ell, psi)
+#             p = eval_legendre(_L, -mu)
+#             out.append(m*p)
 
-        # return 
-        if return_terms:
-            return np.sum(out, axis=0), np.array(out)
-        else:
-            return np.sum(out, axis=0)
+#         # return 
+#         if return_terms:
+#             return np.sum(out, axis=0), np.array(out)
+#         else:
+#             return np.sum(out, axis=0)
