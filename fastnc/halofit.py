@@ -4,8 +4,25 @@ from scipy.integrate import simps
 from scipy.optimize import bisect
 
 class Halofit:
+    """
+    Halofit class.
+
+    See https://arxiv.org/abs/1208.2701 for halofit model.
+    See https://arxiv.org/abs/1911.07886 for bihalofit model.
+
+    Attributes
+    ----------
+    k     (np.ndarray): array of comoving Fourier modes
+    pklin (np.ndarray): array of linear power spectrum at the wave numbers
+    z     (np.ndarray): array of redshifts
+    lgr   (np.ndarray): linear growth rate at the redshifts
+    """
     def __init__(self, k=None, pklin=None, z=None, lgr=None, cosmo=None):
         """
+        k     (np.ndarray): array of comoving Fourier modes
+        pklin (np.ndarray): array of linear power spectrum at the wave numbers
+        z     (np.ndarray): array of redshifts
+        lgr   (np.ndarray): linear growth rate at the redshifts
         """
         self.set_lgr(z, lgr)
         self.set_pklin(k, pklin)
@@ -56,6 +73,9 @@ class Halofit:
             self.has_changed = False
     
     def _normalize_pklin(self):
+        """
+        Normalize the linear power spectrum with sigma8.
+        """
         if (self.k is not None) and (self.pklin is not None) and (self.cosmo is not None):
             # compute sigma8 with current pklin
             k     = np.logspace(-3, 2, 1000)
@@ -96,10 +116,16 @@ class Halofit:
         return pk
 
     def _sigmam(self, k, Delta, r, window):
+        """
+        Calculate sigmaM.
+        """
         I2    = simps(Delta * window(k*r)**2, np.log(k))
         return I2**0.5
         
     def get_r_sigma(self, z, rtol=1e-5):
+        """
+        Returns nonlinear scale, r_sigma.
+        """
         k     = np.logspace(-3, 2, 1000)
         Delta = self.get_interpolated_pklin(k, z)*k**3 / 2/np.pi**2
         def eq(R): return self._sigmam(k, Delta, R, window_gaussian) - 1.0
@@ -166,6 +192,9 @@ class Halofit:
         return Ode
     
     def _init_spline(self, zmid=0.5, dz_low=0.15, dz_high=0.3):
+        """
+        Initialize the spline for halofit.
+        """
         # For acculate calculation, we divide z array into two sections
         # Defining zmid, the first section is [0, zmid) and the second is [zmid, max),
         # where we use finer bin for the first than the second.
@@ -194,6 +223,9 @@ class Halofit:
         self.lazy_arrays['Odez']    = self.get_Odez(z)
     
     def get_halofit_coeffs(self, z):
+        """
+        Returns the coefficients of halofit.
+        """
         r_sigma = ius(self.lazy_arrays['z'], self.lazy_arrays['r_sigma'])(z)
         neff    = ius(self.lazy_arrays['z'], self.lazy_arrays['neff'])(z)
         C       = ius(self.lazy_arrays['z'], self.lazy_arrays['C'])(z)
@@ -236,6 +268,9 @@ class Halofit:
         return coeffs
         
     def get_pkhalofit(self, k, z):
+        """
+        Returns the halofit prediction of nonlinear matter power spectrum.
+        """
         # update the internal variables
         self.update()
 
@@ -327,12 +362,15 @@ class Halofit:
         return coeffs
         
     def F2_tree(self, k1, k2, k3):
+        """
+        Returns the tree level bispectrum.
+        """
         costheta12=0.5*(k3*k3-k1*k1-k2*k2)/(k1*k2)
         return (5./7.)+0.5*costheta12*(k1/k2+k2/k1)+(2./7.)*costheta12*costheta12
         
     def get_bihalofit(self, k1, k2, k3, z, verbose=False, all_physical=False, which=['Bh3', 'Bh1']):
         """
-        k1, k2, k3 z
+        Returns the bihalofit prediction of matter bispectrum.
         """
         if isinstance(which, str):
             which = [which]
@@ -416,6 +454,8 @@ class Halofit:
     
     def get_Rb_bihalofit(self, args):
         """
+        Returns the baryon ratio on bispectrum.
+
         args: a structured array with key: k1, k2, k3 z
         """
         # ratio of modes
@@ -453,13 +493,25 @@ class Halofit:
         return rb
     
 def window_tophat(x):
+    """
+    Top-hat window function.
+    """
     return 3.0/x**3 * (np.sin(x) - x*np.cos(x))
 
 def window_gaussian(x):
+    """
+    Gaussian window function.
+    """
     return np.exp(-0.5*x**2)
 
 def window_gaussian_1deriv(x):
+    """
+    First derivative of Gaussian window function.
+    """
     return x*np.exp(-0.5*x**2)
 
 def window_gaussian_2deriv(x):
+    """
+    Second derivative of Gaussian window function.
+    """
     return x**2*np.exp(-0.5*x**2)

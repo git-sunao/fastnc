@@ -6,5 +6,4 @@ from . import bispectrum
 from . import halofit
 from . import trigutils
 from . import utils
-from . import interpolation
 from . import devtool

@@ -14,7 +14,6 @@ import pandas as pd
 import os, pickle
 # fastnc modules
 from . import twobessel
-from . import utils
 from . import trigutils
 from .interpolation import SemiDiagonalInterpolator as sdi
 # from .multipole import BispectrumMultipole
@@ -147,6 +146,7 @@ class GLMCalculator:
         return out
         
     def compute_GLM(self, tol, correct_bias=True, verbose=False):
+        from .integration import aint
         # prepare todo list
         todo = []
         for L in range(self.Lmax+1):
@@ -160,7 +160,7 @@ class GLMCalculator:
             if (L,M) in self.GLMdata:
                 continue
             args = {'L':L, 'M':M, 'psi':self.psi}
-            o, c = utils.aint(self.integrand, 0, np.pi, 2, tol=tol, **args)
+            o, c = aint(self.integrand, 0, np.pi, 2, tol=tol, **args)
             self.GLMdata[(L, M)] = o
 
         # Correction
