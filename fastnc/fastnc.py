@@ -88,23 +88,15 @@ class GLMCalculator:
     .. math:
         G_LM(psi) = 2 \int_0^{\pi} dx P_L(\cos(x)) \cos[2\bar\beta(\psi, x) + M x]
 
-    Parameters
-    ----------
-    Lmax : int
-        Maximum multipole moment.
-    Max  : int
-        Maximum angular Fourier mode.
-    Npsi : int
-        Number of psi bins.
-    
-    Attributes
-    ----------
-    Lmax : int
-        Maximum multipole moment.
-    Max  : int
-        Maximum angular Fourier mode.
-    psi  : array
-        psi bins.
+    Parameters:
+    - Lmax (int): Maximum multipole moment.
+    - Max (int): Maximum angular Fourier mode.
+    - Npsi (int): Number of psi bins.
+
+    Attributes:
+    - Lmax (int): Maximum multipole moment.
+    - Max (int): Maximum angular Fourier mode.
+    - psi (array): Psi bins.
     """
 
     cachedir = os.path.join(os.path.dirname(__file__), 'cache')
