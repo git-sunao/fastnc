@@ -129,6 +129,8 @@ class GLMCalculator:
         self.compute_GLM(self.tol, verbose=self.verbose)
 
         # save cache
+        if cache and not os.path.exists(self.databasename):
+            os.makedirs(self.cachedir, exist_ok=True)
         if cache:
             self.save_cache()
 
@@ -159,7 +161,7 @@ class GLMCalculator:
         # Correction
         # G_LM(psi) is exactly zero for L<M and psi<=pi/4. 
         # However, the numerical integration may give a non-zero value.
-        # From my experience, this amount of error is also present in
+        # From my experience, the same amount of error is also present in
         # G_ML if G_LM is biased. Hence we subtract the error in G_LM(psi<=pi/4)
         # from G_LM(psi) and G_ML(psi).
         if correct_bias:
@@ -275,13 +277,16 @@ class FastNaturalComponents:
         if config_bin is not None:
             self.config_bin.update(config_bin)
 
-    def set_bispectrum(self, bispectrum):
+    def set_bispectrum(self, bispectrum, **args):
         """
         Set and compute the bispectrum multipoles.
+
+        bispectrum (Bispectrum): The bispectrum object.
+        args (dict): The arguments for bispectrum.decompose.
         """
         # update bispectrum multipole
         self.bispectrum = bispectrum
-        self.bispectrum.decompose(self.Lmax)
+        self.bispectrum.decompose(self.Lmax, **args)
         self.set_bin()
 
     def set_bin(self):

@@ -1,3 +1,6 @@
+__author__ = 'Sunao Sugiyama, Rafael Heringer Gomes'
+__version__ = '1.0.2'
+__url__ = 'https://github.com/git-sunao/fastnc'
 # core modules:
 from . import fastnc
 from . import multipole

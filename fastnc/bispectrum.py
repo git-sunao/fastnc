@@ -250,7 +250,7 @@ class BispectrumBase:
         if (not hasattr(self, 'multipole')) or self.multipole.Lmax != Lmax or self.multipole.x.shape != MU.shape or np.any(self.multipole.x != MU) or self.multipole.method != method:
             self.multipole = Multipole(MU, Lmax, method=method, verbose=True)
 
-    def decompose(self, Lmax, nellbin=100, npsibin=100, nmubin=100, 
+    def decompose(self, Lmax, nellbin=100, npsibin=80, nmubin=100, 
             method_decomp='linear', method_bispec='interp'):
         """
         Compute multipole decomposition of kappa bispectrum.
