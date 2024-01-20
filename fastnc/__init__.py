@@ -2,8 +2,9 @@
 from . import fastnc
 from . import multipole
 from . import bispectrum
-# utility modules:
+# supplemental modules:
 from . import halofit
 from . import trigutils
 from . import utils
 from . import devtool
+from . import ncpssh

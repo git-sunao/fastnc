@@ -1,37 +1,30 @@
-"""
-This is the module of fastnc, which calculate the natural components 
-of 3PCF using multipole decomposition and 2DFFTLog.
+#!/usr/bin/env python
+'''
+Description:
+This is the module of fastnc, which calculate the 
+natural components using 2d fftlog
 
-Author: Sunao Sugiyama
-Last edit: 2023/11/27
-"""
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/19 17:00:58
+'''
 import numpy as np
 from scipy.special import eval_legendre
 from scipy.interpolate import RegularGridInterpolator as rgi
 from tqdm import tqdm
 from glob import glob
 import pandas as pd
-import os, pickle
+import os
 # fastnc modules
 from . import twobessel
 from . import trigutils
+from . import utils
 from .interpolation import SemiDiagonalInterpolator as sdi
-# from .multipole import BispectrumMultipole
 
 def sincos2angbar(psi, delta):
     cos2b = np.cos(delta) + np.sin(2*psi)
     sin2b = np.cos(2*psi) * np.sin(delta)
     norm  = np.sqrt(cos2b**2 + sin2b**2)
     return sin2b/norm, cos2b/norm
-
-def _save_pickle(filename, obj):
-    with open(filename, 'wb') as f:
-        pickle.dump(obj, f)
-
-def _load_pickle(filename):
-    with open(filename, 'rb') as f:
-        obj = pickle.load(f)
-    return obj
 
 class GLMdatabase:
     def __init__(self, csv_filename):
@@ -117,7 +110,7 @@ class GLMCalculator:
     cachedir = os.path.join(os.path.dirname(__file__), 'cache')
     databasename = os.path.join(cachedir, 'GLMdatabase.csv')
 
-    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-3, verbose=False, cache=True):
+    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-4, verbose=False, cache=True):
         self.Lmax = Lmax
         self.Mmax = Mmax
         self.psi  = np.linspace(0, np.pi/2, Npsi)
@@ -188,7 +181,7 @@ class GLMCalculator:
         filename = database.find_or_create_entry(len(self.psi), self.tol)
 
         # save
-        _save_pickle(os.path.join(self.cachedir, filename), self.GLMdata)
+        utils.save_pickle(os.path.join(self.cachedir, filename), self.GLMdata)
 
     def load_cache(self):
         # load database
@@ -200,7 +193,7 @@ class GLMCalculator:
         # load
         if filename is not None:
             print('Load GLMdata from cache: {}'.format(filename)) if self.verbose else None
-            self.GLMdata = _load_pickle(os.path.join(self.cachedir, filename))
+            self.GLMdata = utils.load_pickle(os.path.join(self.cachedir, filename))
 
     def __call__(self, L, M, psi):
         isscalar = np.isscalar(L)
@@ -231,15 +224,32 @@ class GLMCalculator:
             out = out[0]
 
         return out
-            
-class FastNaturalComponents:
-    def __init__(self, ell12min, ell12max, Lmax, Mmax, bispectrum=None, nell12bin=200, verbose=True):
-        # initialize bins
-        self.ell1 = self.ell2 = np.logspace(np.log10(ell12min), np.log10(ell12max), nell12bin)
-        self.ELL1, self.ELL2 = np.meshgrid(self.ell1, self.ell2, indexing='ij')
-        self.ELL  = np.sqrt(self.ELL1**2 + self.ELL2**2)
-        self.PSI = np.arctan2(self.ELL2, self.ELL1)
 
+class FastNaturalComponents:
+    """
+    Calculate the natural components using 2dfftlog.
+
+    Supported projection of shear:
+    - x: x-projection
+    - cent: centroid-projection
+    - ortho: orthocenter-projection
+    """
+    def __init__(self, Lmax, Mmax, bispectrum=None, verbose=True, config_bin=None):
+        """
+        Parameters
+        ----------
+        Lmax (int): The maximum multipole moment.
+        Mmax (int): The maximum angular Fourier mode.
+        bispectrum (Bispectrum, optional): The bispectrum object. Defaults to None.
+        verbose (bool, optional): Whether to print the progress. Defaults to True.
+        config_bin (dict, optional): The configuration for binning. Defaults to None.
+
+        Notes on config_bin
+        - auto (bool): Whether to automatically set ell12min, ell12max, and nell12bin. Defaults to True.
+        - ell12min (float): The minimum value of ell12. Defaults to None. If auto is False, this must be specified.
+        - ell12max (float): The maximum value of ell12. Defaults to None. If auto is False, this must be specified.
+        - nell12bin (int): The number of bins for ell12. Defaults to 200.
+        """
         # general setup
         self.verbose = verbose
 
@@ -254,11 +264,16 @@ class FastNaturalComponents:
         self.GLM = GLMCalculator(Lmax, Mmax, verbose=self.verbose)
 
         # 2DFFTLog config
-        self.fftlog_config = {'nu1':1.01, 'nu2':1.01, 'N_pad':0}
+        self.config_fftlog = {'nu1':1.01, 'nu2':1.01, 'N_pad':0}
 
         # set bispectrum
         if bispectrum is not None:
             self.set_bispectrum(bispectrum)
+
+        # set bin
+        self.config_bin = {'auto':True, 'ell12min':None, 'ell12max':None, 'nell12bin':200}
+        if config_bin is not None:
+            self.config_bin.update(config_bin)
 
     def set_bispectrum(self, bispectrum):
         """
@@ -267,8 +282,33 @@ class FastNaturalComponents:
         # update bispectrum multipole
         self.bispectrum = bispectrum
         self.bispectrum.decompose(self.Lmax)
+        self.set_bin()
+
+    def set_bin(self):
+        """
+        Set the bin.
+        """
+        if self.config_bin['auto']:
+            ell12min = self.bispectrum.ell12min
+            ell12max = self.bispectrum.ell12max
+        else:
+            ell12min = self.config_bin['ell12min']
+            ell12max = self.config_bin['ell12max']
+        nell12bin= self.config_bin['nell12bin']
+        self.ell1 = self.ell2 = np.logspace(np.log10(ell12min), np.log10(ell12max), nell12bin)
+        self.ELL1, self.ELL2 = np.meshgrid(self.ell1, self.ell2, indexing='ij')
+        self.ELL  = np.sqrt(self.ELL1**2 + self.ELL2**2)
+        self.PSI = np.arctan2(self.ELL2, self.ELL1)
     
     def sumGLMbL(self, M, ell, psi, Lmax=None):
+        """
+        Compute \sum_L G_LM * b_L(l1, l2).
+
+        M (int): The angular Fourier mode.
+        ell (array): The ell values.
+        psi (array): The psi values.
+        Lmax (int, optional): The maximum value of L. Defaults to None.
+        """
         # Get Lmax
         if Lmax is None:
             Lmax = self.Lmax
@@ -281,6 +321,13 @@ class FastNaturalComponents:
         return sumGLMbL
 
     def FM(self, i, M, Lmax=None):
+        """
+        Compute FM.
+        
+        i (int): The index of the natural component.
+        M (int): The angular Fourier mode.
+        Lmax (int, optional): The maximum value of L. Defaults to None.
+        """
         # Compute sumGLMbL = \sum_L G_LM * b_L(l1, l2)
         sumGLMbL = self.sumGLMbL(M, self.ELL, self.PSI, Lmax=Lmax)
 
@@ -288,7 +335,7 @@ class FastNaturalComponents:
         m, n = [(M-3,-M-3), (M+1,-M-3), (M-3,-M+1), (M-1,-M+1)][i]
 
         # Compute F_M using 2DFFTLog
-        tb  = twobessel.two_Bessel(self.ell1, self.ell2, sumGLMbL*self.ELL1**2*self.ELL2**2, **self.fftlog_config)
+        tb  = twobessel.two_Bessel(self.ell1, self.ell2, sumGLMbL*self.ELL1**2*self.ELL2**2, **self.config_fftlog)
         self.x1, self.x2, FM = tb.two_Bessel(np.abs(m), np.abs(n))
         
         # Apply (-1)**m and (-1)**n 
@@ -309,6 +356,12 @@ class FastNaturalComponents:
         return FM
 
     def compute_FM(self, i, Lmax=None):
+        """
+        Compute FM.
+
+        i (int): The index of the natural component.
+        Lmax (int, optional): The maximum value of L. Defaults to None.
+        """
         # Initialize
         self.FMdata[i] = dict()
 
@@ -318,71 +371,23 @@ class FastNaturalComponents:
             Mlist = range(-self.Mmax, self.Mmax+1)
 
         # Compute FM
-        for M in Mlist:
+        pbar = tqdm(Mlist, desc='[kernel]', disable=not self.verbose)
+        for M in pbar:
+            pbar.set_postfix({'M':M})
             FM = self.FM(i, M, Lmax=Lmax)
             self.FMdata[i][M] = FM
 
             if (i==0 or i==3) and M != 0:
                 self.FMdata[i][-M] = FM.T
 
-    def _phase_orthocenter2centroid(self, i, x1, x2, dvarphi):
-        #https://arxiv.org/pdf/astro-ph/0207454.pdf between eq 12 and 13
-        x1, x2, x3 = trigutils.x1x2dvphi_to_x1x2x3(x1, x2, dvarphi)
-
-        def temp(x1, x2, x3):
-            phi3 = np.arccos( (x1**2+x2**2-x3**2)/2/x1/x2 )
-            cos2psi = ((x2**2-x1**2)**2 - 4*x1**2*x2**2*np.sin(phi3)**2)/4.0
-            sin2psi = (x2**2-x1**2) * x1*x2 * np.sin(phi3)
-            norm = np.sqrt(cos2psi**2 + sin2psi**2)
-            exp2psi = cos2psi/norm + 1j*sin2psi/norm
-            return exp2psi
-
-        exp2psi3 = temp(x1, x2, x3)
-        exp2psi1 = temp(x2, x3, x1)
-        exp2psi2 = temp(x3, x1, x2)
-
-        out = 1
-        for j, phase in enumerate([1.0, exp2psi1, exp2psi2, exp2psi3]):
-            if j == i:
-                out *= phase
-            else:
-                out *= np.conj(phase)
-
-        return out
-
-    def _Gamma_prefactor(self, i, x1, x2, dvarphi, center='centroid'):
-        # Compute prefactor
-        sin2pb, cos2pb = sincos2angbar(np.arctan2(x2, x1), dvarphi)
-        if i==0 or i==1 or i==2:
-            prefactor = 1/(2*np.pi)**4 * (cos2pb - 1j*sin2pb)
-        elif i==3:
-            prefactor = 1/(2*np.pi)**4 * (cos2pb + 1j*sin2pb)
-
-        # Compute phase
-        # Phase to be multiplied to Gamma predicted with orthocenter.
-        if center == 'centroid':
-            phase = self._phase_orthocenter2centroid(i, x1, x2, dvarphi)
-        elif center == 'orthocenter':
-            phase = 1
-        else:
-            print('Error: center={} is not expected'.format(center))
-            
-        # return
-        return phase*prefactor
-
-    def Gamma(self, i, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
+    def Gamma(self, i, dvarphi, Mmax=None, projection='x'):
         """
         Compute Gamma(x1, x2, dphi)
 
-        Parameters
-        ----------
-        dvarphi : float
-            The value of dvarphi.
-        
-        Returns
-        -------
-        Gamma0 : ndarray
-            Gamma(x1, x2, dphi).
+        i (int): The index of the natural component.
+        dvarphi (float): The value of dvarphi.
+        Mmax (int, optional): The maximum value of M. Defaults to None.
+        projection (str, optional): The projection shear. Defaults to 'x'.
         """
         # for test
         if Mmax is None:
@@ -392,7 +397,7 @@ class FastNaturalComponents:
         gamma = np.zeros(self.X1.shape, dtype=np.complex128)
         for M, FM in self.FMdata[i].items():
             # for testing
-            if M > Mmax:
+            if np.abs(M) > Mmax:
                 continue
 
             # Compute phase
@@ -403,106 +408,41 @@ class FastNaturalComponents:
 
             # add
             gamma+= FM * phase
+        gamma *= 1/(2*np.pi)**4
 
-        # multiply prefactor
-        # This multiplicative factor can have very sharp features
-        # in (l1,l2) grid and hence the interpolation may not work well.
-        # We recommend one to interpolate Gamma^0(x1, x2, dphi) without
-        # this prefactor and multiply it later.
-        if multiply_prefactor:
-            gamma *= self._Gamma_prefactor(i, self.X1, self.X2, dvarphi, center=center)
+        # projection conversion
+        gamma *= self.projection_factor(i, self.X1, self.X2, dvarphi, projection)
 
         # return
         return gamma
 
-    def Gamma0(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
+    def Gamma0(self, dvarphi, Mmax=None, projection='x'):
         """
         Compute Gamma^0(x1, x2, dphi)
 
-        Parameters
-        ----------
-        dvarphi : float
-            The value of dvarphi.
-        
-        Returns
-        -------
-        Gamma0 : ndarray
-            Gamma^0(x1, x2, dphi).
+        dvarphi (float): The value of dvarphi.
         """
-        return self.Gamma(0, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+        return self.Gamma(0, dvarphi, Mmax=Mmax, projection=projection)
 
-    def Gamma1(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
-        """
-        Compute Gamma^1(x1, x2, dphi)
-
-        Parameters
-        ----------
-        dvarphi : float
-            The value of dvarphi.
-        
-        Returns
-        -------
-        Gamma1 : ndarray
-            Gamma^1(x1, x2, dphi).
-        """
-        return self.Gamma(1, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
-    
-    def Gamma2(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
-        """
-        Compute Gamma^2(x1, x2, dphi)
-
-        Parameters
-        ----------
-        dvarphi : float
-            The value of dvarphi.
-        
-        Returns
-        -------
-        Gamma2 : ndarray
-            Gamma^2(x1, x2, dphi).
-        """
-        return self.Gamma(2, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
-    
-    def Gamma3(self, dvarphi, multiply_prefactor=True, Mmax=None, center='centroid'):
-        """
-        Compute Gamma^3(x1, x2, dphi)
-
-        Parameters
-        ----------
-        dvarphi : float
-            The value of dvarphi.
-        
-        Returns
-        -------
-        Gamma3 : ndarray
-            Gamma^3(x1, x2, dphi).
-        """
-        return self.Gamma(3, dvarphi, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
-
-    def Gamma_treecorr(self, i, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid', method='sdi', skip=1):
+    def Gamma_treecorr(self, i, r, u, v, Mmax=None, projection='x', method='sdi', skip=1):
         """
         Compute Gamma^0(r, u, v) with treecorr convention.
 
-        Parameters
-        ----------
-        r : array
-            The value of r.
-        u : float
-            The value of u.
-        v : float
-            The value of v.
-        
-        Returns
-        -------
-        Gamma0 : ndarray
-            Gamma^{(i)}(r, u, v).
+        i (int): The index of the natural component.
+        r (array): The value of r.
+        u (float): The value of u.
+        v (float): The value of v.
+        Mmax (int, optional): The maximum value of M. Defaults to None.
+        center (str, optional): The center type. Defaults to 'centroid'.
+        method (str, optional): The interpolation method. Defaults to 'sdi'.
+        skip (int, optional): The skip factor for interpolation. Defaults to 1.
         """
 
         # Compute x1, x2, dvphi
         x1, x2, dvphi = trigutils.ruv_to_x1x2dvphi(r, u, v)
 
         # Compute Gamma0 without prefactor
-        gamma0 = self.Gamma(i, dvphi, multiply_prefactor=False, Mmax=Mmax)
+        gamma0 = self.Gamma(i, dvphi, Mmax=Mmax, projection='x')
 
         # Interpolate
         if method == 'sdi':
@@ -513,92 +453,85 @@ class FastNaturalComponents:
         elif method == 'rgi':
             # This gives artificial oscillations
             logx = np.log10(self.x1)
-            f = f(self.X1*self.X2)**0.5*gamma0
+            f = (self.X1*self.X2)**0.5*gamma0
             f = rgi((logx[::skip], logx[::skip]), f[::skip, ::skip], method='linear')
             gamma0 = f((np.log10(x1), np.log10(x2))) / (x1*x2)**0.5
 
         # Compute and multiply prefactor
-        if multiply_prefactor:
-            gamma0 *= self._Gamma_prefactor(i, x1, x2, dvphi, center=center)
+        gamma0 *= self.projection_factor(i, x1, x2, dvphi, projection)
 
         return gamma0
 
-    def Gamma0_treecorr(self, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
+    def Gamma0_treecorr(self, r, u, v, Mmax=None, projection='x', method='sdi'):
         """
         Compute Gamma^0(r, u, v) with treecorr convention.
 
-        Parameters
-        ----------
-        r : array
-            The value of r.
-        u : float
-            The value of u.
-        v : float
-            The value of v.
-        
-        Returns
-        -------
-        Gamma0 : ndarray
-            Gamma^0(r, u, v).
+        r (array): The value of r.
+        u (float): The value of u.
+        v (float): The value of v.
+        Mmax (int, optional): The maximum value of M. Defaults to None.
+        projection (str, optional): The projection shear. Defaults to 'x'.
+        method (str, optional): The interpolation method. Defaults to 'rgi'.
         """
-        return self.Gamma_treecorr(0, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+        return self.Gamma_treecorr(0, r, u, v, Mmax=Mmax, projection=projection, method=method)
 
-    def Gamma1_treecorr(self, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
+    # multiplicative phase factor to convert between different projections
+    def projection_factor(self, i, x1, x2, dvarphi, projection='x'):
         """
-        Compute Gamma^1(r, u, v) with treecorr convention.
+        Compute the projection factor.
 
-        Parameters
-        ----------
-        r : array
-            The value of r.
-        u : float
-            The value of u.
-        v : float
-            The value of v.
-        
-        Returns
-        -------
-        Gamma1 : ndarray
-            Gamma^1(r, u, v).
+        i (int): The index of the natural component.
+        x1 (array): The value of x1.
+        x2 (array): The value of x2.
+        dvarphi (float): The value of dvarphi.
+        projection (str, optional): The projection shear. Defaults to 'x'.
         """
-        return self.Gamma_treecorr(1, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+        # Compute projection factor
+        if projection == 'x':
+            factor = 1
+        elif projection == 'cent':
+            factor = x2cent(i, x1, x2, dvarphi)
+        elif projection == 'ortho':
+            factor = x2ortho(i, x1, x2, dvarphi)
+        else:
+            raise ValueError('Error: projection={} is not expected'.format(projection))
 
-    def Gamma2_treecorr(self, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
-        """
-        Compute Gamma^2(r, u, v) with treecorr convention.
+        # return
+        return factor
 
-        Parameters
-        ----------
-        r : array
-            The value of r.
-        u : float
-            The value of u.
-        v : float
-            The value of v.
-        
-        Returns
-        -------
-        Gamma2 : ndarray
-            Gamma^2(r, u, v).
-        """
-        return self.Gamma_treecorr(2, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+# phase factors to convert between different projections
+def x2ortho(i, x1, x2, dvarphi):
+    # Compute prefactor
+    sin2pb, cos2pb = sincos2angbar(np.arctan2(x2, x1), dvarphi)
+    if i==0 or i==1 or i==2:
+        out = cos2pb - 1j*sin2pb
+    elif i==3:
+        out = cos2pb + 1j*sin2pb
+    return out
 
-    def Gamma3_treecorr(self, r, u, v, multiply_prefactor=True, Mmax=None, center='centroid'):
-        """
-        Compute Gamma^3(r, u, v) with treecorr convention.
+def ortho2cent(i, x1, x2, dvarphi):
+    x1, x2, x3 = trigutils.x1x2dvphi_to_x1x2x3(x1, x2, dvarphi)
 
-        Parameters
-        ----------
-        r : array
-            The value of r.
-        u : float
-            The value of u.
-        v : float
-            The value of v.
-        
-        Returns
-        -------
-        Gamma3 : ndarray
-            Gamma^3(r, u, v).
-        """
-        return self.Gamma_treecorr(3, r, u, v, multiply_prefactor=multiply_prefactor, Mmax=Mmax, center=center)
+    def temp(x1, x2, x3):
+        phi3 = np.arccos( (x1**2+x2**2-x3**2)/2/x1/x2 )
+        cos2psi = ((x2**2-x1**2)**2 - 4*x1**2*x2**2*np.sin(phi3)**2)/4.0
+        sin2psi = (x2**2-x1**2) * x1*x2 * np.sin(phi3)
+        norm = np.sqrt(cos2psi**2 + sin2psi**2)
+        exp2psi = cos2psi/norm + 1j*sin2psi/norm
+        return exp2psi
+
+    exp2psi3 = temp(x1, x2, x3)
+    exp2psi1 = temp(x2, x3, x1)
+    exp2psi2 = temp(x3, x1, x2)
+
+    out = 1
+    for j, phase in enumerate([1.0, exp2psi1, exp2psi2, exp2psi3]):
+        if j == i:
+            out *= phase
+        else:
+            out *= np.conj(phase)
+
+    return out
+
+def x2cent(i, x1, x2, dvarphi):
+    return x2ortho(i, x1, x2, dvarphi) * ortho2cent(i, x1, x2, dvarphi)

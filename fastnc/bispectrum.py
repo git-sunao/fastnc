@@ -19,11 +19,24 @@ from .utils import loglinear, edge_correction
 wPlanck18 = wCDM(H0=Planck18.H0, Om0=Planck18.Om0, Ode0=Planck18.Ode0, w0=-1.0, meta=Planck18.meta, name='wPlanck18')
 
 class BispectrumBase:
+    """
+    Base class for bispectrum computation.
+    """
+    # The support range of ell1, ell2, mu
+    # Can be set by the user from set_ell12mu_range method
+    ell12min = None
+    ell12max = None
+    epmu     = 1e-7
+
     def __init__(self, cosmo=None, zs=None, pzs=None):
         self.set_cosmology(cosmo or wPlanck18)
         self.set_source_distribution(zs or 1, pzs or 1)
+        
+        # defined the support range of ell1, ell2
+        if self.ell12min is not None and self.ell12max is not None and self.epmu is not None:
+            self.set_ell12mu_range(self.ell12min, self.ell12max, self.epmu)
 
-    # setter
+    # Setter
     def set_cosmology(self, cosmo):
         """
         cosmo (astropy.cosmology): cosmology
@@ -71,37 +84,44 @@ class BispectrumBase:
             self.chi2g = ius(chil, g, ext=1)
             self.zmax = zs.max()
 
-    # setter of suppport range
-    def set_ruv_range(self, rmin, rmax, umin):
-        self.rmin = rmin
-        self.rmax = rmax
-        self.umin = umin
+    def set_ell12mu_range(self, ell12min, ell12max, epmu):
+        """
+        Set support range of ell1, ell2, mu, where
+        ell1 and ell2 are the two side lengths of the triangle,
+        and mu is the cosine of the **outer** angle of the triangle 
+        between ell1 and ell2. Thus the other side length ell3 can be
+        computed from ell1, ell2, and mu:
+
+            ell3 = (ell1**2 + ell2**2 + 2*ell1*ell2*mu)**0.5
+        
+        We avoid the squeezed limit of triangle by setting the minimum
+        of mu to be 1-epmu, where epmu is a small number.
+        """
+        # fastnc args convention
+        self.ell12min = ell12min
+        self.ell12max = ell12max
+        self.mumin    = -1.0 + epmu
+        self.mumax    = 1.0
+
+        # Multipole decomposition args convention.
+        self.ellmin = 2**0.5 * ell12min
+        self.ellmax = 2**0.5 * ell12max
+        self.psimin = min(np.arctan2(ell12min, ell12max), np.pi/2 - np.arctan(ell12max/ell12min))
+        self.psimax = np.pi/4
+
+        # Interpolation args convention.
+        # When ell, psi, mu run over the lectangular region
+        # defined by the above ranges, the ranges of r, u, v
+        # are also given by the ranges on ell, psi, mu.
+        self.rmin = self.ellmin*min(5**-0.5, (1-(1-epmu)*2/5)**0.5)
+        self.rmax = self.ellmax*max(2**-0.5, np.cos(self.psimin))
+        self.umin = min(2**0.5*epmu**0.5, np.tan(self.psimin))
         self.umax = 1.0
         self.vmin = 0.0
         self.vmax = 1.0
 
-    def set_ellpsimu_range(self, ellmin, ellmax, psimin, epmu=1e-7):
-        self.ellmin = ellmin
-        self.ellmax = ellmax
-        self.psimin = psimin
-        self.psimax = np.pi/4
-        self.mumin  = -1.0 + epmu
-        self.mumax  = 1.0
-
-        # When ell, psi, mu run over the lectangular region
-        # defined by the above ranges, the ranges of r, u, v
-        # are also given by the ranges on ell, psi, mu.
-        rmin = ellmin*min(5**-0.5, (1-(1-epmu)*2/5)**0.5)
-        rmax = ellmax*max(2**-0.5, np.cos(psimin))
-        umin = min(2**0.5*epmu**0.5, np.tan(psimin))
-        self.set_ruv_range(rmin, rmax, umin)
-
-    def set_scale_range(self, ellmin, ellmax):
-        ellmin = 2**0.5*ell12min
-        ellmax = 2**0.5*ell12max
-        psimin = min(np.arctan2(ell12min, ell12max), np.pi/2 - np.arctan(ell12max/ell12min))
-
-
+    # Spectra methods
+    # matter power spectrum (to be implemented in subclasses)
     def matter_bispectrum(self, k1, k2, k3, z):
         raise NotImplementedError
 
@@ -113,7 +133,7 @@ class BispectrumBase:
         ell1 (array): ell1 array
         ell2 (array): ell2 array
         ell3 (array): ell3 array
-        method (str): method for computing kappa bispectrum
+        method (str): method for computing kappa bispectrum (direct, interp, resum)
         """
         if method == 'direct':
             return self.kappa_bispectrum_direct(ell1, ell2, ell3, **args)
@@ -189,7 +209,10 @@ class BispectrumBase:
     # interpolation
     def interpolate(self, nrbin=20, nubin=25, nvbin=20, method='linear', nzbin=20, **args):
         """
-        Interpolate kappa bispectrum.
+        Interpolate kappa bispectrum. 
+        The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
+        (https://arxiv.org/abs/astro-ph/0307393). See also treecorr homepage
+        (https://rmjarvis.github.io/TreeCorr/_build/html/correlation3.html).
 
         nrbin (int): number of r bins
         nubin (int): number of u bins
@@ -295,11 +318,16 @@ class BispectrumBase:
         ell (array): ell array
         psi (array): psi array
         """
-        if np.isscalar(L):
+        isscalar = np.isscalar(L)
+        if isscalar:
             L = np.array([L])
         out = np.zeros((L.size,) + ell.shape)
         for i, _L in enumerate(L):
             out[i] = self._kappa_bispectrum_multipole(_L, ell, psi)
+
+        if isscalar:
+            out = out[0]
+            
         return out
 
     def kappa_bispectrum_resum(self, ell1, ell2, ell3):
@@ -320,12 +348,27 @@ class BispectrumBase:
 
 
 class BispectrumHalofit(BispectrumBase):
+    """
+    Bispectrum computed from halofit.
+    """
+    ell12min = 1e-2
+    ell12max = 1e5
+    epmu     = 1e-7
     def __init__(self, cosmo=None, zs=None, pzs=None):
         self.halofit = Halofit()
         super().__init__(cosmo, zs, pzs)
 
-    def set_cosmology(self, cosmo):
+    def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
+        Sets cosmology. 
+
+        cosmo (astropy.cosmology): cosmology
+        ns (float): spectral index of linear power spectrum
+        sigma8 (float): sigma8 of linear power spectrum (at z=0.0)
+
+        Note that the values of ns and sigma8 are set by two ways:
+        1. Assigning ns and sigma8 as arguments of this method.
+        2. Assigning ns and sigma8 to cosmo.meta.
         """
         super().set_cosmology(cosmo)
         # parameters for halofit
@@ -351,6 +394,9 @@ class BispectrumNFW1Halo(BispectrumBase):
     """
     Toy model
     """
+    ell12min = 1e-2
+    ell12max = 1e5
+    epmu     = 1e-7
     def __init__(self, cosmo=None, zs=None, pzs=None, rs=10.0):
         super().__init__(cosmo, zs, pzs)
         self.set_rs(rs)

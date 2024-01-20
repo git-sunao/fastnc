@@ -3,6 +3,7 @@ import numpy as np
 from . import trigutils
 from scipy.special import sici
 from scipy.special import yv, struve
+import time
 
 # plotter for Gamma0
 def rad2min(v):
@@ -56,7 +57,7 @@ def imshow_g0(x1, x2, g0, suptitle=None, xlabel=r'$x_1$', ylabel=r'$x_2$'):
     return fig, axes
 
 # triangle plotter
-def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05), scale=0.2, sort=True, **kwargs):
+def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05), scale=0.2, sort=True, edgecolor='k', **kwargs):
     if sort:
         x3, x2, x1 = np.sort([x1, x2, x3])
 
@@ -97,5 +98,25 @@ def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05),
         raise ValueError('Invalid loc: {}'.format(loc))
 
     # Plot triangle
-    triangle = plt.Polygon(vtx, facecolor='none', transform=ax.transAxes, **kwargs)
+    triangle = plt.Polygon(vtx, edgecolor=edgecolor, facecolor='none', transform=ax.transAxes, **kwargs)
     ax.add_patch(triangle)
+
+class Stopwatch:
+    def __init__(self):
+        self.start = time.time()
+        self.prev = self.start
+    
+    def __call__(self, msg=None):
+        now = time.time()
+        if msg is not None:
+            print('{}: {:.3f}s'.format(msg, now-self.prev))
+        self.prev = now
+
+    def total(self, msg=None):
+        now = time.time()
+        if msg is not None:
+            print('{}: {:.3f}s'.format(msg, now-self.start))
+        return now-self.start
+
+    def close(self):
+        self.total('Total')

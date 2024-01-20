@@ -375,6 +375,10 @@ class Halofit:
         if isinstance(which, str):
             which = [which]
 
+        for term in which:
+            if term not in ['BT', 'Bh1', 'Bh3']:
+                raise ValueError('which arg should be one of BT, Bh1, Bh3 or a list of them.')
+
         # update the internal variables
         self.update()
         
