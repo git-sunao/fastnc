@@ -1,3 +1,12 @@
+#!/usr/bin/env python
+'''
+Description:
+This contains some useful functions for development:
+plotting, triangle plotter, stopwatch, etc.
+
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:14:41
+'''
 import matplotlib.pyplot as plt
 import numpy as np
 from . import trigutils
@@ -101,7 +110,7 @@ def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05),
     triangle = plt.Polygon(vtx, edgecolor=edgecolor, facecolor='none', transform=ax.transAxes, **kwargs)
     ax.add_patch(triangle)
 
-class Stopwatch:
+class StopWatch:
     def __init__(self):
         self.start = time.time()
         self.prev = self.start

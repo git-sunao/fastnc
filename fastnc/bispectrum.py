@@ -1,9 +1,13 @@
-"""
-Bispectrum module.
+#!/usr/bin/env python
+'''
+Description:
+bispectrum.py contains classes for computing bispectrum 
+and various methods of bispectrum: interpolation, 
+multipole decomposition, etc.
 
-Author: Sunao Sugiyama
-Last edit: 2024/01/17
-"""
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:12:26
+'''
 import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline as ius
 from scipy.interpolate import RegularGridInterpolator as rgi
@@ -22,7 +26,7 @@ class BispectrumBase:
     """
     Base class for bispectrum computation.
     """
-    # The support range of ell1, ell2, mu
+    # The predefined support range of ell1, ell2, mu
     # Can be set by the user from set_ell12mu_range method
     ell12min = None
     ell12max = None
@@ -207,7 +211,7 @@ class BispectrumBase:
         return bk
 
     # interpolation
-    def interpolate(self, nrbin=20, nubin=25, nvbin=20, method='linear', nzbin=20, **args):
+    def interpolate(self, nrbin=35, nubin=25, nvbin=25, method='linear', nzbin=20, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
@@ -251,23 +255,24 @@ class BispectrumBase:
             self.multipole = Multipole(MU, Lmax, method=method, verbose=True)
 
     def decompose(self, Lmax, nellbin=100, npsibin=80, nmubin=100, 
-            method_decomp='linear', method_bispec='interp'):
+            method_decomp='linear', method_bispec='interp', **args):
         """
         Compute multipole decomposition of kappa bispectrum.
 
         Lmax (int): maximum multipole
         nellbin (int): number of ell bins
-        npsibin (int): number of psi bins
-        nmubin (int): number of mu bins
+        npsibin (int): number of psi bins on linear part
+        nmubin (int): number of mu bins on linear part
         method_decomp (str): method for multipole decomposition
         method_bispec (str): method for computing bispectrum
+        args (dict): arguments for kappa_bispectrum
 
         Note that the bispectrum is specified by two sides and its *outer* angle,
         while the multipole decomposition is defined with the *inner* angle.
         """
         ell = np.logspace(np.log10(self.ellmin), np.log10(self.ellmax), nellbin)
-        psi = loglinear(self.psimin, 1e-3, 1e-2, self.psimax, npsibin//10, npsibin - npsibin//10)
-        mu  = np.linspace(self.mumin, self.mumax, nmubin)
+        psi = loglinear(self.psimin, 1e-3, self.psimax, 10, npsibin)
+        mu = loglinear(self.mumin+1, 5e-2+1, self.mumax+1, 30, nmubin)-1
         ELL, SPI, MU = np.meshgrid(ell, psi, mu, indexing='ij')
         self.init_multipole(Lmax, MU, method_decomp)
 
@@ -275,7 +280,7 @@ class BispectrumBase:
         # while the multipole decomposition is defined with the outer angle.
         # Thus, we need a minus sign for mu.
         ELL1, ELL2, ELL3 = trigutils.xpsimu_to_x1x2x3(ELL, SPI, -MU)
-        b = self.kappa_bispectrum(ELL1, ELL2, ELL3, method=method_bispec)
+        b = self.kappa_bispectrum(ELL1, ELL2, ELL3, method=method_bispec, **args)
 
         # Compute multipoles
         L = np.arange(Lmax+1)
@@ -351,9 +356,8 @@ class BispectrumHalofit(BispectrumBase):
     """
     Bispectrum computed from halofit.
     """
-    ell12min = 1e-2
+    ell12min = 1e-1
     ell12max = 1e5
-    epmu     = 1e-7
     def __init__(self, cosmo=None, zs=None, pzs=None):
         self.halofit = Halofit()
         super().__init__(cosmo, zs, pzs)
@@ -396,7 +400,6 @@ class BispectrumNFW1Halo(BispectrumBase):
     """
     ell12min = 1e-2
     ell12max = 1e5
-    epmu     = 1e-7
     def __init__(self, cosmo=None, zs=None, pzs=None, rs=10.0):
         super().__init__(cosmo, zs, pzs)
         self.set_rs(rs)

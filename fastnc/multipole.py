@@ -1,3 +1,12 @@
+#!/usr/bin/env python
+'''
+Description:
+multipole.py contains the Multipole class, 
+which computes multipole moments
+
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:13:19
+'''
 import numpy as np
 from scipy.special import eval_legendre
 from scipy.interpolate import RegularGridInterpolator as rgi
@@ -60,7 +69,7 @@ class Multipole:
 
     def get_legendreP_int1(self, L):
         """
-        Return integral of legendre polynomial P_L(x):
+        Return integral of legendre polynomial P_L(x) with x:
         p_L^1 = (2L+1)\int dx P_L(x) x
 
         L (int): multipole moment

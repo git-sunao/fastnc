@@ -1,26 +1,33 @@
+#!/usr/bin/env python
+'''
+Description:
+utils.py contains utility functions for fastnc.
+
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:12:13
+'''
 import numpy as np
 import pickle
 
-def loglinear(logmin, logmax, linmin, linmax, nbinlog, nbinlin):
+def loglinear(xmin, xmid, xmax, nbin1, nbin2):
     """
     Create a log-linear binning.
 
     Parameters:
-    logmin (float): The minimum value for the logarithmic range.
-    logmax (float): The maximum value for the logarithmic range.
-    linmin (float): The minimum value for the linear range.
-    linmax (float): The maximum value for the linear range.
-    nbinlog (int): The number of bins in the logarithmic range.
-    nbinlin (int): The number of bins in the linear range.
+    xmin (float): The minimum value.
+    xmid (float): The value where the logarithmic and linear ranges meet.
+    xmax (float): The maximum value.
+    nbin1 (int): The number of bins in the logarithmic range.
+    nbin2 (int): The number of bins in the linear range.
 
     Returns:
     numpy.ndarray: An array containing the log-linear binning.
     """
-    logmin = np.log10(logmin)
-    logmax = np.log10(logmax)
-    out = np.hstack([np.logspace(logmin, logmax, nbinlog), np.linspace(linmin, linmax, nbinlin)])
-    return out
-
+    xbin1 = np.logspace(np.log10(xmin), np.log10(xmid), nbin1+1)[:-1]
+    xbin2 = np.linspace(xmid, xmax, nbin2)
+    xbin  = np.hstack([xbin1, xbin2])
+    return xbin
+    
 def edge_correction(x, vmin, vmax, atol=1e-8, rtol=1e-5):
     """Replace values in x that are out of bounds but close to the boundary edges.
 

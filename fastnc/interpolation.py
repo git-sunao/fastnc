@@ -1,3 +1,11 @@
+#!/usr/bin/env python
+'''
+Description:
+This is the interpolation module of fastnc.
+
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:16:02
+'''
 import numpy as np
 
 class SemiDiagonalInterpolator:

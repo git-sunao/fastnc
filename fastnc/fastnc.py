@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 '''
 Description:
-This is the module of fastnc, which calculate the 
-natural components using 2d fftlog
+This is the module of fastnc, which calculate the
+natural components using 2d fftlog.
 
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/19 17:00:58
+Last edit  : 2024/01/21 21:13:33
 '''
 import numpy as np
 from scipy.special import eval_legendre
@@ -190,6 +190,13 @@ class GLMCalculator:
             self.GLMdata = utils.load_pickle(os.path.join(self.cachedir, filename))
 
     def __call__(self, L, M, psi):
+        """
+        Compute GLM.
+
+        L (int or array): The multipole moment.
+        M (int): The angular Fourier mode.
+        psi (array): The psi values.
+        """
         isscalar = np.isscalar(L)
         if isscalar:
             L = np.array([L])

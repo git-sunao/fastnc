@@ -1,8 +1,20 @@
+#!/usr/bin/env python
+'''
+Description:
+This is the integration module of fastnc.
+
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:15:40
+'''
 import numpy as np
 
 def err_fnc_diff_by_norm(out1, out2):
     """
-    Error function for adaptive integration.
+    error function for adaptive integration: 
+    difference between two arrays normalized by 
+    the mean of the first array. This error function 
+    measures how much the integral is updated 
+    from out1 to out2.
     """
     diff = np.mean(np.abs(out1-out2))
     mean = np.max(np.abs(out1))
@@ -10,33 +22,23 @@ def err_fnc_diff_by_norm(out1, out2):
 
 def aint(fnc, xmin, xmax, Nx=2, axis=0, tol=1e-3, max_itern=10, err_fnc=None, verbose=False, **fnc_args):
     """
-    Adaptive integration routine.
+    aint (function): Adaptive integration routine.
 
     Parameters
     ----------
-    fnc : function
-        Function to integrate.
-    xmin : float
-        Lower limit of integration.
-    xmax : float
-        Upper limit of integration.
-    Nx : int
-        Initial number of bins.
-    axis : int
-        Axis along which to integrate.
-    tol : float
-        Tolerance for error.
-    max_itern : int
-        Maximum number of iterations.
-    err_fnc : function
-        Function to calculate the error.
-        Default is err_fnc_diff_by_norm.
-    verbose : bool
+    fnc (function): Function to integrate.
+    xmin (float): Lower limit of integration.
+    xmax (float): Upper limit of integration.
+    Nx (int): Initial number of bins.
+    axis (int): Axis along which to integrate.
+    tol (float): Tolerance for error.
+    max_itern (int): Maximum number of iterations.
+    err_fnc (function): Function to calculate the error. Default is err_fnc_diff_by_norm.
+    verbose (bool): Verbose flag.
 
     Returns
     -------
-    out : float
-        Integral.
+    out (float): Integral.
     """
 
     if err_fnc is None:
