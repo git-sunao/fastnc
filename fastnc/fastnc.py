@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:40:33
+Last edit  : 2024/01/21 23:19:53
 
 Description:
 This is the module of fastnc, which calculate the
@@ -324,7 +324,7 @@ class FastNaturalComponents:
         sumGLMbL = np.sum(GLM*bL, axis=0)
         return sumGLMbL
 
-    def FM(self, i, M, Lmax=None):
+    def FM(self, i, M, Lmax=None, dlnx=None):
         """
         Compute FM.
         
@@ -340,7 +340,10 @@ class FastNaturalComponents:
 
         # Compute F_M using 2DFFTLog
         tb  = twobessel.two_Bessel(self.ell1, self.ell2, sumGLMbL*self.ELL1**2*self.ELL2**2, **self.config_fftlog)
-        self.x1, self.x2, FM = tb.two_Bessel(np.abs(m), np.abs(n))
+        if dlnx is None:
+            self.x1, self.x2, FM = tb.two_Bessel(np.abs(m), np.abs(n))
+        else:
+            self.x1, self.x2, FM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnx, dlnx)
         
         # Apply (-1)**m and (-1)**n 
         # These originate to J_m(x) = (-1)^m J_{-m}(x)
@@ -359,7 +362,7 @@ class FastNaturalComponents:
         # return
         return FM
 
-    def compute_FM(self, i, Lmax=None):
+    def compute_FM(self, i, Lmax=None, dlnx=None):
         """
         Compute FM.
 
@@ -378,7 +381,7 @@ class FastNaturalComponents:
         pbar = tqdm(Mlist, desc='[kernel]', disable=not self.verbose)
         for M in pbar:
             pbar.set_postfix({'M':M})
-            FM = self.FM(i, M, Lmax=Lmax)
+            FM = self.FM(i, M, Lmax=Lmax, dlnx=dlnx)
             self.FMdata[i][M] = FM
 
             if (i==0 or i==3) and M != 0:
