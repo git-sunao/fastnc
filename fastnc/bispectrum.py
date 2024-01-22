@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 '''
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:42:37
+
 Description:
 bispectrum.py contains classes for computing bispectrum 
 and various methods of bispectrum: interpolation, 
 multipole decomposition, etc.
-
-Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:12:26
 '''
 import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline as ius

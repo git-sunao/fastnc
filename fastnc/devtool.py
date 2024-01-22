@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 '''
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:40:59
+
 Description:
 This contains some useful functions for development:
 plotting, triangle plotter, stopwatch, etc.
-
-Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:14:41
 '''
 import matplotlib.pyplot as plt
 import numpy as np

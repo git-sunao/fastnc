@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 '''
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:40:33
+
 Description:
 This is the module of fastnc, which calculate the
 natural components using 2d fftlog.
-
-Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:13:33
 '''
 import numpy as np
 from scipy.special import eval_legendre

@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 '''
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:41:33
+
 Description:
 utils.py contains utility functions for fastnc.
-
-Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:12:13
 '''
 import numpy as np
 import pickle

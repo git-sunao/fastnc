@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 '''
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:41:09
+
 Description:
 halofit.py contains the Halofit class. 
 See the references below:
 https://arxiv.org/abs/1208.2701
 https://arxiv.org/abs/1911.07886
-
-Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:13:48
 '''
 import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline as ius

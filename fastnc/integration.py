@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 '''
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:41:14
+
 Description:
 This is the integration module of fastnc.
-
-Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:15:40
 '''
 import numpy as np
 

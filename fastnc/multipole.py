@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 '''
+Author     : Sunao Sugiyama 
+Last edit  : 2024/01/21 21:41:24
+
 Description:
 multipole.py contains the Multipole class, 
 which computes multipole moments
-
-Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:13:19
 '''
 import numpy as np
 from scipy.special import eval_legendre
