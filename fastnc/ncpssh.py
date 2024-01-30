@@ -35,7 +35,7 @@ class NaturalConponentPSSH:
         Performs R integral in Eq. (19) of https://arxiv.org/abs/2208.11686
         """
         R = np.logspace(np.log10(self.ellmin), np.log10(self.ellmax), 1024)
-        ell1, ell2, ell3 = trigutils.xpsimu_to_x1x2x3(R, psi, -np.cos(varphi))
+        ell1, ell2, ell3 = trigutils.xpsimu_to_x1x2x3(R, psi, np.cos(varphi))
         b = self.bispectrum.kappa_bispectrum(ell1, ell2, ell3, method=self.method_bispec)
         f = R**4*b
         if f[-1] != 0:
@@ -88,9 +88,9 @@ class NaturalConponentPSSH:
         out+= self.integrand(f_interp, x1, x2, phi3, np.pi/2-psi, 2*np.pi-varphi)
         return out
 
-    def _phase_orthocenter2centroid(self, i, x1, x2, dvarphi):
+    def _phase_orthocenter2centroid(self, i, x1, x2, phi):
         #https://arxiv.org/pdf/astro-ph/0207454.pdf between eq 12 and 13
-        x1, x2, x3 = trigutils.x1x2dvphi_to_x1x2x3(x1, x2, dvarphi)
+        x1, x2, x3 = trigutils.x1x2phi_to_x1x2x3(x1, x2, phi)
 
         def temp(x1, x2, x3):
             phi3 = np.arccos( (x1**2+x2**2-x3**2)/2/x1/x2 )
@@ -113,9 +113,9 @@ class NaturalConponentPSSH:
 
         return out
 
-    def phase(self, i,x1,x2,dvphi,projection):
+    def phase(self, i,x1,x2,phi,projection):
         if projection=='cent':
-            return self._phase_orthocenter2centroid(i,x1,x2,dvphi)
+            return self._phase_orthocenter2centroid(i,x1,x2,phi)
         else:
             raise NotImplementedError
 
@@ -141,13 +141,12 @@ class NaturalConponentPSSH:
 
         out *= np.exp(1j*(phi1-phi2))
 
-        out *= self.phase(0, x1, x2, phi3-np.pi, projection)
+        out *= self.phase(0, x1, x2, phi3, projection)
 
         out *= -1
 
         return out
 
     def Gamma0_treecorr(self, r, u, v, npsibin=50, nvarphibin=50, projection='cent'):
-        x1, x2, dvarphi = trigutils.ruv_to_x1x2dvphi(r, u, v)
-        phi3 = np.pi+dvarphi
-        return self.Gamma0(x1, x2, phi3, npsibin=npsibin, nvarphibin=nvarphibin, projection=projection)
+        x1, x2, phi = trigutils.ruv_to_x1x2phi(r, u, v)
+        return self.Gamma0(x1, x2, phi, npsibin=npsibin, nvarphibin=nvarphibin, projection=projection)

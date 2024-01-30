@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/29 16:56:07
+Last edit  : 2024/01/30 15:22:32
 
 Description:
 This is the module of fastnc, which calculate the
@@ -338,8 +338,12 @@ class FastNaturalComponents:
         if HM is None:
             HM = self.HM(M, self.ELL, self.PSI, **args)
 
+        # transpose for component 3
+        if i == 3:
+            HM = HM.T
+
         # Get (n,m) from M.
-        m, n = [(M-3,-M-3), (M+1,-M-3), (M-3,-M+1), (-M-1,M-1)][i]
+        m, n = [(M-3,-M-3), (M-3,-M+1), (M+1,-M-3), (M-1,-M-1)][i]
 
         # Compute F_M using 2DFFTLog
         tb  = twobessel.two_Bessel(self.ell1, self.ell2, HM*self.ELL1**2*self.ELL2**2, **self.config_fftlog)
@@ -355,13 +359,6 @@ class FastNaturalComponents:
         if n < 0:
             GM *= (-1.)**n
         GM /= (2*np.pi)**3
-
-        # Transpose
-        # Note that (l1, l2) is couple to (x2,x1) in fastnc 
-        # formalism for Gamma_0^(M), 
-        # not to (x1, x2) which is convention of 2DFFTLog.
-        # if i == 0:
-        #     GM = GM.T
 
         self.X1, self.X2 = np.meshgrid(self.x1, self.x2, indexing='ij')
 

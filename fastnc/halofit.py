@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/29 23:12:56
+Last edit  : 2024/01/30 00:20:53
 
 Description:
 halofit.py contains the Halofit class. 

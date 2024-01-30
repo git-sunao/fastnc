@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/29 19:34:43
+Last edit  : 2024/01/30 15:15:03
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
