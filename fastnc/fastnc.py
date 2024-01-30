@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/30 15:22:32
+Last edit  : 2024/01/30 15:24:58
 
 Description:
 This is the module of fastnc, which calculate the
@@ -377,6 +377,9 @@ class FastNaturalComponents:
             Mmax = self.Mmax
         if Lmax is None:
             Lmax = self.Lmax
+
+        if isinstance(indices, int):
+            indices = [indices]
 
         # 1. computes the kernel function GammaM
         self.tabGM = dict()
