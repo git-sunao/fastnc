@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/28 23:01:39
+Last edit  : 2024/01/29 16:56:07
 
 Description:
 This is the module of fastnc, which calculate the
@@ -86,7 +86,7 @@ class GLMCalculator:
     """
     Calculate the GLM coefficients.
     .. math:
-        G_LM(psi) = 2 \int_0^{\pi} dx P_L(\cos(x)) \cos[2\bar\beta(\psi, x) + M x]
+        G_LM(psi) = 2 \\int_0^{\\pi} dx P_L(\\cos(x)) \\cos[2\\bar\\beta(\\psi, x) + M x]
 
     Parameters:
     - Lmax (int): Maximum multipole moment.
@@ -307,7 +307,7 @@ class FastNaturalComponents:
     
     def HM(self, M, ell, psi, Lmax=None):
         """
-        Compute H_M(l1, l2 = \sum_L (-1)^L * G_LM * b_L(l1, l2).
+        Compute H_M(l1, l2 = \\sum_L (-1)^L * G_LM * b_L(l1, l2).
 
         M (int): The angular Fourier mode.
         ell (array): The ell values.

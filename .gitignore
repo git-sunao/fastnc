@@ -3,6 +3,7 @@ fastnc/cache/
 
 .DS_Store
 .vscode/
+dev/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

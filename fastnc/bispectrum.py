@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/28 23:02:26
+Last edit  : 2024/01/29 19:34:43
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -25,6 +25,16 @@ wPlanck18 = wCDM(H0=Planck18.H0, Om0=Planck18.Om0, Ode0=Planck18.Ode0, w0=-1.0, 
 class BispectrumBase:
     """
     Base class for bispectrum computation.
+
+    Usage:
+    >>> b = BispectrumBase()
+    >>> b.set_cosmology(cosmo)
+    >>> b.set_source_distribution(zs, pzs)
+    >>> b.set_ell12mu_range(ell12min, ell12max, epmu)
+    >>> b.interpolate(nrbin=35, nubin=25, nvbin=25, method='linear', nzbin=20)
+    >>> b.decompose(Lmax, nellbin=100, npsibin=50, nmubin=50, method_decomp='linear', method_bispec='interp')
+    >>> b.kappa_bispectrum_multipole(L, ell, psi)
+    >>> b.kappa_bispectrum_resum(ell1, ell2, ell3)
     """
     # The predefined support range of ell1, ell2, mu
     # Can be set by the user from set_ell12mu_range method
@@ -33,6 +43,14 @@ class BispectrumBase:
     epmu     = 1e-7
 
     def __init__(self, cosmo=None, zs=None, pzs=None):
+        """
+        cosmo (astropy.cosmology): cosmology
+        zs (array): redshift array
+        pzs (array): probability distribution of source galaxies
+
+        If the source redshift distribution is a single redshift,
+        i.e. delta function distribution, zs and pzs can be scalar.
+        """
         self.set_cosmology(cosmo or wPlanck18)
         self.set_source_distribution(zs or 1, pzs or 1)
         
@@ -251,6 +269,13 @@ class BispectrumBase:
 
     # multipole decomposition
     def init_multipole(self, Lmax, MU, method='linear'):
+        """
+        Initialize multipole decomposition.
+
+        Lmax (int): maximum multipole
+        MU (array): mu array
+        method (str): method for multipole decomposition
+        """
         if (not hasattr(self, 'multipole')) or self.multipole.Lmax != Lmax or self.multipole.x.shape != MU.shape or np.any(self.multipole.x != MU) or self.multipole.method != method:
             self.multipole = Multipole(MU, Lmax, method=method, verbose=True)
 

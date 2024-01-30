@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/28 23:02:55
+Last edit  : 2024/01/29 23:12:56
 
 Description:
 halofit.py contains the Halofit class. 
@@ -13,6 +13,7 @@ import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline as ius
 from scipy.integrate import simps
 from scipy.optimize import bisect
+from scipy.special import gamma, gammaincc
 
 class Halofit:
     """
@@ -127,21 +128,67 @@ class Halofit:
 
         return pk
 
-    def _sigmam(self, k, Delta, r, window):
+    def _sigmam(self, k, Delta, r, window, extrap=False):
         """
         Calculate sigmaM.
+
+        k (np.ndarray): array of comoving Fourier modes
+        Delta (np.ndarray): array of Delta^2(k)
+        r (float): smoothing scale
+        window (function): window function
+        extrap (bool): if True, extrapolate the power spectrum for higher k
+
+        Returns:
+        sigmam (float): sigmaM
+
+        Note
+        ----
+        The integral is calculated by the Simpson's rule.
+        If extrap is True, the power spectrum is extrapolated by a power law: A k^n.
+
+        And the integral is calculated as follows:
+
+        ..math::
+            sigma_m(R)  = \\int_-inf^inf dlnk Delta(k) W^2(kR)
+                        = \\int_-inf^kmax dlnk Delta(k) W^2(kR) + \\int_kmax^inf dlnk Delta(k) W^2(kR)
+                        ~ sum_i Delta_i W^2(k_i R) dlnk + \\int_kmax^inf dlnk Delta(k) W^2(kR)
+
+        Assuming the Delta at high k can be approximated by a power law, ~ A k^n, and Gaussian window,
+
+        ..math::
+            sigma_m(R)  = I2 + \\int_kmax^inf dlnk Ak^n e^(-k^2R^2)
+                        = I2 + A R^(-n) Gamma(n/2) Gamma^reg(n/2, tmin)
+
+        where tmin = kmax^2R^2, and Gamma^reg is the regularized gamma function.
         """
         I2    = simps(Delta * window(k*r)**2, np.log(k))
+
+        if extrap:
+            # spectral index and amplitude of Delta at high k
+            n = np.diff(np.log(Delta))[-1]/np.diff(np.log(k))[-1]
+            A = Delta[-1] * k[-1]**(-n)
+            tmin = k[-1] * r
+            I2 += A * r**-n * 0.5*gamma(n/2) * gammaincc(n/2, tmin**2)
+            
         return I2**0.5
         
-    def get_r_sigma(self, z, rtol=1e-5):
+    def get_r_sigma(self, z, rtol=1e-5, maxiter=10):
         """
         Returns nonlinear scale, r_sigma.
         """
         k     = np.logspace(-3, 2, 1000)
         Delta = self.get_interpolated_pklin(k, z)*k**3 / 2/np.pi**2
-        def eq(R): return self._sigmam(k, Delta, R, window_gaussian) - 1.0
-        r_sigma = abs(bisect(eq, k.min(), k.max(), rtol=rtol))
+        def eq(R): return self._sigmam(k, Delta, R, window_gaussian, extrap=True) - 1.0
+        # initial guess
+        rmin, rmax = 1.0/k.max(), 1.0/k.min()
+        niter = 0
+        while eq(rmin)*eq(rmax) > 0 and niter <= maxiter:
+            rmin /= 2.0
+            niter += 1
+        if niter > maxiter:
+            r_sigma = rmin
+        else:
+            r_sigma = abs(bisect(eq, rmin, rmax, rtol=rtol))
         return r_sigma
     
     # ingredients
