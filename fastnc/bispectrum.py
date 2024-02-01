@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/30 15:15:03
+Last edit  : 2024/01/30 23:14:26
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -162,7 +162,7 @@ class BispectrumBase:
         elif method == 'interp':
             return self.kappa_bispectrum_interp(ell1, ell2, ell3)
         elif method == 'resum':
-            return self.kappa_bispectrum_resum(ell1, ell2, ell3)
+            return self.kappa_bispectrum_resum(ell1, ell2, ell3, **args)
         else:
             raise ValueError("method must be 'direct', 'interp', or 'resum'")
         
@@ -354,7 +354,7 @@ class BispectrumBase:
             
         return out
 
-    def kappa_bispectrum_resum(self, ell1, ell2, ell3):
+    def kappa_bispectrum_resum(self, ell1, ell2, ell3, Lmax=None):
         """
         Compute kappa bispectrum by resummation of multipoles.
 
@@ -363,7 +363,8 @@ class BispectrumBase:
         ell3 (array): ell3 array
         """
         ell, psi, mu = trigutils.x1x2x3_to_xpsimu(ell1, ell2, ell3)
-        Lmax = self.multipoles_data['bL'].shape[0]
+        if Lmax is None:
+            Lmax = self.multipoles_data['bL'].shape[0]
         L = np.arange(Lmax)
         bL = self.kappa_bispectrum_multipole(L, ell, psi)
         pL = np.array([eval_legendre(_L, mu) for _L in L])

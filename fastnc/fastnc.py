@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/30 15:24:58
+Last edit  : 2024/02/01 00:20:50
 
 Description:
 This is the module of fastnc, which calculate the
@@ -339,18 +339,18 @@ class FastNaturalComponents:
             HM = self.HM(M, self.ELL, self.PSI, **args)
 
         # transpose for component 3
-        if i == 3:
+        if i == 1:
             HM = HM.T
 
         # Get (n,m) from M.
-        m, n = [(M-3,-M-3), (M-3,-M+1), (M+1,-M-3), (M-1,-M-1)][i]
+        m, n = [(M-3,-M-3), (M-1,-M-1), (M+1,-M-3), (M-3,-M+1)][i]
 
         # Compute F_M using 2DFFTLog
         tb  = twobessel.two_Bessel(self.ell1, self.ell2, HM*self.ELL1**2*self.ELL2**2, **self.config_fftlog)
         if dlnx is None:
-            self.x1, self.x2, GM = tb.two_Bessel(np.abs(m), np.abs(n))
+            self.t1, self.t2, GM = tb.two_Bessel(np.abs(m), np.abs(n))
         else:
-            self.x1, self.x2, GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnx, dlnx)
+            self.t1, self.t2, GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnx, dlnx)
 
         # Apply (-1)**m and (-1)**n 
         # These originate to J_m(x) = (-1)^m J_{-m}(x)
@@ -360,7 +360,7 @@ class FastNaturalComponents:
             GM *= (-1.)**n
         GM /= (2*np.pi)**3
 
-        self.X1, self.X2 = np.meshgrid(self.x1, self.x2, indexing='ij')
+        self.T1, self.T2 = np.meshgrid(self.t1, self.t2, indexing='ij')
 
         # return
         return GM
@@ -394,7 +394,7 @@ class FastNaturalComponents:
 
     def Gamma(self, i, phi, Mmax=None, projection='x'):
         """
-        Compute Gamma(x1, x2, dphi)
+        Compute Gamma(t1, t2, dphi)
 
         i (int): The index of the natural component.
         phi (float): The value of phi.
@@ -405,8 +405,8 @@ class FastNaturalComponents:
         if Mmax is None:
             Mmax = self.Mmax
 
-        # compute Gamma^0(x1, x2, dphi)
-        Gamma = np.zeros(self.X1.shape, dtype=np.complex128)
+        # compute Gamma^0(t1, t2, dphi)
+        Gamma = np.zeros(self.T1.shape, dtype=np.complex128)
         for M in range(-Mmax, Mmax+1):
             key = [(0, abs(M)), 
                    (1, abs(M)) if M>=0 else (2, abs(M)), 
@@ -418,14 +418,14 @@ class FastNaturalComponents:
         Gamma *= 1/(2*np.pi)
 
         # projection conversion
-        Gamma *= self.projection_factor(i, self.X1, self.X2, phi, projection)
+        Gamma *= self.projection_factor(i, self.T1, self.T2, phi, projection)
 
         # return
         return Gamma
 
     def Gamma0(self, phi, Mmax=None, projection='x'):
         """
-        Compute Gamma^0(x1, x2, dphi)
+        Compute Gamma^0(t1, t2, dphi)
 
         phi (float): The value of phi.
         """
@@ -444,8 +444,8 @@ class FastNaturalComponents:
         skip (int, optional): The skip factor for interpolation. Defaults to 1.
         """
 
-        # Compute x1, x2, phi
-        x1, x2, phi = trigutils.ruv_to_x1x2phi(r, u, v, rot=0)
+        # Compute t1, t2, phi
+        t1, t2, phi = trigutils.ruv_to_x1x2phi(r, u, v, rot=0)
         # x2, x1, phi = trigutils.ruv_to_x1x2phi(r, u, v, rot=2)
 
         # Compute Gamma0 without prefactor
@@ -453,19 +453,19 @@ class FastNaturalComponents:
 
         # Interpolate
         if method == 'sdi':
-            logx = np.log10(self.x1)
-            f = (self.X1*self.X2)**0.5*gamma0
+            logx = np.log10(self.t1)
+            f = (self.T1*self.T2)**0.5*gamma0
             f = sdi(logx[::skip], logx[::skip], f[::skip, ::skip])
-            gamma0 = f(np.log10(x1), np.log10(x2)) / (x1*x2)**0.5
+            gamma0 = f(np.log10(t1), np.log10(t2)) / (t1*t2)**0.5
         elif method == 'rgi':
             # This gives artificial oscillations
-            logx = np.log10(self.x1)
-            f = (self.X1*self.X2)**0.5*gamma0
+            logx = np.log10(self.t1)
+            f = (self.T1*self.T2)**0.5*gamma0
             f = rgi((logx[::skip], logx[::skip]), f[::skip, ::skip], method='linear')
-            gamma0 = f((np.log10(x1), np.log10(x2))) / (x1*x2)**0.5
+            gamma0 = f((np.log10(t1), np.log10(t2))) / (t1*t2)**0.5
 
         # Compute and multiply prefactor
-        gamma0 *= self.projection_factor(i, x1, x2, phi, projection)
+        gamma0 *= self.projection_factor(i, t1, t2, phi, projection)
 
         return gamma0
 
@@ -483,13 +483,13 @@ class FastNaturalComponents:
         return self.Gamma_treecorr(0, r, u, v, Mmax=Mmax, projection=projection, method=method)
 
     # multiplicative phase factor to convert between different projections
-    def projection_factor(self, i, x1, x2, phi, projection='x'):
+    def projection_factor(self, i, t1, t2, phi, projection='x'):
         """
         Compute the projection factor.
 
         i (int): The index of the natural component.
-        x1 (array): The value of x1.
-        x2 (array): The value of x2.
+        t1 (array): The value of t1.
+        t2 (array): The value of t2.
         phi (float): The value of phi.
         projection (str, optional): The projection shear. Defaults to 'x'.
         """
@@ -497,9 +497,9 @@ class FastNaturalComponents:
         if projection == 'x':
             factor = 1
         elif projection == 'cent':
-            factor = x2cent(i, x1, x2, phi)
+            factor = x2cent(i, t1, t2, phi)
         elif projection == 'ortho':
-            factor = x2ortho(i, x1, x2, phi)
+            factor = x2ortho(i, t1, t2, phi)
         else:
             raise ValueError('Error: projection={} is not expected'.format(projection))
 
@@ -507,29 +507,29 @@ class FastNaturalComponents:
         return factor
 
 # phase factors to convert between different projections
-def x2ortho(i, x1, x2, phi):
+def x2ortho(i, t1, t2, phi):
     # Compute prefactor
-    sin2pb, cos2pb = sincos2angbar(np.arctan2(x2, x1), np.pi-phi)
+    sin2pb, cos2pb = sincos2angbar(np.arctan2(t2, t1), np.pi-phi)
     if i==0 or i==1 or i==2:
         out = cos2pb - 1j*sin2pb
     elif i==3:
         out = cos2pb + 1j*sin2pb
     return out
 
-def ortho2cent(i, x1, x2, phi):
-    x1, x2, x3 = trigutils.x1x2phi_to_x1x2x3(x1, x2, phi)
+def ortho2cent(i, t1, t2, phi):
+    t1, t2, t3 = trigutils.x1x2phi_to_x1x2x3(t1, t2, phi)
 
-    def temp(x1, x2, x3):
-        phi3 = np.arccos( (x1**2+x2**2-x3**2)/2/x1/x2 )
-        cos2psi = ((x2**2-x1**2)**2 - 4*x1**2*x2**2*np.sin(phi3)**2)/4.0
-        sin2psi = (x2**2-x1**2) * x1*x2 * np.sin(phi3)
+    def temp(t1, t2, t3):
+        phi3 = np.arccos( (t1**2+t2**2-t3**2)/2/t1/t2 )
+        cos2psi = ((t2**2-t1**2)**2 - 4*t1**2*t2**2*np.sin(phi3)**2)/4.0
+        sin2psi = (t2**2-t1**2) * t1*t2 * np.sin(phi3)
         norm = np.sqrt(cos2psi**2 + sin2psi**2)
         exp2psi = cos2psi/norm + 1j*sin2psi/norm
         return exp2psi
 
-    exp2psi3 = temp(x1, x2, x3)
-    exp2psi1 = temp(x2, x3, x1)
-    exp2psi2 = temp(x3, x1, x2)
+    exp2psi3 = temp(t1, t2, t3)
+    exp2psi1 = temp(t2, t3, t1)
+    exp2psi2 = temp(t3, t1, t2)
 
     out = 1
     for j, phase in enumerate([1.0, exp2psi1, exp2psi2, exp2psi3]):
@@ -540,14 +540,14 @@ def ortho2cent(i, x1, x2, phi):
 
     return out
 
-def x2cent(i, x1, x2, phi):
+def x2cent(i, t1, t2, phi):
     # Equations between Eq. (15) and (16) 
     # of https://arxiv.org/abs/2309.08601
-    v = x1+x2*np.exp(-1j*phi)
+    v = t1+t2*np.exp(-1j*phi)
     q1 = v/np.conj(v)
-    v = -2*x1+x2*np.exp(-1j*phi)
+    v = -2*t1+t2*np.exp(-1j*phi)
     q2 = v/np.conj(v)
-    v = x1-2*x2*np.exp(-1j*phi)
+    v = t1-2*t2*np.exp(-1j*phi)
     q3 = v/np.conj(v)
     
     if i==0:

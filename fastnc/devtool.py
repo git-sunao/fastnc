@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:40:59
+Last edit  : 2024/02/01 00:21:45
 
 Description:
 This contains some useful functions for development:
@@ -18,7 +18,7 @@ import time
 def rad2min(v):
     return np.rad2deg(v)*60.0
 
-def log_imshow(ax, z, extent, cmap='bwr', add_cbar=True, vmax=None):
+def log_imshow(ax, z, extent, cmap='bwr', add_cbar=True, vmax=None, return_im=False):
     def cbfmt(x, pos):
         a, b = '{:.1e}'.format(x).split('e')
         b = int(b)
@@ -30,9 +30,12 @@ def log_imshow(ax, z, extent, cmap='bwr', add_cbar=True, vmax=None):
     if add_cbar:
         plt.colorbar(im, ax=ax, format=cbfmt)
     ax.invert_yaxis()
-    return vmax
+    if return_im:
+        return vmax, im
+    else:
+        return vmax
 
-def set_minute_extent(ax, x1, x2, xlabel=r'$x_1~[{\rm arcmin}]$', ylabel=r'$x_2~[{\rm arcmin}]$'):
+def set_minute_extent(ax, x1, x2, xlabel=r'$\theta_1~[{\rm arcmin}]$', ylabel=r'$\theta_2~[{\rm arcmin}]$'):
     def helper(v, pos):
         return r'$10^{%d}$' % (v)
 
@@ -48,7 +51,7 @@ def set_minute_extent(ax, x1, x2, xlabel=r'$x_1~[{\rm arcmin}]$', ylabel=r'$x_2~
     extent = [logx1.min(), logx1.max(), logx2.max(), logx2.min()]
     return extent
 
-def imshow_g0(x1, x2, g0, suptitle=None, xlabel=r'$x_1$', ylabel=r'$x_2$'):
+def imshow_g0(x1, x2, g0, suptitle=None, xlabel=r'$\theta_1$', ylabel=r'$\theta_2$'):
     xx1, xx2 = np.meshgrid(x1, x2)
     z = g0*np.sqrt(xx1*xx2)
 
