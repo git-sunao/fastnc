@@ -74,15 +74,16 @@ class OneJNaturalConponent:
 
         return out
 
-    def Gamma0(self, t, tau, phi, projection='x'):
+    def Gamma0(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=100):
         """
         t (array)
         tau (float)
         phi (float)
         """
         # psi = loglinear(self.psimin, 1e-3, self.psimax, 60, 60)
-        psi = np.linspace(self.psimin, self.psimax, 100)
-        dbeta = np.pi-np.arccos(1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, 70, 60)[::-1])
+        psi = np.linspace(self.psimin, self.psimax, nbin_psi)
+        # dbeta = np.pi-np.arccos(1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, 70, 60)[::-1])
+        dbeta = np.pi-np.arccos(1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, nbin_dbeta, nbin_dbeta)[::-1])
 
         out = []
         for _psi in psi:

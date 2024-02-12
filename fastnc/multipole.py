@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:41:24
+Last edit  : 2024/02/12 16:18:00
 
 Description:
 multipole.py contains the Multipole class, 
@@ -122,7 +122,7 @@ class Multipole:
 
         return out
 
-    def _decompose_riemann(self, y, L, axis=0):
+    def _decompose_riemann(self, f, L, axis=0):
         """
         Decompose a function y=f(x) into multipole moments
         by approximating the integral with a Riemann sum.
@@ -135,7 +135,7 @@ class Multipole:
         axis (int): axis along which to interpolate
         """
         p = self.get_legendreP(L)
-        out = np.sum(f*p,axis=axis) * (2*L+1)/2 * (x[1]-x[0])
+        out = np.sum(f*p,axis=axis) * (2*L+1)/2 * (self.x[1]-self.x[0])
         return out
 
     def _decompose(self, f, L, axis=0):
