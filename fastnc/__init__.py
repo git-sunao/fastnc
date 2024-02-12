@@ -10,5 +10,5 @@ from . import halofit
 from . import trigutils
 from . import utils
 from . import devtool
-from . import ncpssh
+from . import onejnc
 from . import integration

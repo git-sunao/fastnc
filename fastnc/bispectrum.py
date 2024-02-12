@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/30 23:14:26
+Last edit  : 2024/02/12 13:43:49
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -52,7 +52,10 @@ class BispectrumBase:
         i.e. delta function distribution, zs and pzs can be scalar.
         """
         self.set_cosmology(cosmo or wPlanck18)
-        self.set_source_distribution(zs or 1, pzs or 1)
+        if zs is None and pzs is None:
+            print('setting a default source distribution: zs=1, pzs=1')
+            zs, pzs = 1, 1
+        self.set_source_distribution(zs, pzs)
         
         # defined the support range of ell1, ell2
         if self.ell12min is not None and self.ell12max is not None and self.epmu is not None:
@@ -72,8 +75,24 @@ class BispectrumBase:
         # spline chi <-> z
         self.z2chi = ius(z, chi)
         self.chi2z = ius(chi, z)
+        self.has_changed = True
 
-    def set_source_distribution(self, zs, pzs, nzlbin=101):
+    def set_source_distribution(self, zs, pzs):
+        """
+        Set source distribution.
+
+        zs (array): redshift array
+        pzs (array): probability distribution of source galaxies
+        """
+        if np.isscalar(zs):
+            zs = np.asarray(zs)
+            pzs = np.asarray(pzs)
+        assert zs.size == pzs.size, "zs and pzs must have the same length"
+        self.zs = zs
+        self.pzs= pzs
+        self.has_changed = True
+
+    def compute_lensing_kernel(self, nzlbin=101):
         """
         Set source distribution.
 
@@ -81,27 +100,26 @@ class BispectrumBase:
         pzs (array): probability distribution of source galaxies
         """
 
-        if np.isscalar(zs):
-            zl = np.linspace(0.0, zs, nzlbin)
+        if self.zs.size == 1:
+            zl = np.linspace(0.0, self.zs, nzlbin)
             chil = self.z2chi(zl)
-            chis = self.z2chi(zs)
+            chis = self.z2chi(self.zs)
             g = 1.-chil/chis
-            self.zmax = zs
+            self.zmax = self.zs
             self.z2g = ius(zl, g, ext=1)
             self.chi2g = ius(chil, g, ext=1)
         else:
-            assert len(zs) == len(pzs), "zs and pzs must have the same length"
-            zl = np.linspace(0, zs.max(), nzlbin)
-            chis = self.z2chi(zs)
+            zl = np.linspace(0, self.zs.max(), nzlbin)
             chil = self.z2chi(zl)
-            CHIS, CHIL = np.meshgrid(chis, chil, indexing='ij')
+            chis = self.z2chi(self.zs)
+            CHIL, CHIS = np.meshgrid(chil, chis, indexing='ij')
 
             # integrand
-            I = np.zeros_like(CHIL, dtype=float)
-            I = np.divide(CHIL, CHIS, out=I, where=CHIS >= CHIL)
-            I = pzs*(1-I)
+            I = np.ones_like(CHIL, dtype=float)
+            I = np.divide(CHIL, CHIS, out=I, where=CHIS > CHIL)
+            I = (pzs*(1-I))
 
-            g = np.trapz(I, chis, axis=1)/np.trapz(pzs, chis)
+            g = np.trapz(I, self.zs, axis=1)/np.trapz(self.pzs, self.zs)
             self.z2g = ius(zl, g, ext=1)
             self.chi2g = ius(chil, g, ext=1)
             self.zmax = zs.max()
@@ -167,7 +185,7 @@ class BispectrumBase:
             raise ValueError("method must be 'direct', 'interp', or 'resum'")
         
     # direct evaluation of kappa bispectrum from matter bispectrum
-    def kappa_bispectrum_direct(self, ell1, ell2, ell3, zmin=1e-2, nzbin=20, **args):
+    def kappa_bispectrum_direct(self, ell1, ell2, ell3, zmin=1e-4, nzbin=40, **args):
         """
         Compute kappa bispectrum by direct line-of-sight integration.
 
@@ -229,7 +247,7 @@ class BispectrumBase:
         return bk
 
     # interpolation
-    def interpolate(self, nrbin=35, nubin=25, nvbin=25, method='linear', nzbin=20, **args):
+    def interpolate(self, nrbin=35, nubin=40, nvbin=25, method='linear', nzbin=20, data=None, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
@@ -279,7 +297,7 @@ class BispectrumBase:
         if (not hasattr(self, 'multipole')) or self.multipole.Lmax != Lmax or self.multipole.x.shape != MU.shape or np.any(self.multipole.x != MU) or self.multipole.method != method:
             self.multipole = Multipole(MU, Lmax, method=method, verbose=True)
 
-    def decompose(self, Lmax, nellbin=100, npsibin=50, nmubin=50, 
+    def decompose(self, Lmax, nellbin=100, npsibin=80, nmubin=50, 
             method_decomp='linear', method_bispec='interp', **args):
         """
         Compute multipole decomposition of kappa bispectrum.
@@ -293,8 +311,8 @@ class BispectrumBase:
         args (dict): arguments for kappa_bispectrum
         """
         ell = np.logspace(np.log10(self.ellmin), np.log10(self.ellmax), nellbin)
-        psi = loglinear(self.psimin, 1e-3, self.psimax, 30, npsibin)
-        mu = 1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, 30, nmubin)[::-1]
+        psi = loglinear(self.psimin, 1e-3, self.psimax, 50, npsibin)
+        mu = 1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, 30, nmubin)[::-1] # capture the squeezed limit
         ELL, SPI, MU = np.meshgrid(ell, psi, mu, indexing='ij')
         self.init_multipole(Lmax, MU, method_decomp)
 
@@ -376,7 +394,7 @@ class BispectrumHalofit(BispectrumBase):
     """
     Bispectrum computed from halofit.
     """
-    ell12min = 1e0
+    ell12min = 1e-1
     ell12max = 1e5
     def __init__(self, cosmo=None, zs=None, pzs=None):
         self.halofit = Halofit()
@@ -407,9 +425,11 @@ class BispectrumHalofit(BispectrumBase):
 
     def set_pklin(self, k, pklin):
         self.halofit.set_pklin(k, pklin)
+        self.has_changed = True
 
     def set_lgr(self, z, lgr):
         self.halofit.set_lgr(z, lgr)
+        self.has_changed = True
 
     def matter_bispectrum(self, k1, k2, k3, z, all_physical=True, which=['Bh1', 'Bh3']):
         return self.halofit.get_bihalofit(k1, k2, k3, z, all_physical=all_physical, which=which)

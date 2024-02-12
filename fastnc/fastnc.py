@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/02/01 00:20:50
+Last edit  : 2024/02/08 20:40:46
 
 Description:
 This is the module of fastnc, which calculate the
@@ -305,7 +305,7 @@ class FastNaturalComponents:
         self.ELL  = np.sqrt(self.ELL1**2 + self.ELL2**2)
         self.PSI = np.arctan2(self.ELL2, self.ELL1)
     
-    def HM(self, M, ell, psi, Lmax=None):
+    def HM(self, M, ell, psi, Lmax=None, Lmin=0):
         """
         Compute H_M(l1, l2 = \\sum_L (-1)^L * G_LM * b_L(l1, l2).
 
@@ -319,13 +319,13 @@ class FastNaturalComponents:
             Lmax = self.Lmax
 
         # Sum up GLM*bL over L
-        L = np.arange(Lmax+1)
+        L = np.arange(Lmin, Lmax+1)
         GLM = self.GLM(L, M, self.PSI)
         bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI)
-        HM = -np.sum(((-1)**L*GLM.T*bL.T).T, axis=0)
+        HM = np.sum(((-1)**(L+1)*GLM.T*bL.T).T, axis=0)
         return HM
 
-    def GammaM(self, i, M, HM=None, dlnx=None, **args):
+    def GammaM(self, i, M, HM=None, dlnt=None, **args):
         """
         Compute Gamma^(M).
         
@@ -347,10 +347,10 @@ class FastNaturalComponents:
 
         # Compute F_M using 2DFFTLog
         tb  = twobessel.two_Bessel(self.ell1, self.ell2, HM*self.ELL1**2*self.ELL2**2, **self.config_fftlog)
-        if dlnx is None:
+        if dlnt is None:
             self.t1, self.t2, GM = tb.two_Bessel(np.abs(m), np.abs(n))
         else:
-            self.t1, self.t2, GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnx, dlnx)
+            self.t1, self.t2, GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnt, dlnt)
 
         # Apply (-1)**m and (-1)**n 
         # These originate to J_m(x) = (-1)^m J_{-m}(x)
@@ -365,7 +365,7 @@ class FastNaturalComponents:
         # return
         return GM
 
-    def update(self, indices=[0,1,2,3], Mmax=None, Lmax=None, dlnx=None):
+    def update(self, indices=[0,1,2,3], Mmax=None, Lmax=None, dlnt=None):
         """
         Updates table.
 
@@ -388,7 +388,7 @@ class FastNaturalComponents:
             pbar.set_postfix({'M':M})
             HM = self.HM(M, self.ELL, self.PSI, Lmax=Lmax)
             for i in indices:
-                self.tabGM[(i, M)] = self.GammaM(i, M, HM, dlnx=dlnx)
+                self.tabGM[(i, M)] = self.GammaM(i, M, HM, dlnt=dlnt)
 
         self.has_changed = False
 
@@ -430,7 +430,7 @@ class FastNaturalComponents:
         phi (float): The value of phi.
         """
         return self.Gamma(0, phi, Mmax=Mmax, projection=projection)
-
+    
     def Gamma_treecorr(self, i, r, u, v, Mmax=None, projection='x', method='sdi', skip=1):
         """
         Compute Gamma^0(r, u, v) with treecorr convention.
@@ -445,8 +445,7 @@ class FastNaturalComponents:
         """
 
         # Compute t1, t2, phi
-        t1, t2, phi = trigutils.ruv_to_x1x2phi(r, u, v, rot=0)
-        # x2, x1, phi = trigutils.ruv_to_x1x2phi(r, u, v, rot=2)
+        t1, t2, phi = trigutils.ruv_to_x1x2phi(r, u, v)
 
         # Compute Gamma0 without prefactor
         gamma0 = self.Gamma(i, phi, Mmax=Mmax, projection='x')
