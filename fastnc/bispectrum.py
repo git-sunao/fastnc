@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/02/12 13:43:49
+Last edit  : 2024/02/13 18:59:43
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -297,7 +297,7 @@ class BispectrumBase:
         if (not hasattr(self, 'multipole')) or self.multipole.Lmax != Lmax or self.multipole.x.shape != MU.shape or np.any(self.multipole.x != MU) or self.multipole.method != method:
             self.multipole = Multipole(MU, Lmax, method=method, verbose=True)
 
-    def decompose(self, Lmax, nellbin=100, npsibin=80, nmubin=50, 
+    def decompose(self, Lmax, nellbin=100, npsibin=80, nmubin=50, window=None, 
             method_decomp='linear', method_bispec='interp', **args):
         """
         Compute multipole decomposition of kappa bispectrum.
@@ -306,6 +306,7 @@ class BispectrumBase:
         nellbin (int): number of ell bins
         npsibin (int): number of psi bins on linear part
         nmubin (int): number of mu bins on linear part
+        window (array): window function in Fourier space, e.g. pixel window function.
         method_decomp (str): method for multipole decomposition
         method_bispec (str): method for computing bispectrum
         args (dict): arguments for kappa_bispectrum
@@ -318,6 +319,9 @@ class BispectrumBase:
 
         ELL1, ELL2, ELL3 = trigutils.xpsimu_to_x1x2x3(ELL, SPI, MU)
         b = self.kappa_bispectrum(ELL1, ELL2, ELL3, method=method_bispec, **args)
+
+        if window is not None:
+            b*= window(ELL1, ELL2, ELL3)
 
         # Compute multipoles
         L = np.arange(Lmax+1)

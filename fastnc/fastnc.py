@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/02/08 20:40:46
+Last edit  : 2024/02/14 11:06:36
 
 Description:
 This is the module of fastnc, which calculate the
@@ -301,9 +301,13 @@ class FastNaturalComponents:
             ell12max = self.config_bin['ell12max']
         nell12bin= self.config_bin['nell12bin']
         self.ell1 = self.ell2 = np.logspace(np.log10(ell12min), np.log10(ell12max), nell12bin)
+        # FFT grid in Fourier space
         self.ELL1, self.ELL2 = np.meshgrid(self.ell1, self.ell2, indexing='ij')
         self.ELL  = np.sqrt(self.ELL1**2 + self.ELL2**2)
         self.PSI = np.arctan2(self.ELL2, self.ELL1)
+        # FFT grid in real space
+        self.t1, self.t2 = 1/self.ell1[::-1], 1/self.ell2[::-1]
+        self.T1, self.T2 = np.meshgrid(self.t1, self.t2, indexing='ij')
     
     def HM(self, M, ell, psi, Lmax=None, Lmin=0):
         """
@@ -325,117 +329,168 @@ class FastNaturalComponents:
         HM = np.sum(((-1)**(L+1)*GLM.T*bL.T).T, axis=0)
         return HM
 
-    def GammaM(self, i, M, HM=None, dlnt=None, **args):
+    def __init_kernel_table(self, Mmax=None, Lmax=None):
+        """
+        Initialize kernel table.
+
+        Mmax (int, optional): The maximum value of M. Defaults to None.
+        """
+        Mmax = Mmax or self.Mmax
+        Lmax = Lmax or self.Lmax
+
+        # initialize table
+        self.tabHM = dict()
+        pbar = tqdm(range(Mmax+1), desc='[GammaM]', disable=not self.verbose)
+        for M in pbar:
+            HM = self.HM(M, self.ELL, self.PSI, Lmax=Lmax)
+            self.tabHM[M] = HM
+            # if M > 0:
+            #     self.tabHM[-M]= HM.T
+
+        self.has_changed = False
+        
+    def GammaM(self, mu, M, t1=None, t2=None, dlnt=None):
         """
         Compute Gamma^(M).
         
-        i (int): The index of the natural component.
+        mu (int): The index of the natural component.
         M (int): The angular Fourier mode.
-        HM (array, optional): The HM array. Defaults to None.
+        dlnt (float, optional): The bin width for t1 and t2. Defaults to None.
+        t1 (array, optional): The value of t1. Defaults to None.
+        t2 (array, optional): The value of t2. Defaults to None.
         Lmax (int, optional): The maximum value of L. Defaults to None.
         """
-        # Compute HM
-        if HM is None:
-            HM = self.HM(M, self.ELL, self.PSI, **args)
+        # get kernel
+        if self.has_changed:
+            self.__init_kernel_table()
 
-        # transpose for component 3
-        if i == 1:
-            HM = HM.T
+        # array
+        muisscalar = np.isscalar(mu)
+        Misscalar  = np.isscalar(M)
+        mu = np.array([mu]) if muisscalar else mu
+        M  = np.array([M])  if Misscalar  else M
 
-        # Get (n,m) from M.
-        m, n = [(M-3,-M-3), (M-1,-M-1), (M+1,-M-3), (M-3,-M+1)][i]
+        # Some GammaM are degenerating 
+        # and we want to avoid recomputation for GammaM. 
+        # Here we prepare the request for which GammaM 
+        # to compute. We later assign the results.
+        request = dict()
+        for _mu in mu:
+            for _M in M:
+                if _M<0:
+                    continue
+                if _M not in request:
+                    request[_M] = [_mu]
+                else:
+                    request[_M].append(_mu)
 
-        # Compute F_M using 2DFFTLog
-        tb  = twobessel.two_Bessel(self.ell1, self.ell2, HM*self.ELL1**2*self.ELL2**2, **self.config_fftlog)
-        if dlnt is None:
-            self.t1, self.t2, GM = tb.two_Bessel(np.abs(m), np.abs(n))
-        else:
-            self.t1, self.t2, GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnt, dlnt)
+        # Compute
+        tabGM = dict()
+        for _M, mu_list in request.items():
+            # Initialize 2D-FFTLog, this is shared for all mu to speed up.
+            HM = self.tabHM[_M]
+            tb  = twobessel.two_Bessel(self.ell1, self.ell2, HM*self.ELL1**2*self.ELL2**2, **self.config_fftlog)
+            # Loop over mu
+            for _mu in mu_list:
+                # Get (n,m) from M.
+                m, n = [(_M-3,-_M-3), (-_M-1,_M-1), (_M+1,-_M-3), (_M-3,-_M+1)][_mu]
+                if (t1 is None or t2 is None) and (dlnt is None):
+                    # compute GammaM on FFT grid
+                    GM = tb.two_Bessel(np.abs(m), np.abs(n))[2]
+                elif (t1 is None or t2 is None) and (dlnt is not None):
+                    # compute GammaM on FFT grid with bin-averaging effect
+                    GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnt, dlnt)[2]
+                elif (t1 is not None) and (t2 is not None) and (dlnt is None):
+                    # compute GammaM on user-defined grid
+                    GM = tb.two_Bessel_on_bin(np.abs(m), np.abs(n), t1, t2)[2]
+                elif (t1 is not None) and (t2 is not None) and (dlnt is not None):
+                    # compute GammaM on user-defined grid with bin-averaging effect
+                    GM = tb.two_Bessel_binave_on_bin(np.abs(m), np.abs(n), t1, t2, dlnt, dlnt)[2]
+                # Apply (-1)**m and (-1)**n
+                # These originate to J_m(x) = (-1)^m J_{-m}(x)
+                GM *= (-1.)**m if m<0 else 1
+                GM *= (-1.)**n if n<0 else 1
+                # normalization
+                GM /= (2*np.pi)**3
 
-        # Apply (-1)**m and (-1)**n 
-        # These originate to J_m(x) = (-1)^m J_{-m}(x)
-        if m < 0:
-            GM *= (-1.)**m
-        if n < 0:
-            GM *= (-1.)**n
-        GM /= (2*np.pi)**3
+                # store
+                if _mu == 1:
+                    tabGM[(_mu, -_M)] = GM.T
+                else:
+                    tabGM[(_mu, _M)] = GM
 
-        self.T1, self.T2 = np.meshgrid(self.t1, self.t2, indexing='ij')
+        # Assign
+        GM = []
+        for _mu in mu:
+            _ = []
+            for _M in M:
+                if _mu == 0 and _M>=0:
+                    _.append(tabGM[(_mu, _M)])
+                if _mu == 0 and _M<0:
+                    _.append(tabGM[(_mu, -_M)].T)
+                if _mu == 1 and _M>0:
+                    _.append(tabGM[(_mu, -_M)].T)
+                if _mu == 1 and _M<=0:
+                    _.append(tabGM[(_mu, _M)])
+                if _mu == 2 and _M>=0:
+                    _.append(tabGM[(_mu, _M)])
+                if _mu == 2 and _M<0:
+                    _.append(tabGM[(3, -_M)].T)
+                if _mu == 3 and _M>=0:
+                    _.append(tabGM[(_mu, _M)])
+                if _mu == 3 and _M<0:
+                    _.append(tabGM[(2, -_M)].T)
+            GM.append(_)
+        GM = np.array(GM)
+
+        if muisscalar and Misscalar:
+            GM = GM[0]
+        
+        if muisscalar:
+            GM = GM[0]
 
         # return
         return GM
 
-    def update(self, indices=[0,1,2,3], Mmax=None, Lmax=None, dlnt=None):
+    def Gamma(self, mu, phi, t1=None, t2=None, Mmax=None, dlnt=None, projection='x'):
         """
-        Updates table.
+        Compute Gamma_mu(t1, t2, dphi)
 
-        Mmax (int, optional): The maximum value of M. Defaults to None.
-        Lmax (int, optional): The maximum value of L. Defaults to None.
-        """
-        # for test
-        if Mmax is None:
-            Mmax = self.Mmax
-        if Lmax is None:
-            Lmax = self.Lmax
-
-        if isinstance(indices, int):
-            indices = [indices]
-
-        # 1. computes the kernel function GammaM
-        self.tabGM = dict()
-        pbar = tqdm(range(Mmax+1), desc='[GammaM]', disable=not self.verbose)
-        for M in pbar:
-            pbar.set_postfix({'M':M})
-            HM = self.HM(M, self.ELL, self.PSI, Lmax=Lmax)
-            for i in indices:
-                self.tabGM[(i, M)] = self.GammaM(i, M, HM, dlnt=dlnt)
-
-        self.has_changed = False
-
-    def Gamma(self, i, phi, Mmax=None, projection='x'):
-        """
-        Compute Gamma(t1, t2, dphi)
-
-        i (int): The index of the natural component.
+        mu (int): The index of the natural component.
         phi (float): The value of phi.
+        t1 (array, optional): The value of t1. Defaults to None.
+        t2 (array, optional): The value of t2. Defaults to None.
         Mmax (int, optional): The maximum value of M. Defaults to None.
         projection (str, optional): The projection shear. Defaults to 'x'.
         """
-        # for test
-        if Mmax is None:
-            Mmax = self.Mmax
+        Mmax = Mmax or self.Mmax
 
-        # compute Gamma^0(t1, t2, dphi)
-        Gamma = np.zeros(self.T1.shape, dtype=np.complex128)
-        for M in range(-Mmax, Mmax+1):
-            key = [(0, abs(M)), 
-                   (1, abs(M)) if M>=0 else (2, abs(M)), 
-                   (2, abs(M)) if M>=0 else (1, abs(M)), 
-                   (3, abs(M))][i]
-            GM = self.tabGM[key]
-            GM = GM if M>=0 else GM.T
-            Gamma += GM * np.exp(1j*M*phi)
-        Gamma *= 1/(2*np.pi)
+        muisscalar = np.isscalar(mu)
+        phiisscalar  = np.isscalar(phi)
+        mu = np.array([mu]) if muisscalar else mu
+        phi = np.array([phi]) if phiisscalar else phi
+
+        # resum
+        M       = np.arange(-Mmax, Mmax+1)
+        GM      = self.GammaM(mu, M, t1=t1, t2=t2, dlnt=dlnt)
+        expMphi = np.exp(1j*M[:,None]*phi)
+        Gamma   = np.einsum('im...,mp->ip...', GM, expMphi)/(2*np.pi)
 
         # projection conversion
-        Gamma *= self.projection_factor(i, self.T1, self.T2, phi, projection)
+        Gamma  *= self.projection_factor(mu, t1, t2, phi, projection)
 
-        # return
+        if muisscalar and phiisscalar:
+            Gamma = Gamma[0]
+        if muisscalar:
+            Gamma = Gamma[0]
+
         return Gamma
-
-    def Gamma0(self, phi, Mmax=None, projection='x'):
-        """
-        Compute Gamma^0(t1, t2, dphi)
-
-        phi (float): The value of phi.
-        """
-        return self.Gamma(0, phi, Mmax=Mmax, projection=projection)
     
-    def Gamma_treecorr(self, i, r, u, v, Mmax=None, projection='x', method='sdi', skip=1):
+    def Gamma_treecorr(self, mu, r, u, v, Mmax=None, projection='x', method='sdi', skip=1):
         """
         Compute Gamma^0(r, u, v) with treecorr convention.
 
-        i (int): The index of the natural component.
+        mu (int): The index of the natural component.
         r (array): The value of r.
         u (float): The value of u.
         v (float): The value of v.
@@ -448,7 +503,7 @@ class FastNaturalComponents:
         t1, t2, phi = trigutils.ruv_to_x1x2phi(r, u, v)
 
         # Compute Gamma0 without prefactor
-        gamma0 = self.Gamma(i, phi, Mmax=Mmax, projection='x')
+        gamma0 = self.Gamma(mu, phi, Mmax=Mmax, projection='x')
 
         # Interpolate
         if method == 'sdi':
@@ -464,25 +519,12 @@ class FastNaturalComponents:
             gamma0 = f((np.log10(t1), np.log10(t2))) / (t1*t2)**0.5
 
         # Compute and multiply prefactor
-        gamma0 *= self.projection_factor(i, t1, t2, phi, projection)
+        gamma0 *= self.projection_factor(mu, t1, t2, phi, projection)
 
         return gamma0
 
-    def Gamma0_treecorr(self, r, u, v, Mmax=None, projection='x', method='sdi'):
-        """
-        Compute Gamma^0(r, u, v) with treecorr convention.
-
-        r (array): The value of r.
-        u (float): The value of u.
-        v (float): The value of v.
-        Mmax (int, optional): The maximum value of M. Defaults to None.
-        projection (str, optional): The projection shear. Defaults to 'x'.
-        method (str, optional): The interpolation method. Defaults to 'rgi'.
-        """
-        return self.Gamma_treecorr(0, r, u, v, Mmax=Mmax, projection=projection, method=method)
-
     # multiplicative phase factor to convert between different projections
-    def projection_factor(self, i, t1, t2, phi, projection='x'):
+    def projection_factor(self, i, phi, t1=None, t2=None, projection='x'):
         """
         Compute the projection factor.
 
@@ -492,6 +534,11 @@ class FastNaturalComponents:
         phi (float): The value of phi.
         projection (str, optional): The projection shear. Defaults to 'x'.
         """
+        if t1 is None:
+            t1 = self.T1
+        if t2 is None:
+            t2 = self.T2
+
         # Compute projection factor
         if projection == 'x':
             factor = 1

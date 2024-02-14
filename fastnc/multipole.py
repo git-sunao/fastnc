@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/02/12 16:18:00
+Last edit  : 2024/02/12 21:24:48
 
 Description:
 multipole.py contains the Multipole class, 
@@ -57,7 +57,7 @@ class Multipole:
     def get_legendreP_int0(self, L):
         """
         Return integral of legendre polynomial P_L(x):
-        p_L^0 = (2L+1)\int dx P_L(x)
+        p_L^0 = (2L+1)\\int dx P_L(x)
 
         L (int): multipole moment
         """
@@ -70,7 +70,7 @@ class Multipole:
     def get_legendreP_int1(self, L):
         """
         Return integral of legendre polynomial P_L(x) with x:
-        p_L^1 = (2L+1)\int dx P_L(x) x
+        p_L^1 = (2L+1)\\int dx P_L(x) x
 
         L (int): multipole moment
         """

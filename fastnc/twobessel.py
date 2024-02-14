@@ -3,6 +3,9 @@ python module for calculating integrals with 2 Bessel / spherical Bessel functio
 
 by Xiao Fang
 Feb 22, 2020
+
+Modified by Sunao Sugiyama
+Last edit  : 2024/02/14 11:12:42
 """
 
 import numpy as np
@@ -74,7 +77,7 @@ class two_sph_bessel(object):
 		"""
 		return m and c_mn
 		c_mn: the smoothed 2D-FFT coefficients of "biased" input function f(x):
-		f_b = f(x_1,x_2) / x_1^\nu_1 / x_2^\nu_2
+		f_b = f(x_1,x_2) / x_1^\\nu_1 / x_2^\\nu_2
 
 		number of x1, x2 values should be even
 		c_window_width: the fraction of any row/column c_mn elements that are smoothed.
@@ -100,8 +103,8 @@ class two_sph_bessel(object):
 
 	def two_sph_bessel(self, ell1, ell2):
 		"""
-		Calculate F(y_1,y_2) = \int_0^\infty dx_1 / x_1 \int_0^\infty dx_2 / x_2 * f(x_1,x_2) * j_{\ell_1}(x_1y_1) * j_{\ell_2}(x_2y_2),
-		where j_\ell is the spherical Bessel func of order ell.
+		Calculate F(y_1,y_2) = \\int_0^\\infty dx_1 / x_1 \\int_0^\\infty dx_2 / x_2 * f(x_1,x_2) * j_{\\ell_1}(x_1y_1) * j_{\\ell_2}(x_2y_2),
+		where j_\\ell is the spherical Bessel func of order ell.
 		array y is set as y[:] = 1/x[::-1]
 		"""
 
@@ -119,8 +122,8 @@ class two_sph_bessel(object):
 	def two_sph_bessel_binave(self, ell1, ell2, binwidth_dlny1, binwidth_dlny2):
 		"""
 		Bin-averaging for 3D statistics: alpha_pow = D = 3
-		Calculate F(y_1,y_2) = \int_0^\infty dx_1 / x_1 \int_0^\infty dx_2 / x_2 * f(x_1,x_2) * j_{\ell_1}(x_1y_1) * j_{\ell_2}(x_2y_2),
-		where j_\ell is the spherical Bessel func of order ell.
+		Calculate F(y_1,y_2) = \\int_0^\\infty dx_1 / x_1 \\int_0^\\infty dx_2 / x_2 * f(x_1,x_2) * j_{\\ell_1}(x_1y_1) * j_{\\ell_2}(x_2y_2),
+		where j_\\ell is the spherical Bessel func of order ell.
 		array y is set as y[:] = 1/x[::-1]
 		"""
 		D = 3
@@ -144,8 +147,8 @@ class two_Bessel(object):
 
 	def two_Bessel(self, ell1, ell2):
 		"""
-		Calculate F(y_1,y_2) = \int_0^\infty dx_1 / x_1 \int_0^\infty dx_2 / x_2 * f(x_1,x_2) * J_{\ell_1}(x_1y_1) * J_{\ell_2}(x_2y_2),
-		where J_\ell is the Bessel func of order ell.
+		Calculate F(y_1,y_2) = \\int_0^\\infty dx_1 / x_1 \\int_0^\\infty dx_2 / x_2 * f(x_1,x_2) * J_{\\ell_1}(x_1y_1) * J_{\\ell_2}(x_2y_2),
+		where J_\\ell is the Bessel func of order ell.
 		array y is set as y[:] = 1/x[::-1]
 		"""
 		two_sph = self.two_sph
@@ -163,8 +166,8 @@ class two_Bessel(object):
 	def two_Bessel_binave(self, ell1, ell2, binwidth_dlny1, binwidth_dlny2):
 		"""
 		Bin-averaging for 2D statistics: D = 2, alpha_pow = 2.5
-		Calculate F(y_1,y_2) = \int_0^\infty dx_1 / x_1 \int_0^\infty dx_2 / x_2 * f(x_1,x_2) * J_{\ell_1}(x_1y_1) * J_{\ell_2}(x_2y_2),
-		where J_\ell is the Bessel func of order ell.
+		Calculate F(y_1,y_2) = \\int_0^\\infty dx_1 / x_1 \\int_0^\\infty dx_2 / x_2 * f(x_1,x_2) * J_{\\ell_1}(x_1y_1) * J_{\\ell_2}(x_2y_2),
+		where J_\\ell is the Bessel func of order ell.
 		array y is set as y[:] = 1/x[::-1]
 		"""
 		two_sph = self.two_sph
@@ -182,6 +185,26 @@ class two_Bessel(object):
 		Fy1y2 = ((irfft2(mat_adjust) / 8./ two_sph.y2**(two_sph.nu2-0.5)).T / two_sph.y1**(two_sph.nu1-0.5)).T
 
 		return two_sph.y1[two_sph.N_extrap_high:two_sph.N1-two_sph.N_extrap_low], two_sph.y2[two_sph.N_extrap_high:two_sph.N2-two_sph.N_extrap_low], Fy1y2[two_sph.N_extrap_high:two_sph.N1-two_sph.N_extrap_low, two_sph.N_extrap_high:two_sph.N2-two_sph.N_extrap_low]
+
+	def two_Bessel_on_bin(self, ell1, ell2, y1, y2):
+		"""
+		Calculate F(y_1,y_2) = \\int_0^\\infty dx_1 / x_1 \\int_0^\\infty dx_2 / x_2 * f(x_1,x_2) * J_{\\ell_1}(x_1y_1) * J_{\\ell_2}(x_2y_2),
+		where J_\\ell is the Bessel func of order ell.
+		array y is set as y[:] = 1/x[::-1]
+		"""
+		shape = y1.shape
+
+		two_sph = self.two_sph
+
+		g1 = g_l(ell1-0.5,two_sph.z1)
+		g2 = g_l(ell2-0.5,two_sph.z2)
+
+		mat = np.conj((two_sph.c_mn*(two_sph.x20*two_sph.y20)**(-1j*two_sph.eta_n) * g2).T * (two_sph.x10*two_sph.y10)**(-1j*two_sph.eta_m) * g1).T
+		mat_right = mat[:,two_sph.N2//2:]
+		mat_adjust = np.vstack((mat_right[two_sph.N1//2:,:],mat_right[1:two_sph.N1//2,:]))
+		Fy1y2 = ((irfft2(mat_adjust) / 8./ two_sph.y2**(two_sph.nu2-0.5)).T / two_sph.y1**(two_sph.nu1-0.5)).T
+
+		return y1, y2, Fy1y2
 
 
 
