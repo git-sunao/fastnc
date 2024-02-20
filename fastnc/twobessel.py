@@ -5,7 +5,7 @@ by Xiao Fang
 Feb 22, 2020
 
 Modified by Sunao Sugiyama
-Last edit  : 2024/02/14 11:12:42
+Last edit  : 2024/02/20 13:50:08
 """
 
 import numpy as np
@@ -43,8 +43,6 @@ class two_sph_bessel(object):
 			self.N1 += N_extrap_low + N_extrap_high
 			self.N2 += N_extrap_low + N_extrap_high
 
-
-		#print(self.N1, self.N2)
 		# zero-padding
 		self.N_pad = N_pad
 		if(N_pad):
@@ -101,6 +99,20 @@ class two_sph_bessel(object):
 		c_mn_filter = ((c_mn*c_window_array2).T*c_window_array1).T
 		return m, n, c_mn
 
+	def _adjust_fftmat(self, mat):
+		"""
+		Adjust matrix so that the FFT in real space works well.
+		"""
+		mat_right = mat[:,self.N2//2:]
+		mat_adjust = np.vstack((mat_right[self.N1//2:,:],mat_right[1:self.N1//2,:]))
+		return mat_adjust
+		
+	def _truncate_out(self, out):
+		y1 = self.y1[self.N_extrap_high:self.N1-self.N_extrap_low]
+		y2 = self.y2[self.N_extrap_high:self.N2-self.N_extrap_low]
+		out= out[self.N_extrap_high:self.N1-self.N_extrap_low, self.N_extrap_high:self.N2-self.N_extrap_low]
+		return y1, y2, out
+
 	def two_sph_bessel(self, ell1, ell2):
 		"""
 		Calculate F(y_1,y_2) = \\int_0^\\infty dx_1 / x_1 \\int_0^\\infty dx_2 / x_2 * f(x_1,x_2) * j_{\\ell_1}(x_1y_1) * j_{\\ell_2}(x_2y_2),
@@ -111,13 +123,16 @@ class two_sph_bessel(object):
 		g1 = g_l(ell1,self.z1)
 		g2 = g_l(ell2,self.z2)
 
-		mat = np.conj((self.c_mn*(self.x20*self.y20)**(-1j*self.eta_n) * g2).T * (self.x10*self.y10)**(-1j*self.eta_m) * g1).T
-		mat_right = mat[:,self.N2//2:]
-		mat_adjust = np.vstack((mat_right[self.N1//2:,:],mat_right[1:self.N1//2,:]))
-		# print(mat_adjust[0][1])
-		Fy1y2 = ((irfft2(mat_adjust) *np.pi / 16./ self.y2**self.nu2).T / self.y1**self.nu1).T
-		# print(Fy1y2)
-		return self.y1[self.N_extrap_high:self.N1-self.N_extrap_low], self.y2[self.N_extrap_high:self.N2-self.N_extrap_low], Fy1y2[self.N_extrap_high:self.N1-self.N_extrap_low, self.N_extrap_high:self.N2-self.N_extrap_low]
+		# make FFT coeffs
+		basis1 = (self.x20*self.y20)**(-1j*self.eta_n) * g2
+		basis2 = (self.x10*self.y10)**(-1j*self.eta_m) * g1
+		mat = np.conj(self.c_mn * basis1[:,None] * basis2[None,:])
+		mat = self._adjust_fftmat(mat)
+
+		# perform ifft
+		out = irfft2(mat) * np.pi / 16. / self.y1[:,None]**self.nu1 / self.y2[None, :]**self.nu2
+
+		return self._truncate_out(out)
 
 	def two_sph_bessel_binave(self, ell1, ell2, binwidth_dlny1, binwidth_dlny2):
 		"""
@@ -132,14 +147,17 @@ class two_sph_bessel(object):
 		g1 = g_l_smooth(ell1,self.z1, binwidth_dlny1, D) / s_d_lambda1
 		g2 = g_l_smooth(ell2,self.z2, binwidth_dlny2, D) / s_d_lambda2
 
-		mat = np.conj((self.c_mn*(self.x20*self.y20)**(-1j*self.eta_n) * g2).T * (self.x10*self.y10)**(-1j*self.eta_m) * g1).T
-		mat_right = mat[:,self.N2//2:]
-		mat_adjust = np.vstack((mat_right[self.N1//2:,:],mat_right[1:self.N1//2,:]))
-		# print(mat_adjust[0][1])
-		Fy1y2 = ((irfft2(mat_adjust) *np.pi / 16./ self.y2**(self.nu2)).T / self.y1**(self.nu1)).T
+		# make FFT coeffs
+		basis1 = (self.x20*self.y20)**(-1j*self.eta_n) * g2
+		basis2 = (self.x10*self.y10)**(-1j*self.eta_m) * g1
+		mat = np.conj(self.c_mn * basis1[:,None] * basis2[None,:])
+		mat = self._adjust_fftmat(mat)
 
-		return self.y1[self.N_extrap_high:self.N1-self.N_extrap_low], self.y2[self.N_extrap_high:self.N2-self.N_extrap_low], Fy1y2[self.N_extrap_high:self.N1-self.N_extrap_low, self.N_extrap_high:self.N2-self.N_extrap_low]
+		# perform ifft
+		out = irfft2(mat) * np.pi / 16. / self.y1[:,None]**self.nu1 / self.y2[None, :]**self.nu2
 
+		return self._truncate_out(out)
+		
 class two_Bessel(object):
 
 	def __init__(self, x1, x2, fx1x2, nu1=1.01, nu2=1.01, N_extrap_low=0, N_extrap_high=0, c_window_width=0.25, N_pad=0):
@@ -156,12 +174,16 @@ class two_Bessel(object):
 		g1 = g_l(ell1-0.5,two_sph.z1)
 		g2 = g_l(ell2-0.5,two_sph.z2)
 
-		mat = np.conj((two_sph.c_mn*(two_sph.x20*two_sph.y20)**(-1j*two_sph.eta_n) * g2).T * (two_sph.x10*two_sph.y10)**(-1j*two_sph.eta_m) * g1).T
-		mat_right = mat[:,two_sph.N2//2:]
-		mat_adjust = np.vstack((mat_right[two_sph.N1//2:,:],mat_right[1:two_sph.N1//2,:]))
-		Fy1y2 = ((irfft2(mat_adjust) / 8./ two_sph.y2**(two_sph.nu2-0.5)).T / two_sph.y1**(two_sph.nu1-0.5)).T
+		# make FFT coeffs
+		basis1 = (two_sph.x10*two_sph.y10)**(-1j*two_sph.eta_m) * g1
+		basis2 = (two_sph.x20*two_sph.y20)**(-1j*two_sph.eta_n) * g2
+		mat = np.conj(two_sph.c_mn*basis1[:, None]*basis2[None, :])
+		mat = two_sph._adjust_fftmat(mat)
 
-		return two_sph.y1[two_sph.N_extrap_high:two_sph.N1-two_sph.N_extrap_low], two_sph.y2[two_sph.N_extrap_high:two_sph.N2-two_sph.N_extrap_low], Fy1y2[two_sph.N_extrap_high:two_sph.N1-two_sph.N_extrap_low, two_sph.N_extrap_high:two_sph.N2-two_sph.N_extrap_low]
+		# perform fft
+		out = irfft2(mat) / 8. / two_sph.y1[:,None]**(two_sph.nu1-0.5) / two_sph.y2[None,:]**(two_sph.nu2-0.5)
+
+		return two_sph._truncate_out(out)
 
 	def two_Bessel_binave(self, ell1, ell2, binwidth_dlny1, binwidth_dlny2):
 		"""
@@ -171,20 +193,23 @@ class two_Bessel(object):
 		array y is set as y[:] = 1/x[::-1]
 		"""
 		two_sph = self.two_sph
+
 		D = 2
 		s_d_lambda1 = (np.exp(D*binwidth_dlny1) -1. ) / D
 		s_d_lambda2 = (np.exp(D*binwidth_dlny2) -1. ) / D
-
 		g1 = g_l_smooth(ell1-0.5,two_sph.z1, binwidth_dlny1, D+0.5) / s_d_lambda1
 		g2 = g_l_smooth(ell2-0.5,two_sph.z2, binwidth_dlny2, D+0.5) / s_d_lambda2
 
-		mat = np.conj((two_sph.c_mn*(two_sph.x20*two_sph.y20)**(-1j*two_sph.eta_n) * g2).T * (two_sph.x10*two_sph.y10)**(-1j*two_sph.eta_m) * g1).T
-		mat_right = mat[:,two_sph.N2//2:]
-		mat_adjust = np.vstack((mat_right[two_sph.N1//2:,:],mat_right[1:two_sph.N1//2,:]))
-		# print(mat_adjust[0][1])
-		Fy1y2 = ((irfft2(mat_adjust) / 8./ two_sph.y2**(two_sph.nu2-0.5)).T / two_sph.y1**(two_sph.nu1-0.5)).T
+		# make FFT coeffs
+		basis1 = (two_sph.x10*two_sph.y10)**(-1j*two_sph.eta_m) * g1
+		basis2 = (two_sph.x20*two_sph.y20)**(-1j*two_sph.eta_n) * g2
+		mat = np.conj(two_sph.c_mn*basis1[:, None]*basis2[None, :])
+		mat = two_sph._adjust_fftmat(mat)
 
-		return two_sph.y1[two_sph.N_extrap_high:two_sph.N1-two_sph.N_extrap_low], two_sph.y2[two_sph.N_extrap_high:two_sph.N2-two_sph.N_extrap_low], Fy1y2[two_sph.N_extrap_high:two_sph.N1-two_sph.N_extrap_low, two_sph.N_extrap_high:two_sph.N2-two_sph.N_extrap_low]
+		# perform fft
+		out = irfft2(mat) / 8. / two_sph.y1[:,None]**(two_sph.nu1-0.5) / two_sph.y2[None,:]**(two_sph.nu2-0.5)
+
+		return two_sph._truncate_out(out)
 
 	def two_Bessel_on_bin(self, ell1, ell2, y1, y2):
 		"""
@@ -192,19 +217,22 @@ class two_Bessel(object):
 		where J_\\ell is the Bessel func of order ell.
 		array y is set as y[:] = 1/x[::-1]
 		"""
-		shape = y1.shape
-
 		two_sph = self.two_sph
 
 		g1 = g_l(ell1-0.5,two_sph.z1)
 		g2 = g_l(ell2-0.5,two_sph.z2)
 
-		mat = np.conj((two_sph.c_mn*(two_sph.x20*two_sph.y20)**(-1j*two_sph.eta_n) * g2).T * (two_sph.x10*two_sph.y10)**(-1j*two_sph.eta_m) * g1).T
-		mat_right = mat[:,two_sph.N2//2:]
-		mat_adjust = np.vstack((mat_right[two_sph.N1//2:,:],mat_right[1:two_sph.N1//2,:]))
-		Fy1y2 = ((irfft2(mat_adjust) / 8./ two_sph.y2**(two_sph.nu2-0.5)).T / two_sph.y1**(two_sph.nu1-0.5)).T
+		# make FFT coeffs
+		basis1 = (two_sph.x10*two_sph.y10)**(-1j*two_sph.eta_m) * g1
+		basis2 = (two_sph.x20*two_sph.y20)**(-1j*two_sph.eta_n) * g2
+		mat = np.conj(two_sph.c_mn*basis1[:, None]*basis2[None, :])
+		mat = two_sph._adjust_fftmat(mat)
 
-		return y1, y2, Fy1y2
+		# perform fft
+		out = irfft2(mat) / 8. / two_sph.y1[:,None]**(two_sph.nu1-0.5) / two_sph.y2[None,:]**(two_sph.nu2-0.5)
+
+		return two_sph._truncate_out(out)
+
 
 
 
