@@ -5,7 +5,7 @@ by Xiao Fang
 Feb 22, 2020
 
 Modified by Sunao Sugiyama
-Last edit  : 2024/02/20 13:50:08
+Last edit  : 2024/03/05 21:53:03
 """
 
 import numpy as np
@@ -228,13 +228,14 @@ class two_Bessel(object):
 		mat = np.conj(two_sph.c_mn*basis1[:, None]*basis2[None, :])
 		mat = two_sph._adjust_fftmat(mat)
 
+		# get index
+		m_y1 = np.log(y1/two_sph.y10)/two_sph.dlnx1
+		n_y2 = np.log(y2/two_sph.y20)/two_sph.dlnx2
+
 		# perform fft
-		out = irfft2(mat) / 8. / two_sph.y1[:,None]**(two_sph.nu1-0.5) / two_sph.y2[None,:]**(two_sph.nu2-0.5)
+		out = irdft2(mat, m_y1, n_y2) / 8. / y1**(two_sph.nu1-0.5) / y2**(two_sph.nu2-0.5)
 
-		return two_sph._truncate_out(out)
-
-
-
+		return y1, y2, out
 
 ### Utility functions ####################
 
@@ -261,7 +262,7 @@ def g_m_vals(mu,q):
 
 	# asymptotic form 								
 	g_m[np.absolute(imag_q)>cut] = np.exp( (asym_plus-0.5)*np.log(asym_plus) - (asym_minus-0.5)*np.log(asym_minus) - asym_q \
-	    +1./12 *(1./asym_plus - 1./asym_minus) +1./360.*(1./asym_minus**3 - 1./asym_plus**3) +1./1260*(1./asym_plus**5 - 1./asym_minus**5) )
+		+1./12 *(1./asym_plus - 1./asym_minus) +1./360.*(1./asym_minus**3 - 1./asym_plus**3) +1./1260*(1./asym_plus**5 - 1./asym_minus**5) )
 
 	g_m[np.where(q==mu+1+0.0j)[0]] = 0.+0.0j
 	
@@ -337,3 +338,56 @@ def bilinear_extra_P(fk1k2, N_low, N_high):
 	down_matrix=np.matrix(add_right).T.dot(v_grad_down)+np.matrix(new_logfk1k2[-1,:])
 	result_matrix= np.vstack((up_matrix,new_logfk1k2,down_matrix)) ## type: matrix
 	return np.exp(np.array(result_matrix))## type: array
+
+def irdft2(a, m, n):
+	"""
+	Inverse real discrete Fourier transform in 2D
+	"""
+	if np.isscalar(m) and not np.isscalar(n):
+		m = np.full_like(n, m)
+	if np.isscalar(n) and not np.isscalar(m):
+		n = np.full_like(m, n)
+	if np.isscalar(m) and np.isscalar(n):
+		m = np.array([m])
+		n = np.array([n])
+	if not m.size == n.size:
+		raise ValueError("m and n must have the same size")
+	
+	reshape = False
+	if m.ndim > 1:
+		reshape = True
+		shape = m.shape
+		m = m.reshape(-1)
+		n = n.reshape(-1)
+
+	# select unique entries of (m,n)
+	# to reduce the number of DFTs
+	(m_uni, n_uni), inv_idx = np.unique(np.array([m,n]), axis=1, return_inverse=True)
+	
+	# Fourier indices
+	M, N2 = a.shape
+	N = 2*(N2-1)
+	k = np.arange(-M//2, M//2)
+	l = np.arange(-N//2, N//2)
+
+	# np.fft.rfft output is indexed as 0...N for the first axis
+	# but we want it to be indexed as -N/2...N/2
+	a = np.vstack([a[M//2:,:], a[:M//2+1,:]])
+	a = np.hstack([np.conj(a[:, 1:][::-1,::-1]), a])
+	a = a[:-1,:-1]
+
+	bkm = np.exp(2*np.pi*1j*k[:,None]*m_uni[None,:]/M)
+	bln = np.exp(2*np.pi*1j*l[:,None]*n_uni[None,:]/N)
+
+	# core process of DFT
+	a = np.dot(a, bln)
+	a = np.sum(np.multiply(a, bkm), axis=0)
+	a = a.real/(M*N)
+
+	# fill in the original shape
+	a = a[inv_idx]
+
+	if reshape:
+		a = np.reshape(a, shape)
+
+	return a
