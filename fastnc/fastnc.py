@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/02/14 11:06:36
+Last edit  : 2024/03/05 23:35:09
 
 Description:
 This is the module of fastnc, which calculate the
@@ -309,66 +309,81 @@ class FastNaturalComponents:
         self.t1, self.t2 = 1/self.ell1[::-1], 1/self.ell2[::-1]
         self.T1, self.T2 = np.meshgrid(self.t1, self.t2, indexing='ij')
     
-    def HM(self, M, ell, psi, Lmax=None, Lmin=0):
+    def HM(self, M, ell, psi, bL=None, Lmin=None, Lmax=None):
         """
         Compute H_M(l1, l2 = \\sum_L (-1)^L * G_LM * b_L(l1, l2).
 
         M (int): The angular Fourier mode.
         ell (array): The ell values.
         psi (array): The psi values.
+        bL (array): The bispectrum multipole. Defaults to None.
+                    If None, it is computed using self.bispectrum.kappa_bispectrum_multipole.
+                    By supplying bL, you can avoid recomputation of bL.
+        Lmin (int, optional): The minimum value of L. Defaults to None.
         Lmax (int, optional): The maximum value of L. Defaults to None.
         """
-        # Get Lmax
-        if Lmax is None:
-            Lmax = self.Lmax
+        # Get bispectrum multipole indices, L array
+        Lmin = Lmin or 0
+        Lmax = Lmax or self.Lmax
+        L = np.arange(Lmin, Lmax+1)
+
+        # Get bispectrum multipole
+        if bL is None:
+            bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI)
 
         # Sum up GLM*bL over L
-        L = np.arange(Lmin, Lmax+1)
         GLM = self.GLM(L, M, self.PSI)
-        bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI)
         HM = np.sum(((-1)**(L+1)*GLM.T*bL.T).T, axis=0)
         return HM
 
-    def __init_kernel_table(self, Mmax=None, Lmax=None):
+    def __init_kernel_table(self, Mmax=None, Lmin=None, Lmax=None):
         """
         Initialize kernel table.
 
         Mmax (int, optional): The maximum value of M. Defaults to None.
         """
+        # natural-component multipole indices
         Mmax = Mmax or self.Mmax
+        M = np.arange(Mmax+1)
+
+        # bispectrum multipole indices
+        Lmin = Lmin or 0
         Lmax = Lmax or self.Lmax
+        L = np.arange(Lmin, Lmax+1)
+
+        # bispectrum multipole
+        bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI)
 
         # initialize table
         self.tabHM = dict()
-        pbar = tqdm(range(Mmax+1), desc='[GammaM]', disable=not self.verbose)
-        for M in pbar:
-            HM = self.HM(M, self.ELL, self.PSI, Lmax=Lmax)
-            self.tabHM[M] = HM
-            # if M > 0:
-            #     self.tabHM[-M]= HM.T
+        for _ in tqdm(M, desc='[HM]', disable=not self.verbose):
+            HM = self.HM(_, self.ELL, self.PSI, bL=bL, Lmin=Lmin, Lmax=Lmax)
+            self.tabHM[_] = HM
 
+        # update flag
         self.has_changed = False
         
-    def GammaM(self, mu, M, t1=None, t2=None, dlnt=None):
+    def GammaM_on_grid(self, mu, M, dlnt=None):
         """
         Compute Gamma^(M).
         
-        mu (int): The index of the natural component.
-        M (int): The angular Fourier mode.
-        dlnt (float, optional): The bin width for t1 and t2. Defaults to None.
-        t1 (array, optional): The value of t1. Defaults to None.
-        t2 (array, optional): The value of t2. Defaults to None.
-        Lmax (int, optional): The maximum value of L. Defaults to None.
+        mu (array): The index of the natural component.
+        M (array): The angular Fourier mode.
+        dlnt (float, optional): The bin width for t1 and t2. Defaults to None. 
+                                When None, dlnt=0, i.e. no bin averaging effect
+
+        GammaM is computed on FFT grid
+        The output shape will be (mu.size, M.size, self.t1.size, self.t2.size)
         """
         # get kernel
         if self.has_changed:
             self.__init_kernel_table()
 
-        # array
-        muisscalar = np.isscalar(mu)
-        Misscalar  = np.isscalar(M)
-        mu = np.array([mu]) if muisscalar else mu
-        M  = np.array([M])  if Misscalar  else M
+        # casting to array
+        if np.isscalar(mu):
+            mu = np.array([mu])
+        if np.isscalar(M):
+            M = np.array([M])
 
         # Some GammaM are degenerating 
         # and we want to avoid recomputation for GammaM. 
@@ -394,18 +409,12 @@ class FastNaturalComponents:
             for _mu in mu_list:
                 # Get (n,m) from M.
                 m, n = [(_M-3,-_M-3), (-_M-1,_M-1), (_M+1,-_M-3), (_M-3,-_M+1)][_mu]
-                if (t1 is None or t2 is None) and (dlnt is None):
+                if dlnt is None:
                     # compute GammaM on FFT grid
                     GM = tb.two_Bessel(np.abs(m), np.abs(n))[2]
-                elif (t1 is None or t2 is None) and (dlnt is not None):
+                elif dlnt is not None:
                     # compute GammaM on FFT grid with bin-averaging effect
                     GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnt, dlnt)[2]
-                elif (t1 is not None) and (t2 is not None) and (dlnt is None):
-                    # compute GammaM on user-defined grid
-                    GM = tb.two_Bessel_on_bin(np.abs(m), np.abs(n), t1, t2)[2]
-                elif (t1 is not None) and (t2 is not None) and (dlnt is not None):
-                    # compute GammaM on user-defined grid with bin-averaging effect
-                    GM = tb.two_Bessel_binave_on_bin(np.abs(m), np.abs(n), t1, t2, dlnt, dlnt)[2]
                 # Apply (-1)**m and (-1)**n
                 # These originate to J_m(x) = (-1)^m J_{-m}(x)
                 GM *= (-1.)**m if m<0 else 1
@@ -443,13 +452,86 @@ class FastNaturalComponents:
             GM.append(_)
         GM = np.array(GM)
 
-        if muisscalar and Misscalar:
-            GM = GM[0]
+        # return
+        return GM
+
+    def GammaM_on_bin(self, mu, M, t1, t2, dlnt=None):
+        """
+        Compute Gamma^(M).
         
-        if muisscalar:
-            GM = GM[0]
+        mu (int): The index of the natural component.
+        M (int): The angular Fourier mode.
+        dlnt (float, optional): The bin width for t1 and t2. Defaults to None.
+        t1 (array, optional): The value of t1. Defaults to None.
+        t2 (array, optional): The value of t2. Defaults to None.
+        Lmax (int, optional): The maximum value of L. Defaults to None.
+
+        GammaM is computed on user-defined bin
+        The output shape is (mu.size, M.size) + t1.shape
+        """
+        # get kernel
+        if self.has_changed:
+            self.__init_kernel_table()
+
+        # casting to array
+        if np.isscalar(mu):
+            mu = np.array([mu])
+        if np.isscalar(M):
+            M = np.array([M])
+
+        # Compute
+        tabGM = dict()
+        for _M in M:
+            # Initialize 2D-FFTLog, this is shared for all mu to speed up.
+            if _M >= 0:
+                HM = self.tabHM[_M]
+            else:
+                HM = self.tabHM[-_M].T
+            tb  = twobessel.two_Bessel(self.ell1, self.ell2, HM*self.ELL1**2*self.ELL2**2, **self.config_fftlog)
+            # Loop over mu
+            for _mu in mu:
+                # Get (n,m) from M.
+                m, n = [(_M-3,-_M-3), (-_M-1,_M-1), (_M+1,-_M-3), (_M-3,-_M+1)][_mu]
+                if dlnt is None:
+                    # compute GammaM on user-defined grid
+                    GM = tb.two_Bessel_on_bin(np.abs(m), np.abs(n), t1, t2)[2]
+                if dlnt is not None:
+                    # compute GammaM on user-defined grid with bin-averaging effect
+                    GM = tb.two_Bessel_binave_on_bin(np.abs(m), np.abs(n), t1, t2, dlnt, dlnt)[2]
+                # Apply (-1)**m and (-1)**n
+                # These originate to J_m(x) = (-1)^m J_{-m}(x)
+                GM *= (-1.)**m if m<0 else 1
+                GM *= (-1.)**n if n<0 else 1
+                # normalization
+                GM /= (2*np.pi)**3
+
+                # store
+                if _mu == 1:
+                    tabGM[(_mu, -_M)] = GM.T # This is wrong, need to be fixed
+                else:
+                    tabGM[(_mu, _M)] = GM
+
+        # Assign
+        GM = []
+        for _mu in mu:
+            _ = []
+            for _M in M:
+                _.append(tabGM[(_mu, _M)])
+            GM.append(_)
+        GM = np.array(GM)
 
         # return
+        return GM
+
+    def GammaM(self, mu, M, t1=None, t2=None, dlnt=None):
+        if t1 is None and t2 is not None:
+            raise ValueError('Error: t1 is None but t2 is not None')
+        if t1 is not None and t2 is None:
+            raise ValueError('Error: t1 is not None but t2 is None')
+        if t1 is None or t2 is None:
+            GM = self.GammaM_on_grid(mu, M, dlnt=dlnt)
+        else:
+            GM = self.GammaM_on_bin(mu, M, t1, t2, dlnt=dlnt)
         return GM
 
     def Gamma(self, mu, phi, t1=None, t2=None, Mmax=None, dlnt=None, projection='x'):
@@ -465,64 +547,30 @@ class FastNaturalComponents:
         """
         Mmax = Mmax or self.Mmax
 
-        muisscalar = np.isscalar(mu)
-        phiisscalar  = np.isscalar(phi)
-        mu = np.array([mu]) if muisscalar else mu
-        phi = np.array([phi]) if phiisscalar else phi
+        # casting to array
+        if np.isscalar(mu):
+            mu = np.array([mu])
+        if np.isscalar(phi):
+            phi = np.array([phi])
 
-        # resum
+        # compute multipoles
         M       = np.arange(-Mmax, Mmax+1)
         GM      = self.GammaM(mu, M, t1=t1, t2=t2, dlnt=dlnt)
-        expMphi = np.exp(1j*M[:,None]*phi)
-        Gamma   = np.einsum('im...,mp->ip...', GM, expMphi)/(2*np.pi)
 
-        # projection conversion
-        Gamma  *= self.projection_factor(mu, t1, t2, phi, projection)
-
-        if muisscalar and phiisscalar:
-            Gamma = Gamma[0]
-        if muisscalar:
-            Gamma = Gamma[0]
+        # resummation
+        if t1 is not None and t2 is not None:
+            GM      = np.reshape(GM, (len(mu), M.size, -1))
+            expMphi = np.exp(1j*M[:,None]*np.reshape(phi,-1))
+            Gamma   = np.einsum('imk,mk->ik', GM, expMphi)/(2*np.pi)
+            Gamma   = np.reshape(Gamma, (len(mu),)+t1.shape)
+            Gamma  *= self.projection_factor(mu, t1, t2, phi, projection)
+        else:
+            expMphi = np.exp(1j*M[:,None]*phi)
+            Gamma   = np.einsum('im...,mk->ik...', GM, expMphi)/(2*np.pi)
+            Gamma  *= self.projection_factor(mu, self.T1, self.T2, phi, projection)
 
         return Gamma
     
-    def Gamma_treecorr(self, mu, r, u, v, Mmax=None, projection='x', method='sdi', skip=1):
-        """
-        Compute Gamma^0(r, u, v) with treecorr convention.
-
-        mu (int): The index of the natural component.
-        r (array): The value of r.
-        u (float): The value of u.
-        v (float): The value of v.
-        Mmax (int, optional): The maximum value of M. Defaults to None.
-        method (str, optional): The interpolation method. Defaults to 'sdi'.
-        skip (int, optional): The skip factor for interpolation. Defaults to 1.
-        """
-
-        # Compute t1, t2, phi
-        t1, t2, phi = trigutils.ruv_to_x1x2phi(r, u, v)
-
-        # Compute Gamma0 without prefactor
-        gamma0 = self.Gamma(mu, phi, Mmax=Mmax, projection='x')
-
-        # Interpolate
-        if method == 'sdi':
-            logx = np.log10(self.t1)
-            f = (self.T1*self.T2)**0.5*gamma0
-            f = sdi(logx[::skip], logx[::skip], f[::skip, ::skip])
-            gamma0 = f(np.log10(t1), np.log10(t2)) / (t1*t2)**0.5
-        elif method == 'rgi':
-            # This gives artificial oscillations
-            logx = np.log10(self.t1)
-            f = (self.T1*self.T2)**0.5*gamma0
-            f = rgi((logx[::skip], logx[::skip]), f[::skip, ::skip], method='linear')
-            gamma0 = f((np.log10(t1), np.log10(t2))) / (t1*t2)**0.5
-
-        # Compute and multiply prefactor
-        gamma0 *= self.projection_factor(mu, t1, t2, phi, projection)
-
-        return gamma0
-
     # multiplicative phase factor to convert between different projections
     def projection_factor(self, i, phi, t1=None, t2=None, projection='x'):
         """
