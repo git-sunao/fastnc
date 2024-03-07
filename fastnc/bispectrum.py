@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/02/13 18:59:43
+Last edit  : 2024/03/06 23:40:04
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -185,7 +185,7 @@ class BispectrumBase:
             raise ValueError("method must be 'direct', 'interp', or 'resum'")
         
     # direct evaluation of kappa bispectrum from matter bispectrum
-    def kappa_bispectrum_direct(self, ell1, ell2, ell3, zmin=1e-4, nzbin=40, **args):
+    def kappa_bispectrum_direct(self, ell1, ell2, ell3, zmin=1e-4, nzbin=30, **args):
         """
         Compute kappa bispectrum by direct line-of-sight integration.
 
@@ -247,7 +247,7 @@ class BispectrumBase:
         return bk
 
     # interpolation
-    def interpolate(self, nrbin=35, nubin=40, nvbin=25, method='linear', nzbin=20, data=None, **args):
+    def interpolate(self, nrbin=35, nubin=40, nvbin=25, method='linear', nzbin=30, data=None, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
@@ -282,7 +282,7 @@ class BispectrumBase:
         r, u, v = trigutils.x1x2x3_to_ruv(ell1, ell2, ell3, signed=False)
         x = edge_correction(np.log(r), self.ip.grid[0].min(), self.ip.grid[0].max())
         y = edge_correction(np.log(u), self.ip.grid[1].min(), self.ip.grid[1].max())
-        z = edge_correction(v, self.ip.grid[2].min(), self.ip.grid[2].max()) 
+        z = edge_correction(v, self.ip.grid[2].min(), self.ip.grid[2].max())
         return np.exp(self.ip((x,y,z)))
 
     # multipole decomposition
