@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/06 23:40:04
+Last edit  : 2024/03/12 14:34:09
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -14,11 +14,13 @@ from scipy.interpolate import RegularGridInterpolator as rgi
 from astropy.cosmology import wCDM, Planck18
 from scipy.special import sici
 from scipy.special import eval_legendre
+from time import time
 
 from . import trigutils
 from .halofit import Halofit
 from .multipole import Multipole
 from .utils import loglinear, edge_correction
+
 
 wPlanck18 = wCDM(H0=Planck18.H0, Om0=Planck18.Om0, Ode0=Planck18.Ode0, w0=-1.0, meta=Planck18.meta, name='wPlanck18')
 
@@ -54,7 +56,7 @@ class BispectrumBase:
         self.set_cosmology(cosmo or wPlanck18)
         if zs is None and pzs is None:
             print('setting a default source distribution: zs=1, pzs=1')
-            zs, pzs = 1, 1
+            zs, pzs = [1], [1]
         self.set_source_distribution(zs, pzs)
         
         # defined the support range of ell1, ell2
@@ -77,41 +79,46 @@ class BispectrumBase:
         self.chi2z = ius(chi, z)
         self.has_changed = True
 
-    def set_source_distribution(self, zs, pzs):
+    def set_source_distribution(self, zs_list, pzs_list):
         """
         Set source distribution.
 
-        zs (array): redshift array
-        pzs (array): probability distribution of source galaxies
+        zs_list (list): redshift array
+        pzs_list (list): probability distribution of source galaxies
         """
-        if np.isscalar(zs):
-            zs = np.asarray(zs)
-            pzs = np.asarray(pzs)
-        assert zs.size == pzs.size, "zs and pzs must have the same length"
-        self.zs = zs
-        self.pzs= pzs
+        # setting attributes
+        self.n_sample = len(zs_list)
+        self.zs_list = zs_list
+        self.pzs_list = pzs_list
+
+        # casting and shape check
+        for i in range(self.n_sample):
+            if np.isscalar(self.zs_list[i]):
+                self.zs_list[i] = np.asarray(self.zs_list[i])
+                self.pzs_list[i] = np.asarray(self.pzs_list[i])
+            assert self.zs_list[i].size == self.pzs_list[i].size, "zs and pzs must have the same length"
+
+        # rise flag
         self.has_changed = True
 
-    def compute_lensing_kernel(self, nzlbin=101):
+    def compute_lensing_kernel_per_sample(self, zs, pzs, nzlbin=101):
         """
         Set source distribution.
 
         zs (array): redshift array
         pzs (array): probability distribution of source galaxies
         """
-
-        if self.zs.size == 1:
-            zl = np.linspace(0.0, self.zs, nzlbin)
+        if zs.size == 1:
+            zl = np.linspace(0.0, zs, nzlbin)
             chil = self.z2chi(zl)
-            chis = self.z2chi(self.zs)
+            chis = self.z2chi(zs)
             g = 1.-chil/chis
-            self.zmax = self.zs
-            self.z2g = ius(zl, g, ext=1)
-            self.chi2g = ius(chil, g, ext=1)
+            z2g = ius(zl, g, ext=1)
+            chi2g = ius(chil, g, ext=1)
         else:
-            zl = np.linspace(0, self.zs.max(), nzlbin)
+            zl = np.linspace(0, zs.max(), nzlbin)
             chil = self.z2chi(zl)
-            chis = self.z2chi(self.zs)
+            chis = self.z2chi(zs)
             CHIL, CHIS = np.meshgrid(chil, chis, indexing='ij')
 
             # integrand
@@ -119,10 +126,27 @@ class BispectrumBase:
             I = np.divide(CHIL, CHIS, out=I, where=CHIS > CHIL)
             I = (pzs*(1-I))
 
-            g = np.trapz(I, self.zs, axis=1)/np.trapz(self.pzs, self.zs)
-            self.z2g = ius(zl, g, ext=1)
-            self.chi2g = ius(chil, g, ext=1)
-            self.zmax = zs.max()
+            g = np.trapz(I, zs, axis=1)/np.trapz(pzs, zs)
+            z2g = ius(zl, g, ext=1)
+            chi2g = ius(chil, g, ext=1)
+        return z2g, chi2g
+
+    def compute_lensing_kernel(self, nzlbin=101):
+        self.z2g_list = []
+        self.chi2g_list = []
+        for i in range(self.n_sample):
+            z2g, chi2g = self.compute_lensing_kernel_per_sample(self.zs_list[i], self.pzs_list[i], nzlbin)
+            self.z2g_list.append(z2g)
+            self.chi2g_list.append(chi2g)
+        self.zmax = max([zs.max() for zs in self.zs_list])
+
+    def get_all_sample_combinations(self):
+        combinations = []
+        for i in range(self.n_sample):
+            for j in range(i, self.n_sample):
+                for k in range(j, self.n_sample):
+                    combinations.append((i, j, k))
+        return combinations
 
     def set_ell12mu_range(self, ell12min, ell12max, epmu):
         """
@@ -166,7 +190,7 @@ class BispectrumBase:
         raise NotImplementedError
 
     # kappa bispectrum interface
-    def kappa_bispectrum(self, ell1, ell2, ell3, method='direct', **args):
+    def kappa_bispectrum(self, ell1, ell2, ell3, sample_combination=(0,0,0), method='direct', **args):
         """
         Compute kappa bispectrum.
 
@@ -176,16 +200,16 @@ class BispectrumBase:
         method (str): method for computing kappa bispectrum (direct, interp, resum)
         """
         if method == 'direct':
-            return self.kappa_bispectrum_direct(ell1, ell2, ell3, **args)
+            return self.kappa_bispectrum_direct(ell1, ell2, ell3, sample_combination, **args)
         elif method == 'interp':
-            return self.kappa_bispectrum_interp(ell1, ell2, ell3)
+            return self.kappa_bispectrum_interp(ell1, ell2, ell3, sample_combination)
         elif method == 'resum':
-            return self.kappa_bispectrum_resum(ell1, ell2, ell3, **args)
+            return self.kappa_bispectrum_resum(ell1, ell2, ell3, sample_combination, **args)
         else:
             raise ValueError("method must be 'direct', 'interp', or 'resum'")
         
     # direct evaluation of kappa bispectrum from matter bispectrum
-    def kappa_bispectrum_direct(self, ell1, ell2, ell3, zmin=1e-4, nzbin=30, **args):
+    def kappa_bispectrum_direct(self, ell1, ell2, ell3, sample_combination=(0,0,0), zmin=1e-4, nzbin=30, bm=None, return_bm=False, **args):
         """
         Compute kappa bispectrum by direct line-of-sight integration.
 
@@ -218,8 +242,10 @@ class BispectrumBase:
         # compute lensing weight, encoding geometrical dependence.
         z = np.logspace(np.log10(zmin), np.log10(self.zmax), nzbin)
         chi = self.z2chi(z)
-        g   = self.chi2g(chi)
-        weight = g**3/chi*(1+z)**3
+        weight = 1
+        for i in sample_combination:
+            weight *= self.chi2g_list[i](chi)
+        weight *= 1.0/chi*(1+z)**3
 
         # create grids
         ELL1, Z = np.meshgrid(ell1, z, indexing='ij')
@@ -228,8 +254,12 @@ class BispectrumBase:
         CHI = self.z2chi(Z)
         K1, K2, K3 = ELL1/CHI, ELL2/CHI, ELL3/CHI
 
+        # compute matter bispectrum
+        if bm is None:
+            bm = self.matter_bispectrum(K1, K2, K3, Z, **args)
+
         # integrand
-        i = weight * self.matter_bispectrum(K1, K2, K3, Z, **args)
+        i = weight * bm
 
         # integrate
         bk = np.trapz(i, chi, axis=1)
@@ -244,10 +274,13 @@ class BispectrumBase:
         if isscalar:
             bk = bk[0]
 
-        return bk
+        if return_bm:
+            return bk, bm
+        else:
+            return bk
 
     # interpolation
-    def interpolate(self, nrbin=35, nubin=40, nvbin=25, method='linear', nzbin=30, data=None, **args):
+    def interpolate(self, nrbin=35, nubin=35, nvbin=25, method='linear', nzbin=30, data=None, sample_combinations=None, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
@@ -267,11 +300,21 @@ class BispectrumBase:
 
         R, U, V = np.meshgrid(r, u, v, indexing='ij')
         ell1, ell2, ell3 = trigutils.ruv_to_x1x2x3(R, U, V)
-        bk = self.kappa_bispectrum_direct(ell1, ell2, ell3, nzbin=nzbin, **args)
 
-        self.ip = rgi((np.log(r), np.log(u), v), np.log(bk), method=method)
+        if sample_combinations is None:
+            sample_combinations = self.get_all_sample_combinations()
 
-    def kappa_bispectrum_interp(self, ell1, ell2, ell3):
+        self.ip = dict()
+        bm = None
+        for sample_combination in sample_combinations:
+            bk, bm = self.kappa_bispectrum_direct(
+                ell1, ell2, ell3, 
+                nzbin=nzbin, 
+                sample_combination=sample_combination,
+                bm=bm, return_bm=True, **args)
+            self.ip[sample_combination] = rgi((np.log(r), np.log(u), v), np.log(bk), method=method)
+
+    def kappa_bispectrum_interp(self, ell1, ell2, ell3, sample_combination=(0,0,0)):
         """
         Compute kappa bispectrum by interpolation.
 
@@ -279,11 +322,12 @@ class BispectrumBase:
         ell2 (array): ell2 array
         ell3 (array): ell3 array
         """
+        ip = self.ip[sample_combination]
         r, u, v = trigutils.x1x2x3_to_ruv(ell1, ell2, ell3, signed=False)
-        x = edge_correction(np.log(r), self.ip.grid[0].min(), self.ip.grid[0].max())
-        y = edge_correction(np.log(u), self.ip.grid[1].min(), self.ip.grid[1].max())
-        z = edge_correction(v, self.ip.grid[2].min(), self.ip.grid[2].max())
-        return np.exp(self.ip((x,y,z)))
+        x = edge_correction(np.log(r), ip.grid[0].min(), ip.grid[0].max())
+        y = edge_correction(np.log(u), ip.grid[1].min(), ip.grid[1].max())
+        z = edge_correction(v, ip.grid[2].min(), ip.grid[2].max())
+        return np.exp(ip((x,y,z)))
 
     # multipole decomposition
     def init_multipole(self, Lmax, MU, method='linear'):
@@ -298,6 +342,7 @@ class BispectrumBase:
             self.multipole = Multipole(MU, Lmax, method=method, verbose=True)
 
     def decompose(self, Lmax, nellbin=100, npsibin=80, nmubin=50, window=None, 
+            sample_combinations=None,
             method_decomp='linear', method_bispec='interp', **args):
         """
         Compute multipole decomposition of kappa bispectrum.
@@ -318,17 +363,23 @@ class BispectrumBase:
         self.init_multipole(Lmax, MU, method_decomp)
 
         ELL1, ELL2, ELL3 = trigutils.xpsimu_to_x1x2x3(ELL, SPI, MU)
-        b = self.kappa_bispectrum(ELL1, ELL2, ELL3, method=method_bispec, **args)
 
-        if window is not None:
-            b*= window(ELL1, ELL2, ELL3)
+        if sample_combinations is None:
+            sample_combinations = self.get_all_sample_combinations()
 
-        # Compute multipoles
-        L = np.arange(Lmax+1)
-        bL = self.multipole.decompose(b, L, axis=2)
-        self.multipoles_data = {'ell':ell, 'psi':psi, 'bL':bL}
+        self.multipoles_data = {'ell':ell, 'psi':psi, 'bL':dict()}
+        for sample_combination in sample_combinations:
+            b = self.kappa_bispectrum(ELL1, ELL2, ELL3, method=method_bispec, **args)
 
-    def _kappa_bispectrum_multipole(self, L, ell, psi):
+            if window is not None:
+                b*= window(ELL1, ELL2, ELL3)
+
+            # Compute multipoles
+            L = np.arange(Lmax+1)
+            bL = self.multipole.decompose(b, L, axis=2)
+            self.multipoles_data['bL'][sample_combination] = bL
+
+    def _kappa_bispectrum_multipole(self, L, ell, psi, sample_combination=(0,0,0)):
         """
         Compute multipole of kappa bispectrum.
 
@@ -336,13 +387,13 @@ class BispectrumBase:
         ell (array): ell array
         psi (array): psi array
         """
-        Lmax = self.multipoles_data['bL'].shape[0]
+        Lmax = self.multipoles_data['bL'][sample_combination].shape[0]
         if L > Lmax:
             raise ValueError("L must be less than Lmax={}".format(Lmax))
 
         x = np.log(self.multipoles_data['ell'])
         y = np.log(self.multipoles_data['psi'])
-        z = self.multipoles_data['bL'][L, :, :]
+        z = self.multipoles_data['bL'][sample_combination][L, :, :]
         f = rgi((x, y), z, bounds_error=True)
 
         # convert psi to pi/2-psi if psi > pi/4
@@ -356,7 +407,7 @@ class BispectrumBase:
 
         return out
 
-    def kappa_bispectrum_multipole(self, L, ell, psi):
+    def kappa_bispectrum_multipole(self, L, ell, psi, sample_combination=(0,0,0)):
         """
         Compute multipole of kappa bispectrum.
 
@@ -369,14 +420,14 @@ class BispectrumBase:
             L = np.array([L])
         out = np.zeros((L.size,) + ell.shape)
         for i, _L in enumerate(L):
-            out[i] = self._kappa_bispectrum_multipole(_L, ell, psi)
+            out[i] = self._kappa_bispectrum_multipole(_L, ell, psi, sample_combination=sample_combination)
 
         if isscalar:
             out = out[0]
             
         return out
 
-    def kappa_bispectrum_resum(self, ell1, ell2, ell3, Lmax=None):
+    def kappa_bispectrum_resum(self, ell1, ell2, ell3, sample_combination=(0,0,0), Lmax=None):
         """
         Compute kappa bispectrum by resummation of multipoles.
 
@@ -388,7 +439,7 @@ class BispectrumBase:
         if Lmax is None:
             Lmax = self.multipoles_data['bL'].shape[0]
         L = np.arange(Lmax)
-        bL = self.kappa_bispectrum_multipole(L, ell, psi)
+        bL = self.kappa_bispectrum_multipole(L, ell, psi, sample_combination=sample_combination)
         pL = np.array([eval_legendre(_L, mu) for _L in L])
         out = np.sum(bL*pL, axis=0)
         return out

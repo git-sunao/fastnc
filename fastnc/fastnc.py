@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/06 13:50:33
+Last edit  : 2024/03/07 11:55:41
 
 Description:
 This is the module of fastnc, which calculate the
@@ -102,7 +102,7 @@ class GLMCalculator:
     cachedir = os.path.join(os.path.dirname(__file__), 'cache')
     databasename = os.path.join(cachedir, 'GLMdatabase.csv')
 
-    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-4, verbose=False, cache=True):
+    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-5, verbose=False, cache=True):
         self.Lmax = Lmax
         self.Mmax = Mmax
         self.psi  = np.linspace(0, np.pi/2, Npsi)
