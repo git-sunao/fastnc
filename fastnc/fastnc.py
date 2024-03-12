@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/07 11:55:41
+Last edit  : 2024/03/12 15:36:50
 
 Description:
 This is the module of fastnc, which calculate the
@@ -309,7 +309,7 @@ class FastNaturalComponents:
         self.t1, self.t2 = 1/self.ell1[::-1], 1/self.ell2[::-1]
         self.T1, self.T2 = np.meshgrid(self.t1, self.t2, indexing='ij')
     
-    def HM(self, M, ell, psi, bL=None, Lmin=None, Lmax=None):
+    def HM(self, M, ell, psi, bL=None, Lmin=None, Lmax=None, **args):
         """
         Compute H_M(l1, l2 = \\sum_L (-1)^L * G_LM * b_L(l1, l2).
 
@@ -329,14 +329,14 @@ class FastNaturalComponents:
 
         # Get bispectrum multipole
         if bL is None:
-            bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI)
+            bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI, **args)
 
         # Sum up GLM*bL over L
         GLM = self.GLM(L, M, self.PSI)
         HM = np.sum(((-1)**(L+1)*GLM.T*bL.T).T, axis=0)
         return HM
 
-    def __init_kernel_table(self, Mmax=None, Lmin=None, Lmax=None):
+    def __init_kernel_table(self, Mmax=None, Lmin=None, Lmax=None, **args):
         """
         Initialize kernel table.
 
@@ -352,7 +352,7 @@ class FastNaturalComponents:
         L = np.arange(Lmin, Lmax+1)
 
         # bispectrum multipole
-        bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI)
+        bL = self.bispectrum.kappa_bispectrum_multipole(L, self.ELL, self.PSI, **args)
 
         # initialize table
         self.tabHM = dict()
@@ -363,7 +363,7 @@ class FastNaturalComponents:
         # update flag
         self.has_changed = False
         
-    def GammaM_on_grid(self, mu, M, dlnt=None):
+    def GammaM_on_grid(self, mu, M, dlnt=None, **args):
         """
         Compute Gamma^(M).
         
@@ -377,7 +377,7 @@ class FastNaturalComponents:
         """
         # get kernel
         if self.has_changed:
-            self.__init_kernel_table()
+            self.__init_kernel_table(**args)
 
         # casting to array
         if np.isscalar(mu):
@@ -455,7 +455,7 @@ class FastNaturalComponents:
         # return
         return GM
 
-    def GammaM_on_bin(self, mu, M, t1, t2, dlnt=None):
+    def GammaM_on_bin(self, mu, M, t1, t2, dlnt=None, **args):
         """
         Compute Gamma^(M).
         
@@ -471,7 +471,7 @@ class FastNaturalComponents:
         """
         # get kernel
         if self.has_changed:
-            self.__init_kernel_table()
+            self.__init_kernel_table(**args)
 
         # casting to array
         if np.isscalar(mu):
@@ -523,18 +523,18 @@ class FastNaturalComponents:
         # return
         return GM
 
-    def GammaM(self, mu, M, t1=None, t2=None, dlnt=None):
+    def GammaM(self, mu, M, t1=None, t2=None, dlnt=None, **args):
         if t1 is None and t2 is not None:
             raise ValueError('Error: t1 is None but t2 is not None')
         if t1 is not None and t2 is None:
             raise ValueError('Error: t1 is not None but t2 is None')
         if t1 is None or t2 is None:
-            GM = self.GammaM_on_grid(mu, M, dlnt=dlnt)
+            GM = self.GammaM_on_grid(mu, M, dlnt=dlnt, **args)
         else:
-            GM = self.GammaM_on_bin(mu, M, t1, t2, dlnt=dlnt)
+            GM = self.GammaM_on_bin(mu, M, t1, t2, dlnt=dlnt, **args)
         return GM
 
-    def Gamma(self, mu, phi, t1=None, t2=None, Mmax=None, dlnt=None, projection='x'):
+    def Gamma(self, mu, phi, t1=None, t2=None, Mmax=None, dlnt=None, projection='x', **args):
         """
         Compute Gamma_mu(t1, t2, dphi)
 
@@ -555,7 +555,7 @@ class FastNaturalComponents:
 
         # compute multipoles
         M       = np.arange(-Mmax, Mmax+1)
-        GM      = self.GammaM(mu, M, t1=t1, t2=t2, dlnt=dlnt)
+        GM      = self.GammaM(mu, M, t1=t1, t2=t2, dlnt=dlnt, **args)
 
         # resummation
         if t1 is not None and t2 is not None:

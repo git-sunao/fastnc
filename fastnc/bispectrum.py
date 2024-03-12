@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/12 14:34:09
+Last edit  : 2024/03/12 16:47:33
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -55,8 +55,8 @@ class BispectrumBase:
         """
         self.set_cosmology(cosmo or wPlanck18)
         if zs is None and pzs is None:
-            print('setting a default source distribution: zs=1, pzs=1')
-            zs, pzs = [1], [1]
+            zs, pzs = [1,2], [1,1]
+            print(f'setting a default source distribution: zs={zs}, pzs={pzs}')
         self.set_source_distribution(zs, pzs)
         
         # defined the support range of ell1, ell2
@@ -79,7 +79,7 @@ class BispectrumBase:
         self.chi2z = ius(chi, z)
         self.has_changed = True
 
-    def set_source_distribution(self, zs_list, pzs_list):
+    def set_source_distribution(self, zs_list, pzs_list, sample_names=None):
         """
         Set source distribution.
 
@@ -88,15 +88,19 @@ class BispectrumBase:
         """
         # setting attributes
         self.n_sample = len(zs_list)
-        self.zs_list = zs_list
-        self.pzs_list = pzs_list
+
+        # names of source samples
+        if sample_names is None:
+            sample_names = [str(i) for i in range(self.n_sample)]
+        self.sample_names= sample_names
 
         # casting and shape check
-        for i in range(self.n_sample):
-            if np.isscalar(self.zs_list[i]):
-                self.zs_list[i] = np.asarray(self.zs_list[i])
-                self.pzs_list[i] = np.asarray(self.pzs_list[i])
-            assert self.zs_list[i].size == self.pzs_list[i].size, "zs and pzs must have the same length"
+        self.zs_dict = dict()
+        self.pzs_dict = dict()
+        for i, name in enumerate(self.sample_names):
+            self.zs_dict[name] = np.asarray(zs_list[i])
+            self.pzs_dict[name] = np.asarray(pzs_list[i])
+            assert self.zs_dict[name].size == self.pzs_dict[name].size, "zs and pzs must have the same length"
 
         # rise flag
         self.has_changed = True
@@ -132,20 +136,23 @@ class BispectrumBase:
         return z2g, chi2g
 
     def compute_lensing_kernel(self, nzlbin=101):
-        self.z2g_list = []
-        self.chi2g_list = []
-        for i in range(self.n_sample):
-            z2g, chi2g = self.compute_lensing_kernel_per_sample(self.zs_list[i], self.pzs_list[i], nzlbin)
-            self.z2g_list.append(z2g)
-            self.chi2g_list.append(chi2g)
-        self.zmax = max([zs.max() for zs in self.zs_list])
+        self.z2g_dict = dict()
+        self.chi2g_dict = dict()
+        for name in self.sample_names:
+            z2g, chi2g = self.compute_lensing_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
+            self.z2g_dict[name] = z2g
+            self.chi2g_dict[name] = chi2g
+        self.zmax = max([self.zs_dict[name].max() for name in self.sample_names])
 
     def get_all_sample_combinations(self):
         combinations = []
         for i in range(self.n_sample):
+            name_i = self.sample_names[i]
             for j in range(i, self.n_sample):
+                name_j = self.sample_names[j]
                 for k in range(j, self.n_sample):
-                    combinations.append((i, j, k))
+                    name_k = self.sample_names[k]
+                    combinations.append((name_i, name_j, name_k))
         return combinations
 
     def set_ell12mu_range(self, ell12min, ell12max, epmu):
@@ -243,8 +250,8 @@ class BispectrumBase:
         z = np.logspace(np.log10(zmin), np.log10(self.zmax), nzbin)
         chi = self.z2chi(z)
         weight = 1
-        for i in sample_combination:
-            weight *= self.chi2g_list[i](chi)
+        for name in sample_combination:
+            weight *= self.chi2g_dict[str(name)](chi)
         weight *= 1.0/chi*(1+z)**3
 
         # create grids
@@ -369,7 +376,7 @@ class BispectrumBase:
 
         self.multipoles_data = {'ell':ell, 'psi':psi, 'bL':dict()}
         for sample_combination in sample_combinations:
-            b = self.kappa_bispectrum(ELL1, ELL2, ELL3, method=method_bispec, **args)
+            b = self.kappa_bispectrum(ELL1, ELL2, ELL3, sample_combination, method=method_bispec, **args)
 
             if window is not None:
                 b*= window(ELL1, ELL2, ELL3)
