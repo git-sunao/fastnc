@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/12 15:36:50
+Last edit  : 2024/03/13 12:53:11
 
 Description:
 This is the module of fastnc, which calculate the
@@ -567,7 +567,7 @@ class FastNaturalComponents:
         else:
             expMphi = np.exp(1j*M[:,None]*phi)
             Gamma   = np.einsum('im...,mk->ik...', GM, expMphi)/(2*np.pi)
-            Gamma  *= self.projection_factor(mu, self.T1, self.T2, phi, projection)
+            Gamma  *= self.projection_factor(mu, phi[:,None,None], self.T1, self.T2, projection)
 
         return Gamma
     
@@ -634,7 +634,7 @@ def ortho2cent(i, t1, t2, phi):
 
     return out
 
-def x2cent(i, t1, t2, phi):
+def x2cent(mu, t1, t2, phi):
     # Equations between Eq. (15) and (16) 
     # of https://arxiv.org/abs/2309.08601
     v = t1+t2*np.exp(-1j*phi)
@@ -643,14 +643,23 @@ def x2cent(i, t1, t2, phi):
     q2 = v/np.conj(v)
     v = t1-2*t2*np.exp(-1j*phi)
     q3 = v/np.conj(v)
-    
-    if i==0:
-        return q1*q2*q3 * np.exp(3j*phi)
-    elif i==1:
-        return np.conj(q1)*q2*q3 * np.exp(1j*phi)
-    elif i==2:
-        return q1*np.conj(q2)*q3 * np.exp(3j*phi)
-    elif i==3:
-        return q1*q2*np.conj(q3) * np.exp(-1j*phi)
-    else:
-        raise ValueError('Error: i={} is not expected'.format(i))
+
+    if np.isscalar(mu):
+        mu = [mu]
+
+    out = []
+    for i in mu:
+        if i==0:
+            o = q1*q2*q3 * np.exp(3j*phi)
+        elif i==1:
+            o = np.conj(q1)*q2*q3 * np.exp(1j*phi)
+        elif i==2:
+            o = q1*np.conj(q2)*q3 * np.exp(3j*phi)
+        elif i==3:
+            o = q1*q2*np.conj(q3) * np.exp(-1j*phi)
+        else:
+            raise ValueError('Error: i={} is not expected'.format(i))
+        out.append(o)
+    out = np.array(out)
+
+    return out
