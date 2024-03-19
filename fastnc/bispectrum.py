@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/12 16:47:33
+Last edit  : 2024/03/19 15:12:50
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -18,7 +18,7 @@ from time import time
 
 from . import trigutils
 from .halofit import Halofit
-from .multipole import Multipole
+from .multipole import Multipole, MultipoleLegendre
 from .utils import loglinear, edge_correction
 
 
@@ -337,7 +337,7 @@ class BispectrumBase:
         return np.exp(ip((x,y,z)))
 
     # multipole decomposition
-    def init_multipole(self, Lmax, MU, method='linear'):
+    def init_multipole(self, Lmax, mu, method='gauss-legendre'):
         """
         Initialize multipole decomposition.
 
@@ -345,12 +345,12 @@ class BispectrumBase:
         MU (array): mu array
         method (str): method for multipole decomposition
         """
-        if (not hasattr(self, 'multipole')) or self.multipole.Lmax != Lmax or self.multipole.x.shape != MU.shape or np.any(self.multipole.x != MU) or self.multipole.method != method:
-            self.multipole = Multipole(MU, Lmax, method=method, verbose=True)
+        if (not hasattr(self, 'multipole')) or self.multipole.Lmax != Lmax or self.multipole.x.shape != mu.shape or np.any(self.multipole.x != mu) or self.multipole.method != method:
+            self.multipole = MultipoleLegendre(mu, Lmax, method='gauss-legendre', verbose=True)
 
     def decompose(self, Lmax, nellbin=100, npsibin=80, nmubin=50, window=None, 
             sample_combinations=None,
-            method_decomp='linear', method_bispec='interp', **args):
+            method_decomp='gauss-legendre', method_bispec='interp', **args):
         """
         Compute multipole decomposition of kappa bispectrum.
 
@@ -367,7 +367,7 @@ class BispectrumBase:
         psi = loglinear(self.psimin, 1e-3, self.psimax, 50, npsibin)
         mu = 1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, 30, nmubin)[::-1] # capture the squeezed limit
         ELL, SPI, MU = np.meshgrid(ell, psi, mu, indexing='ij')
-        self.init_multipole(Lmax, MU, method_decomp)
+        self.init_multipole(Lmax, mu, method_decomp)
 
         ELL1, ELL2, ELL3 = trigutils.xpsimu_to_x1x2x3(ELL, SPI, MU)
 
@@ -386,7 +386,7 @@ class BispectrumBase:
             bL = self.multipole.decompose(b, L, axis=2)
             self.multipoles_data['bL'][sample_combination] = bL
 
-    def _kappa_bispectrum_multipole(self, L, ell, psi, sample_combination=(0,0,0)):
+    def _kappa_bispectrum_multipole(self, L, ell, psi, sample_combination=('0','0','0')):
         """
         Compute multipole of kappa bispectrum.
 
@@ -414,7 +414,7 @@ class BispectrumBase:
 
         return out
 
-    def kappa_bispectrum_multipole(self, L, ell, psi, sample_combination=(0,0,0)):
+    def kappa_bispectrum_multipole(self, L, ell, psi, sample_combination=('0','0','0')):
         """
         Compute multipole of kappa bispectrum.
 
@@ -434,7 +434,7 @@ class BispectrumBase:
             
         return out
 
-    def kappa_bispectrum_resum(self, ell1, ell2, ell3, sample_combination=(0,0,0), Lmax=None):
+    def kappa_bispectrum_resum(self, ell1, ell2, ell3, sample_combination=('0','0','0'), Lmax=None):
         """
         Compute kappa bispectrum by resummation of multipoles.
 
