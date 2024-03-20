@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/19 20:11:56
+Last edit  : 2024/03/20 10:36:13
 
 Description:
 This is the module of fastnc, which calculate the
@@ -80,7 +80,7 @@ class FastNaturalComponents:
         """
         # update bispectrum multipole
         self.bispectrum = bispectrum
-        self.bispectrum.decompose(self.Lmax, **args)
+        self.bispectrum.decompose(**args)
         self.set_bin()
         self.has_changed = True
 

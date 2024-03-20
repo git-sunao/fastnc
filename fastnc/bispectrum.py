@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/20 01:16:31
+Last edit  : 2024/03/20 11:40:21
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -38,45 +38,47 @@ class BispectrumBase:
     >>> b.kappa_bispectrum_multipole(L, ell, psi)
     >>> b.kappa_bispectrum_resum(ell1, ell2, ell3)
     """
-    # The predefined support range of ell1, ell2, mu
-    # Can be set by the user from set_ell12mu_range method
-    ell12min = None
-    ell12max = None
-    epmu     = 1e-7
+    # default configs
+    config_scale     = dict(ell12min=None, ell12max=None, epmu=1e-7)
+    config_losint    = dict(zmin=1e-4, nzbin=30)
+    config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use=True)
+    config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=1, \
+        multipole_type='legendre', method='gauss-legendre', use=True)
 
-    def __init__(self, config_losint, config_interp, config_multipole):
+    def __init__(self, config_scale=None, config_losint=None, config_interp=None, config_multipole=None):
         """
         Initialize BispectrumBase.
 
+        config_scale (dict): config for scale (this should not be changed)
         config_losint (dict): config for line-of-sight integration
         config_interp (dict): config for interpolation
         config_multipole (dict): config for multipole decomposition
         """
         # set the support range of ell1, ell2
-        self.set_range(self.ell12min, self.ell12max, self.epmu)
+        self.set_scale_range(**(config_scale or {}))
         # init line-of-sight integration config
-        self.set_losint_config(**config_losint)
+        self.set_losint(**(config_losint or {}))
         # init interpolation grid
-        self.init_interpolation_grid(**config_interp)
+        self.set_interpolation_grid(**(config_interp or {}))
         # init multipole decomposition grid
-        self.init_multipole(**config_multipole)
+        self.set_multipole_grid(**(config_multipole or {}))
         
-        
-        self.set_cosmology(cosmo or wPlanck18)
-        if zs is None and pzs is None:
-            zs, pzs = [1,2], [1,1]
-            print(f'setting a default source distribution: zs={zs}, pzs={pzs}')
-        self.set_source_distribution(zs, pzs)
-
     # Binning
-    def set_losint_config(self, zmin=1e-4, nzbin=30):
+    def set_losint(self, **config):
         """
         Set line-of-sight integration config.
-        """
-        self.zmin_losint  = zmin
-        self.nzbin_losint = nzbin
 
-    def set_range(self, ell12min, ell12max, epmu):
+        Possible config keys are:
+            zmin (float): minimum of redshift
+            nzbin (int): number of bins for redshift
+        """
+        # update config
+        self.config_losint.update(config)
+        # source to class attributes
+        self.zmin_losint  = self.config_losint['zmin']
+        self.nzbin_losint = self.config_losint['nzbin']
+
+    def set_scale_range(self, **config):
         """
         Set support range of ell1, ell2, mu, where
         ell1 and ell2 are the two side lengths of the triangle,
@@ -89,46 +91,58 @@ class BispectrumBase:
         We avoid the squeezed limit of triangle by setting the minimum
         of mu to be 1-epmu, where epmu is a small number.
 
-        ell12min (float): minimum of ell1 and ell2
-        ell12max (float): maximum of ell1 and ell2
-        epmu (float): small number to avoid the squeezed limit
+        Possible config keys are:
+            ell12min (float): minimum of ell1 and ell2
+            ell12max (float): maximum of ell1 and ell2
+            epmu (float): small number to avoid the squeezed limit
         """
+        # update config
+        self.config_scale.update(config)
+        
         # fastnc args convention
-        self.ell12min = ell12min
-        self.ell12max = ell12max
+        self.ell12min = self.config_scale['ell12min']
+        self.ell12max = self.config_scale['ell12max']
         self.mumin    = -1.0
-        self.mumax    = 1.0 - epmu
+        self.mumax    = 1.0 - self.config_scale['epmu']
 
         # Multipole decomposition args convention.
-        self.ellmin = 2**0.5 * ell12min
-        self.ellmax = 2**0.5 * ell12max
-        self.psimin = min(np.arctan2(ell12min, ell12max), np.pi/2 - np.arctan(ell12max/ell12min))
+        self.ellmin = 2**0.5 * self.ell12min
+        self.ellmax = 2**0.5 * self.ell12max
+        self.psimin = min(np.arctan2(self.ell12min, self.ell12max), np.pi/2 - np.arctan(self.ell12max/self.ell12min))
         self.psimax = np.pi/4
 
         # Interpolation args convention.
         # When ell, psi, mu run over the lectangular region
         # defined by the above ranges, the ranges of r, u, v
         # are also given by the ranges on ell, psi, mu.
-        self.rmin = self.ellmin*min(5**-0.5, (1-(1-epmu)*2/5)**0.5)
+        self.rmin = self.ellmin*min(5**-0.5, (1-self.mumax*2/5)**0.5)
         self.rmax = self.ellmax*max(2**-0.5, np.cos(self.psimin))
-        self.umin = min(2**0.5*epmu**0.5, np.tan(self.psimin))
+        self.umin = min(2**0.5*self.config_scale['epmu']**0.5, np.tan(self.psimin))
         self.umax = 1.0
         self.vmin = 0.0
         self.vmax = 1.0
 
-    def init_interpolation_grid(self, nrbin=35, nubin=35, nvbin=25, use=True):
+    def set_interpolation_grid(self, **config):
         """
-        Initialize interpolation grid.
+        Set interpolation grid.
 
-        nrbin (int): number of bins for r
-        nubin (int): number of bins for u
-        nvbin (int): number of bins for v
-        use (bool): whether to use interpolation
+        Possible config keys are:
+            nrbin (int): number of bins for r
+            nubin (int): number of bins for u
+            nvbin (int): number of bins for v
+            method (str): method for interpolation
+            use (bool): whether to use interpolation
         """
-        if not use: return 0
-        r = np.logspace(np.log10(self.rmin), np.log10(self.rmax), nrbin)
-        u = np.logspace(np.log10(self.umin), np.log10(self.umax), nubin)
-        v = np.linspace(self.vmin, self.vmax, nvbin)
+        # update config 
+        self.config_interp.update(config)
+        # source to class attributes
+        if not self.config_interp['use']: return 0
+        r = np.logspace(np.log10(self.rmin), np.log10(self.rmax), \
+            self.config_interp['nrbin'])
+        u = np.logspace(np.log10(self.umin), np.log10(self.umax), \
+            self.config_interp['nubin'])
+        v = np.linspace(self.vmin, self.vmax, \
+            self.config_interp['nvbin'])
         # create meshgrid
         R, U, V = np.meshgrid(r, u, v, indexing='ij')
         ELL1, ELL2, ELL3 = trigutils.ruv_to_x1x2x3(R, U, V)
@@ -139,27 +153,35 @@ class BispectrumBase:
         self.ELL1_interp = ELL1
         self.ELL2_interp = ELL2
         self.ELL3_interp = ELL3
+        # method for interpolation
+        self.method_interp = self.config_interp['method']
         # place holder for interpolation function
         self.bk_interp = dict()
 
-    def init_multipole_grid(self, nellbin=100, npsibin=80, nmubin=50, 
-            Lmax=1, multipole_type='fourier', method='gauss-legendre', use=True):
+    def set_multipole_grid(self, **config):
         """
-        Initialize multipole decomposition grid.
+        Set multipole decomposition grid.
 
-        nellbin (int): number of bins for ell
-        npsibin (int): number of bins for psi
-        nmubin (int): number of bins for mu
-        Lmax (int): maximum multipole
-        multipole_type (str): type of multipole decomposition
-        method (str): method for multipole evaluation
-        use (bool): whether to use multipole decomposition
+        Possible config keys are:
+            nellbin (int): number of bins for ell
+            npsibin (int): number of bins for psi
+            nmubin (int): number of bins for mu
+            Lmax (int): maximum multipole
+            multipole_type (str): type of multipole decomposition
+            method (str): method for multipole evaluation
+            use (bool): whether to use multipole decomposition
         """
-        if not use: return 0
-        ell = np.logspace(np.log10(self.ellmin), np.log10(self.ellmax), nellbin)
-        psi = loglinear(self.psimin, 1e-3, self.psimax, 50, npsibin)
+        # update config
+        self.config_multipole.update(config)
+        # source to class attributes
+        if not self.config_multipole['use']: return 0
+        ell = np.logspace(np.log10(self.ellmin), np.log10(self.ellmax), \
+            self.config_multipole['nellbin'])
+        psi = loglinear(self.psimin, 1e-3, self.psimax, 50, \
+            self.config_multipole['npsibin'])
         # capture the squeezed limit
-        mu = 1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, 30, nmubin)[::-1]
+        mu = 1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, 30, \
+            self.config_multipole['nmubin'])[::-1]
         # create meshgrid
         ELL, SPI, MU = np.meshgrid(ell, psi, mu, indexing='ij')
         ELL1, ELL2, ELL3 = trigutils.xpsimu_to_x1x2x3(ELL, SPI, MU)
@@ -172,17 +194,25 @@ class BispectrumBase:
         # place holder for multipole decomposition
         self.bL_multipole = dict()
         # maximum multipole
-        self.Lmax_multipole = Lmax
-        self.multipole_type = multipole_type
+        self.Lmax_multipole = self.config_multipole['Lmax']
+        self.multipole_type = self.config_multipole['multipole_type']
         # Multipole calculator
-        if multipole_tyype == 'legendre':
-            self.multipole_decomposer = MultipoleLegendre(mu, Lmax, method=method)
-        elif multipole_tyype == 'fourier':
-            self.multipole_decomposer = MultipoleFourier(mu, Lmax, method=method)
-        elif multipole_tyype == 'cosine':
-            self.multipole_decomposer = MultipoleCosine(mu, Lmax, method=method)
-        elif multipole_tyype == 'sine':
-            self.multipole_decomposer = MultipoleSine(mu, Lmax, method=method)
+        if self.multipole_type == 'legendre':
+            self.multipole_decomposer = MultipoleLegendre(mu, \
+                self.Lmax_multipole, \
+                method=self.config_multipole['method'])
+        elif self.multipole_type == 'fourier':
+            self.multipole_decomposer = MultipoleFourier(mu, \
+                self.Lmax_multipole, \
+                method=self.config_multipole['method'])
+        elif self.multipole_type == 'cosine':
+            self.multipole_decomposer = MultipoleCosine(mu, \
+                self.Lmax_multipole, \
+                method=self.config_multipole['method'])
+        elif self.multipole_type == 'sine':
+            self.multipole_decomposer = MultipoleSine(mu, \
+                self.Lmax_multipole, \
+                method=self.config_multipole['method'])
         else:
             raise ValueError(f"multipole_type {multipole_type} is not supported" \
                     "supported types are 'legendre', 'fourier', 'cosine', and 'sine'")
@@ -283,7 +313,7 @@ class BispectrumBase:
             z2g, chi2g = self.compute_lensing_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
             self.z2g_dict[name] = z2g
             self.chi2g_dict[name] = chi2g
-        self.zmax = max([self.zs_dict[name].max() for name in self.sample_names])
+        self.zmax_losint = max([self.zs_dict[name].max() for name in self.sample_names])
 
     def get_all_sample_combinations(self):
         """
@@ -381,7 +411,7 @@ class BispectrumBase:
         ell3 = ell3.ravel()
 
         # compute lensing weight, encoding geometrical dependence.
-        z = np.logspace(np.log10(zmin), np.log10(self.zmax), nzbin)
+        z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
         chi = self.z2chi(z)
         weight = 1
         for name in sample_combination:
@@ -425,14 +455,13 @@ class BispectrumBase:
             return bk
 
     # interpolation
-    def interpolate(self, method='linear', sample_combinations=None, **args):
+    def interpolate(self, sample_combinations=None, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
         (https://arxiv.org/abs/astro-ph/0307393). See also treecorr homepage
         (https://rmjarvis.github.io/TreeCorr/_build/html/correlation3.html).
 
-        method (str): method for interpolation
         sample_combinations (list): list of sample combinations
         args (dict): arguments for matter_bispectrum
         """
@@ -452,7 +481,7 @@ class BispectrumBase:
                 bm=bm, 
                 return_bm=True, 
                 **args)
-            self.bk_interp[sc] = rgi(grid, np.log(bk), method=method)
+            self.bk_interp[sc] = rgi(grid, np.log(bk), method=self.method_interp)
 
     def kappa_bispectrum_interp(self, ell1, ell2, ell3, \
             sample_combination=None):
@@ -524,8 +553,8 @@ class BispectrumBase:
             sel = np.pi/4 < psi
             psi[sel] = np.pi/2 - psi[sel]
 
-            x = edge_correction(np.log(ell), f.grid[0].min(), f.grid[0].max())
-            y = edge_correction(np.log(psi), f.grid[1].min(), f.grid[1].max())
+            x = edge_correction(np.log(ell), ip.grid[0].min(), ip.grid[0].max())
+            y = edge_correction(np.log(psi), ip.grid[1].min(), ip.grid[1].max())
             out[i] = ip((x, y))
 
         if isscalar:
@@ -555,11 +584,11 @@ class BispectrumHalofit(BispectrumBase):
     """
     Bispectrum computed from halofit.
     """
-    ell12min = 1e-1
-    ell12max = 1e5
-    def __init__(self, cosmo=None, zs=None, pzs=None):
+    # default configs
+    config_scale     = dict(ell12min=1e-1, ell12max=1e5, epmu=1e-7)
+    def __init__(self, config_scale=None, config_losint=None, config_interp=None, config_multipole=None):
         self.halofit = Halofit()
-        super().__init__(cosmo, zs, pzs)
+        super().__init__(config_scale, config_losint, config_interp, config_multipole)
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
