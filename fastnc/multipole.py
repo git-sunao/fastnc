@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/19 15:16:05
+Last edit  : 2024/03/20 00:28:18
 
 Description:
 multipole.py contains the Multipole class, 
@@ -228,7 +228,7 @@ class MultipoleFourier(MultipoleBase):
             raise ValueError(f"method {self.method} is not supported")
         return basis
 
-class MultipoleSin(MultipoleBase):
+class MultipoleSine(MultipoleBase):
     def _init_basis_function(self):
         """
         Sin basis is computationally low cost,
@@ -262,7 +262,7 @@ class MultipoleSin(MultipoleBase):
             raise ValueError(f"method {self.method} is not supported")
         return basis
 
-class MultipoleCos(MultipoleBase):
+class MultipoleCosine(MultipoleBase):
     def _init_basis_function(self):
         """
         Cos basis is computationally low cost,

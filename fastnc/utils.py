@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:41:33
+Last edit  : 2024/03/19 15:19:39
 
 Description:
 utils.py contains utility functions for fastnc.
@@ -52,3 +52,9 @@ def load_pickle(filename):
     with open(filename, 'rb') as f:
         obj = pickle.load(f)
     return obj
+
+def sincos2angbar(psi, delta):
+    cos2b = np.cos(delta) + np.sin(2*psi)
+    sin2b = np.cos(2*psi) * np.sin(delta)
+    norm  = np.sqrt(cos2b**2 + sin2b**2)
+    return sin2b/norm, cos2b/norm

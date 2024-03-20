@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/13 12:53:11
+Last edit  : 2024/03/19 20:11:56
 
 Description:
 This is the module of fastnc, which calculate the
@@ -19,212 +19,7 @@ from . import twobessel
 from . import trigutils
 from . import utils
 from .interpolation import SemiDiagonalInterpolator as sdi
-
-def sincos2angbar(psi, delta):
-    cos2b = np.cos(delta) + np.sin(2*psi)
-    sin2b = np.cos(2*psi) * np.sin(delta)
-    norm  = np.sqrt(cos2b**2 + sin2b**2)
-    return sin2b/norm, cos2b/norm
-
-class GLMdatabase:
-    def __init__(self, csv_filename):
-        self.csv_filename = csv_filename
-        self.df = self.load_database()
-
-    def load_database(self):
-        # Load the CSV file into memory if it exists, otherwise initialize an empty dataframe
-        if os.path.exists(self.csv_filename):
-            return pd.read_csv(self.csv_filename)
-        else:
-            return pd.DataFrame(columns=['Npsi', 'tol', 'filename'])
-
-    def find_entry(self, Npsi, tol):
-        # Check if entry with given Npsi and tol already exists
-        existing_entry = self.df[(self.df['Npsi'] == Npsi) & (self.df['tol'] == tol)]
-
-        if not existing_entry.empty:
-            # If entry exists, return the filename associated with it
-            return existing_entry['filename'].values[0]
-        else:
-            return None
-
-    def find_or_create_entry(self, Npsi, tol):
-        # Check if entry with given Npsi and tol already exists
-        existing_entry = self.df[(self.df['Npsi'] == Npsi) & (self.df['tol'] == tol)]
-
-        if not existing_entry.empty:
-            # If entry exists, return the filename associated with it
-            return existing_entry['filename'].values[0]
-        else:
-            # If entry does not exist, generate a new unique filename
-            new_filename = self.generate_unique_filename()
-            
-            # Add a new row to the dataframe with the provided Npsi, tol, and generated filename
-            new_row = pd.DataFrame({'Npsi': [Npsi], 'tol': [tol], 'filename': [new_filename]})
-            self.df = pd.concat([self.df, new_row], ignore_index=True)
-
-            # Write the updated dataframe to the CSV file
-            self.write()
-
-            # Return the newly generated filename
-            return new_filename
-
-    def generate_unique_filename(self):
-        # Generate a new filename that does not already exist in the dataframe
-        i = 1
-        while True:
-            new_filename = f"GLMdata-{i}.pkl"
-            if new_filename not in self.df['filename'].values:
-                return new_filename
-            i += 1
-
-    def write(self):
-        # Write the current dataframe to the CSV file
-        self.df.to_csv(self.csv_filename, index=False)
-
-class GLMCalculator:
-    """
-    Calculate the GLM coefficients.
-    .. math:
-        G_LM(psi) = 2 \\int_0^{\\pi} dx P_L(\\cos(x)) \\cos[2\\bar\\beta(\\psi, x) + M x]
-
-    Parameters:
-    - Lmax (int): Maximum multipole moment.
-    - Max (int): Maximum angular Fourier mode.
-    - Npsi (int): Number of psi bins.
-
-    Attributes:
-    - Lmax (int): Maximum multipole moment.
-    - Max (int): Maximum angular Fourier mode.
-    - psi (array): Psi bins.
-    """
-
-    cachedir = os.path.join(os.path.dirname(__file__), 'cache')
-    databasename = os.path.join(cachedir, 'GLMdatabase.csv')
-
-    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-5, verbose=False, cache=True):
-        self.Lmax = Lmax
-        self.Mmax = Mmax
-        self.psi  = np.linspace(0, np.pi/2, Npsi)
-        self.tol  = tol
-
-        # general setup
-        self.verbose = verbose
-
-        # initialize GLMdata
-        self.GLMdata = dict()
-
-        # load GLMdata from cache if exists
-        self.load_cache()
-
-        # compute/update GLM 
-        self.compute_GLM(self.tol, verbose=self.verbose)
-
-        # save cache
-        if cache and not os.path.exists(self.databasename):
-            os.makedirs(self.cachedir, exist_ok=True)
-        if cache:
-            self.save_cache()
-
-    def integrand(self, x, psi, L, M):
-        x, psi = np.meshgrid(x, psi, indexing='ij')
-        sin2bb, cos2bb = sincos2angbar(psi, x)
-        out = 4*np.pi*eval_legendre(L, np.cos(x)) * (cos2bb*np.cos(M*x) - sin2bb*np.sin(M*x))
-        return out
-        
-    def compute_GLM(self, tol, correct_bias=True, verbose=False):
-        from .integration import aint
-        # prepare todo list
-        todo = []
-        for L in range(self.Lmax+1):
-            for M in range(self.Mmax+1):
-                todo.append([L, M])
-
-        # compute GLM
-        pbar = tqdm(todo, desc='[GLM]', disable=not verbose)
-        for L, M in pbar:
-            pbar.set_postfix({'L':L, 'M':M})
-            if (L,M) in self.GLMdata:
-                continue
-            args = {'L':L, 'M':M, 'psi':self.psi}
-            o, c = aint(self.integrand, 0, np.pi, 2, tol=tol, **args)
-            self.GLMdata[(L, M)] = o
-
-        # Correction
-        # G_LM(psi) is exactly zero for L<M and psi<=pi/4. 
-        # However, the numerical integration may give a non-zero value.
-        # From my experience, the same amount of error is also present in
-        # G_ML if G_LM is biased. Hence we subtract the error in G_LM(psi<=pi/4)
-        # from G_LM(psi) and G_ML(psi).
-        if correct_bias:
-            for (L,M), data in self.GLMdata.items():
-                if L>=M:
-                    continue
-                # estimate the bias in G_LM(psi<=np.pi/4)
-                bias = np.mean(data[self.psi<=np.pi/4])
-                # subtract the bias
-                self.GLMdata[(L,M)] -= bias
-                if (M,L) in self.GLMdata:
-                    self.GLMdata[(M,L)] -= bias
-        
-    def save_cache(self):
-        # load database
-        database = GLMdatabase(self.databasename)
-
-        # find or create entry in the database
-        filename = database.find_or_create_entry(len(self.psi), self.tol)
-
-        # save
-        utils.save_pickle(os.path.join(self.cachedir, filename), self.GLMdata)
-
-    def load_cache(self):
-        # load database
-        database = GLMdatabase(self.databasename)
-
-        # filename
-        filename = database.find_entry(len(self.psi), self.tol)
-
-        # load
-        if filename is not None:
-            print('Load GLMdata from cache: {}'.format(filename)) if self.verbose else None
-            self.GLMdata = utils.load_pickle(os.path.join(self.cachedir, filename))
-
-    def __call__(self, L, M, psi):
-        """
-        Compute GLM.
-
-        L (int or array): The multipole moment.
-        M (int): The angular Fourier mode.
-        psi (array): The psi values.
-        """
-        isscalar = np.isscalar(L)
-        if isscalar:
-            L = np.array([L])
-
-        if np.any(L>self.Lmax):
-            raise ValueError('L={} is larger than Lmax={}'.format(L, self.Lmax))
-        if np.any(L<0):
-            raise ValueError('L={} is smaller than 0'.format(L))
-        if M>self.Mmax:
-            raise ValueError('M={} is larger than Mmax={}'.format(M, self.Mmax))
-        if M<-self.Mmax:
-            raise ValueError('M={} is smaller than -Mmax={}'.format(M, self.Mmax))
-        
-        out = []
-        for _L in L:
-            # Use the symmetry for M<0
-            # G_{LM}(psi) = G_{L(-M)}(np.pi/2-psi)
-            if M>0:
-                o = np.interp(psi, self.psi, self.GLMdata[(_L, M)])
-            else:
-                o = np.interp(np.pi/2-psi, self.psi, self.GLMdata[(_L, -M)])
-            out.append(o)
-        out = np.array(out)
-
-        if isscalar:
-            out = out[0]
-
-        return out
+from .coupling import MCF222LegendreFourier, MCF222FourierFourier
 
 class FastNaturalComponents:
     """
@@ -259,7 +54,7 @@ class FastNaturalComponents:
         self.Mmax = Mmax
 
         # instantiate GLM calculator
-        self.GLM = GLMCalculator(Lmax, Mmax, verbose=self.verbose)
+        self.GLM = MCF222LegendreFourier(Lmax, Mmax, verbose=self.verbose)
 
         # 2DFFTLog config
         self.config_fftlog = {'nu1':1.01, 'nu2':1.01, 'N_pad':0}
@@ -603,7 +398,7 @@ class FastNaturalComponents:
 # phase factors to convert between different projections
 def x2ortho(i, t1, t2, phi):
     # Compute prefactor
-    sin2pb, cos2pb = sincos2angbar(np.arctan2(t2, t1), np.pi-phi)
+    sin2pb, cos2pb = utils.sincos2angbar(np.arctan2(t2, t1), np.pi-phi)
     if i==0 or i==1 or i==2:
         out = cos2pb - 1j*sin2pb
     elif i==3:
