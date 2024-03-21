@@ -5,6 +5,7 @@ __url__ = 'https://github.com/git-sunao/fastnc'
 from . import fastnc
 from . import multipole
 from . import bispectrum
+from . import coupling
 # supplemental modules:
 from . import halofit
 from . import trigutils
