@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/20 01:18:01
+Last edit  : 2024/03/21 18:06:40
 
 Description:
 coupling.py contains classes for 
@@ -20,6 +20,7 @@ from .integration import aint
 def get_cache_dir():
     # first we look for the environmental variable
     cache_dir = os.environ.get('FASTNC_CACHE_DIR')
+    cache_dir = os.path.expanduser(cache_dir)
     if cache_dir is not None:
         return cache_dir
     # finally we use the default directory

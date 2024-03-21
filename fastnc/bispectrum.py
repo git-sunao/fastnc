@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/20 13:16:47
+Last edit  : 2024/03/21 18:00:50
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -262,7 +262,7 @@ class BispectrumBase:
         # rise flag
         self.has_changed = True
 
-    def set_window_function(self, window):
+    def set_window_function(self, window_function):
         """
         Set window function to be multiplied to the bispectrum.
 
@@ -371,7 +371,7 @@ class BispectrumBase:
         
     # direct evaluation of kappa bispectrum from matter bispectrum
     def kappa_bispectrum_direct(self, ell1, ell2, ell3, \
-            sample_combination=None, \
+            sample_combination=None, window=True, \
             bm=None, return_bm=False, **args):
         """
         Compute kappa bispectrum by direct line-of-sight integration.
@@ -439,7 +439,7 @@ class BispectrumBase:
         bk *= (3/2 * (100/299792)**2 * self.cosmo.Om0)**3
 
         # multiply window 
-        if hasattr(self, 'window_function'):
+        if hasattr(self, 'window_function') and window:
             bk *= self.window_function(ell1, ell2, ell3)
 
         # reshape to the original shape
@@ -478,6 +478,7 @@ class BispectrumBase:
                 self.ELL2_interp, 
                 self.ELL3_interp, 
                 sample_combination=sc,
+                window=False,
                 bm=bm, 
                 return_bm=True, 
                 **args)
@@ -498,7 +499,11 @@ class BispectrumBase:
         x = edge_correction(np.log(r), ip.grid[0].min(), ip.grid[0].max())
         y = edge_correction(np.log(u), ip.grid[1].min(), ip.grid[1].max())
         z = edge_correction(v, ip.grid[2].min(), ip.grid[2].max())
-        return np.exp(ip((x,y,z)))
+        bk = np.exp(ip((x,y,z)))
+        # multiply window 
+        if hasattr(self, 'window_function'):
+            bk *= self.window_function(ell1, ell2, ell3)
+        return bk
 
     # multipole decomposition
     def decompose(self, sample_combinations=None, method_bispec='interp', **args):

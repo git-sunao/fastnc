@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/21 16:38:52
+Last edit  : 2024/03/21 17:20:23
 
 Description:
 This is the module of fastnc, which calculate the
@@ -136,7 +136,8 @@ class FastNaturalComponents:
             self.down_sampler = _[2]
             self.config_fftlog['xy'] = np.exp(_[3])
             assert np.allclose(self.t1, self.t1_fft[self.down_sampler]), \
-                "Something went wrong in tuning FFT grid"
+                "Something went wrong in tuning FFT grid\n" \
+                "t1={}\n t1_fft={}".format(self.t1, self.t1_fft[self.down_sampler])
         else:
             nfft= self.config_fftgrid['nfft']
             self.ell1_fft = np.logspace(np.log10(ell1min), np.log10(ell1max), nfft)
@@ -150,6 +151,8 @@ class FastNaturalComponents:
         self.ELL1_FFT, self.ELL2_FFT = np.meshgrid(self.ell1_fft, self.ell2_fft, indexing='ij')
         self.ELL_FFT  = np.sqrt(self.ELL1_FFT**2 + self.ELL2_FFT**2)
         self.PSI_FFT = np.arctan2(self.ELL2_FFT, self.ELL1_FFT)
+        # mu bins
+        self.mu = self.config_bin['mu']
     
     def HM(self, M, bL=None, **args):
         """
@@ -188,7 +191,7 @@ class FastNaturalComponents:
         HM = [self.HM(_, bL=bL) for _ in M]
 
         # GammaM
-        mu = self.config_bin['mu']
+        mu = self.mu
         dlnt= self.config_bin['dlnt']
         self.Gamma0M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
         self.Gamma1M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
@@ -234,8 +237,8 @@ class FastNaturalComponents:
         if self.config_bin['phi'] is None:
             return
         M = np.arange(-self.Mmax, self.Mmax+1)
-        phi = self.config_bin['phi']
-        expMphi = np.exp(1j*M[:,None]*phi[None,:])
+        self.phi = self.config_bin['phi']
+        expMphi = np.exp(1j*M[:,None]*self.phi[None,:])
         # resum multipoles
         self.Gamma0 = np.tensordot(expMphi, self.Gamma0M, axes=([0],[0]))/(2*np.pi)
         self.Gamma1 = np.tensordot(expMphi, self.Gamma1M, axes=([0],[0]))/(2*np.pi)
@@ -248,7 +251,7 @@ class FastNaturalComponents:
         if self.verbose and dept != dest:
             print('changing shear projection from {} to {}'.format(dept, dest))
         # attributes are 1d arrays, so we cast them to 3d arrays
-        PHI = self.config_bin['phi'][:,None,None]
+        PHI = self.phi[:,None,None]
         T1  = self.t1[None,:,None]
         T2  = self.t2[None,None,:]
         # Convert
@@ -358,23 +361,16 @@ def x2cent(mu, t1, t2, phi):
     v = t1-2*t2*np.exp(-1j*phi)
     q3 = v/np.conj(v)
 
-    if np.isscalar(mu):
-        mu = [mu]
-
-    out = []
-    for i in mu:
-        if i==0:
-            o = q1*q2*q3 * np.exp(3j*phi)
-        elif i==1:
-            o = np.conj(q1)*q2*q3 * np.exp(1j*phi)
-        elif i==2:
-            o = q1*np.conj(q2)*q3 * np.exp(3j*phi)
-        elif i==3:
-            o = q1*q2*np.conj(q3) * np.exp(-1j*phi)
-        else:
-            raise ValueError('Error: i={} is not expected'.format(i))
-        out.append(o)
-    out = np.array(out)
+    if mu==0:
+        out = q1*q2*q3 * np.exp(3j*phi)
+    elif mu==1:
+        out = np.conj(q1)*q2*q3 * np.exp(1j*phi)
+    elif mu==2:
+        out = q1*np.conj(q2)*q3 * np.exp(3j*phi)
+    elif mu==3:
+        out = q1*q2*np.conj(q3) * np.exp(-1j*phi)
+    else:
+        raise ValueError('Error: mu={} is not expected'.format(mu))
 
     return out
 
