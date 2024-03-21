@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/20 11:40:21
+Last edit  : 2024/03/20 13:16:47
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -32,14 +32,14 @@ class BispectrumBase:
     >>> b = BispectrumBase()
     >>> b.set_cosmology(cosmo)
     >>> b.set_source_distribution(zs, pzs)
-    >>> b.set_ell12mu_range(ell12min, ell12max, epmu)
+    >>> b.set_ell1mu_range(ell1min, ell1max, epmu)
     >>> b.interpolate(nrbin=35, nubin=25, nvbin=25, method='linear', nzbin=20)
     >>> b.decompose(Lmax, nellbin=100, npsibin=50, nmubin=50, method_decomp='linear', method_bispec='interp')
     >>> b.kappa_bispectrum_multipole(L, ell, psi)
     >>> b.kappa_bispectrum_resum(ell1, ell2, ell3)
     """
     # default configs
-    config_scale     = dict(ell12min=None, ell12max=None, epmu=1e-7)
+    config_scale     = dict(ell1min=None, ell1max=None, epmu=1e-7)
     config_losint    = dict(zmin=1e-4, nzbin=30)
     config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use=True)
     config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=1, \
@@ -92,23 +92,23 @@ class BispectrumBase:
         of mu to be 1-epmu, where epmu is a small number.
 
         Possible config keys are:
-            ell12min (float): minimum of ell1 and ell2
-            ell12max (float): maximum of ell1 and ell2
+            ell1min (float): minimum of ell1 and ell2
+            ell1max (float): maximum of ell1 and ell2
             epmu (float): small number to avoid the squeezed limit
         """
         # update config
         self.config_scale.update(config)
         
         # fastnc args convention
-        self.ell12min = self.config_scale['ell12min']
-        self.ell12max = self.config_scale['ell12max']
+        self.ell1min = self.config_scale['ell1min']
+        self.ell1max = self.config_scale['ell1max']
         self.mumin    = -1.0
         self.mumax    = 1.0 - self.config_scale['epmu']
 
         # Multipole decomposition args convention.
-        self.ellmin = 2**0.5 * self.ell12min
-        self.ellmax = 2**0.5 * self.ell12max
-        self.psimin = min(np.arctan2(self.ell12min, self.ell12max), np.pi/2 - np.arctan(self.ell12max/self.ell12min))
+        self.ellmin = 2**0.5 * self.ell1min
+        self.ellmax = 2**0.5 * self.ell1max
+        self.psimin = min(np.arctan2(self.ell1min, self.ell1max), np.pi/2 - np.arctan(self.ell1max/self.ell1min))
         self.psimax = np.pi/4
 
         # Interpolation args convention.
@@ -585,7 +585,7 @@ class BispectrumHalofit(BispectrumBase):
     Bispectrum computed from halofit.
     """
     # default configs
-    config_scale     = dict(ell12min=1e-1, ell12max=1e5, epmu=1e-7)
+    config_scale     = dict(ell1min=1e-1, ell1max=1e5, epmu=1e-7)
     def __init__(self, config_scale=None, config_losint=None, config_interp=None, config_multipole=None):
         self.halofit = Halofit()
         super().__init__(config_scale, config_losint, config_interp, config_multipole)
@@ -628,8 +628,8 @@ class BispectrumNFW1Halo(BispectrumBase):
     """
     Toy model
     """
-    ell12min = 1e-2
-    ell12max = 1e5
+    ell1min = 1e-2
+    ell1max = 1e5
     def __init__(self, cosmo=None, zs=None, pzs=None, rs=10.0):
         super().__init__(cosmo, zs, pzs)
         self.set_rs(rs)

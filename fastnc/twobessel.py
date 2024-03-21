@@ -5,7 +5,7 @@ by Xiao Fang
 Feb 22, 2020
 
 Modified by Sunao Sugiyama
-Last edit  : 2024/03/05 21:53:03
+Last edit  : 2024/03/21 15:52:38
 """
 
 import numpy as np
@@ -14,7 +14,7 @@ from numpy.fft import rfft2, irfft2
 
 class two_sph_bessel(object):
 
-	def __init__(self, x1, x2, fx1x2, nu1=1.01, nu2=1.01, N_extrap_low=0, N_extrap_high=0, c_window_width=0.25, N_pad=0):
+	def __init__(self, x1, x2, fx1x2, xy=1, nu1=1.01, nu2=1.01, N_extrap_low=0, N_extrap_high=0, c_window_width=0.25, N_pad=0):
 
 		self.x1_origin = self.x1 = x1 # x is logarithmically spaced
 		self.x2_origin = self.x2 = x2
@@ -31,9 +31,8 @@ class two_sph_bessel(object):
 
 		self.N1 = self.x1.size
 		self.N2 = self.x2.size
-		if((self.N1+N_extrap_low + N_extrap_high)%2==1 or (self.N2+N_extrap_low + N_extrap_high)%2==1): # Make sure the array sizes are even
-			print("Error: array sizes have to be even!")
-			exit()
+		assert (self.N1+N_extrap_low + N_extrap_high)%2==0, "Error: array sizes have to be even!"
+		assert (self.N2+N_extrap_low + N_extrap_high)%2==0, "Error: array sizes have to be even!"
 
 		# extrapolate x and f(x) linearly in log(x), and log(f(x))
 		if(N_extrap_low or N_extrap_high):
@@ -66,8 +65,8 @@ class two_sph_bessel(object):
 		self.z1 = self.nu1 + 1j*self.eta_m
 		self.z2 = self.nu2 + 1j*self.eta_n
 
-		self.y1 = 1. / self.x1[::-1]
-		self.y2 = 1. / self.x2[::-1]
+		self.y1 = xy / self.x1[::-1]
+		self.y2 = xy / self.x2[::-1]
 		self.y10 = self.y1[0]
 		self.y20 = self.y2[0]
 
@@ -87,7 +86,6 @@ class two_sph_bessel(object):
 
 		m = np.arange(-self.N1//2,self.N1//2+1)
 		n = np.arange(-self.N2//2,self.N2//2+1)
-
 		c_mn1 = c_mn[:self.N1//2+1,:]
 		c_mn = np.vstack((c_mn[self.N1//2:,:], c_mn1[:,:]))
 
@@ -160,8 +158,8 @@ class two_sph_bessel(object):
 		
 class two_Bessel(object):
 
-	def __init__(self, x1, x2, fx1x2, nu1=1.01, nu2=1.01, N_extrap_low=0, N_extrap_high=0, c_window_width=0.25, N_pad=0):
-		self.two_sph = two_sph_bessel(x1, x2, (fx1x2.T * np.sqrt(x1)).T * np.sqrt(x2), nu1, nu2, N_extrap_low, N_extrap_high, c_window_width, N_pad)
+	def __init__(self, x1, x2, fx1x2, xy=1, nu1=1.01, nu2=1.01, N_extrap_low=0, N_extrap_high=0, c_window_width=0.25, N_pad=0):
+		self.two_sph = two_sph_bessel(x1, x2, (fx1x2.T * np.sqrt(x1)).T * np.sqrt(x2), xy, nu1, nu2, N_extrap_low, N_extrap_high, c_window_width, N_pad)
 
 	def two_Bessel(self, ell1, ell2):
 		"""
