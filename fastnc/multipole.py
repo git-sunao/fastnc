@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/20 00:28:18
+Last edit  : 2024/03/21 23:09:28
 
 Description:
 multipole.py contains the Multipole class, 
@@ -9,7 +9,6 @@ which computes multipole moments
 '''
 import numpy as np
 from scipy.special import eval_legendre
-from scipy.interpolate import RegularGridInterpolator as rgi
 
 class MultipoleBase:
     def __init__(self, x, Lmax, method='gauss-legendre', verbose=True):

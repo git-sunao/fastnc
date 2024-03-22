@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/21 18:00:50
+Last edit  : 2024/03/21 23:05:16
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -14,8 +14,7 @@ from scipy.interpolate import RegularGridInterpolator as rgi
 from astropy.cosmology import wCDM, Planck18
 from scipy.special import sici
 from scipy.special import eval_legendre
-from time import time
-
+# fastnc modules
 from . import trigutils
 from .halofit import Halofit
 from .multipole import MultipoleLegendre, MultipoleFourier

@@ -1,24 +1,17 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/21 17:20:23
+Last edit  : 2024/03/21 23:10:25
 
 Description:
 This is the module of fastnc, which calculate the
 natural components using 2d fftlog.
 '''
 import numpy as np
-from scipy.special import eval_legendre
-from scipy.interpolate import RegularGridInterpolator as rgi
-from tqdm import tqdm
-from glob import glob
-import pandas as pd
-import os
 # fastnc modules
-from . import twobessel
+from .twobessel import two_Bessel
 from . import trigutils
 from . import utils
-from .interpolation import SemiDiagonalInterpolator as sdi
 from .coupling import MCF222LegendreFourier, MCF222FourierFourier
 
 class FastNaturalComponents:
@@ -137,7 +130,7 @@ class FastNaturalComponents:
             self.config_fftlog['xy'] = np.exp(_[3])
             assert np.allclose(self.t1, self.t1_fft[self.down_sampler]), \
                 "Something went wrong in tuning FFT grid\n" \
-                "t1={}\n t1_fft={}".format(self.t1, self.t1_fft[self.down_sampler])
+                "t1={}\nt1_fft={}".format(self.t1, self.t1_fft[self.down_sampler])
         else:
             nfft= self.config_fftgrid['nfft']
             self.ell1_fft = np.logspace(np.log10(ell1min), np.log10(ell1max), nfft)
@@ -198,7 +191,7 @@ class FastNaturalComponents:
         self.Gamma2M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
         self.Gamma3M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
         for _M, _HM in zip(M, HM):
-            tb  = twobessel.two_Bessel( \
+            tb  = two_Bessel( \
                 self.ell1_fft, self.ell2_fft, \
                 _HM*self.ELL1_FFT**2*self.ELL2_FFT**2, \
                 **self.config_fftlog)

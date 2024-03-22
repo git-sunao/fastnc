@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/21 18:06:40
+Last edit  : 2024/03/21 23:06:15
 
 Description:
 coupling.py contains classes for 
@@ -9,8 +9,6 @@ the computing multipole coupling functions
 '''
 import numpy as np
 from scipy.special import eval_legendre
-from tqdm import tqdm
-from glob import glob
 import pandas as pd
 import os
 # fastnc modules
