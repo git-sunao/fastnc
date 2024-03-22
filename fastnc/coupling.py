@@ -20,8 +20,8 @@ from .integration import aint
 def get_cache_dir():
     # first we look for the environmental variable
     cache_dir = os.environ.get('FASTNC_CACHE_DIR')
-    cache_dir = os.path.expanduser(cache_dir)
     if cache_dir is not None:
+        cache_dir = os.path.expanduser(cache_dir)
         return cache_dir
     # finally we use the default directory
     cache_dir = '~/.fastnc'
