@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/21 23:10:25
+Last edit  : 2024/03/22 13:52:35
 
 Description:
 This is the module of fastnc, which calculate the
@@ -11,26 +11,31 @@ import numpy as np
 # fastnc modules
 from .twobessel import two_Bessel
 from . import trigutils
-from . import utils
+from .utils import sincos2angbar, update_config, get_config_key
 from .coupling import MCF222LegendreFourier, MCF222FourierFourier
 
 class FastNaturalComponents:
     """
     Calculate the natural components using 2dfftlog.
     """
-    # default config
+    # default configuration
+    config_bin     = {'t1':None, 'phi':None, 'mu':[0,1,2,3], 'dlnt':None}
     config_fftlog  = {'nu1':1.01, 'nu2':1.01, 'N_pad':0, 'xy':1}
     config_fftgrid = {'auto':True, 'ell1min':None, 'ell1max':None, 'nfft':150}
-    config_bin     = {'t1':None, 'phi':None, 'mu':[0,1,2,3], 'dlnt':None}
-    
-    def __init__(self, Lmax, Mmax, config_bin=None, config_fftgrid=None, config_fftlog=None, \
-            projection='x', multipole_type='legendre', verbose=True):
+        
+    def __init__(self, config=None, **kwargs):
+            # Lmax, Mmax, t1=None, phi=None, mu=[0,1,2,3], dlnt=None, \
+            # config_fftgrid=None, config_fftlog=None, \
+            # projection='x', multipole_type='legendre', verbose=True):
         """
         Parameters
         ----------
         Lmax (int): The maximum multipole moment.
         Mmax (int): The maximum angular Fourier mode.
-        config_bin (dict, optional): The configuration for binning in real-space. Defaults to None.
+        t1 (array, optional): The bin on two side of a triangle. Defaults to None.
+        phi (array, optional): The opening angle of the triangle between t1 and t2. Defaults to None.
+        mu (list, optional): The index of the natural component. Defaults to [0,1,2,3].
+        dlnt (float, optional): The bin width of t, on which we want to evaluate the result. Defaults to None.
         config_fftgrid (dict, optional): The configuration for FFT grid. Defaults to None.
         config_fftlog (dict, optional): The configuration for 2dFFTLog. Defaults to None.
         multipole_type (str, optional): The type of multipole. Defaults to 'legendre'.
@@ -63,14 +68,15 @@ class FastNaturalComponents:
                             by the class if t1 is given in config_bin.
         """
         # maximum multipole 
-        self.Lmax = Lmax
-        self.Mmax = Mmax
+        self.Lmax = get_config_key(config, 'Lmax', **kwargs)
+        self.Mmax = get_config_key(config, 'Mmax', **kwargs)
         # shear projection
-        self.projection = projection
+        self.projection = get_config_key(config, 'projection', 'x', **kwargs)
         # update config
-        self.config_bin.update(config_bin or {})
-        self.config_fftgrid.update(config_fftgrid or {})
-        self.config_fftlog.update(config_fftlog or {})
+        update_config(self.config_bin, config, **kwargs)
+        update_config(self.config_fftgrid, config_fftgrid, **kwargs)
+        update_config(self.config_fftlog, config_fftlog, **kwargs)
+
         self.verbose = verbose
         # initialize mode coupling function
         self.multipole_type = multipole_type
@@ -101,6 +107,13 @@ class FastNaturalComponents:
         # set bispectrum multipole
         self.bispectrum = bispectrum
         
+    def set_bin(self):
+        self.t1 = self.config_bin['t1']
+        self.phi = self.config_bin['phi']
+        self.mu  = self.config_bin['mu']
+        self.dnlt = self.config_bin['dlnt']
+        self.tune_fftgrid = self.t1 is not None
+
     def set_grid(self):
         """
         Set the grid in real and fourier space.
@@ -117,11 +130,11 @@ class FastNaturalComponents:
             ell1min = self.config_fftgrid['ell1min']
             ell1max = self.config_fftgrid['ell1max']
         # 
-        if self.config_bin['t1'] is not None:
+        if self.tune_fftgrid:
             print('Tuning FFT bins...') if self.verbose else None
             # theta bin on which we want predict
-            self.t1 = self.config_bin['t1']
             # Tune FFT grid
+            
             _ = get_tuned_fftgrid(np.log(ell1min), np.log(ell1max), \
                 self.config_fftgrid['nfft'], np.log(self.t1))
             self.ell1_fft = np.exp(_[0])
@@ -144,8 +157,6 @@ class FastNaturalComponents:
         self.ELL1_FFT, self.ELL2_FFT = np.meshgrid(self.ell1_fft, self.ell2_fft, indexing='ij')
         self.ELL_FFT  = np.sqrt(self.ELL1_FFT**2 + self.ELL2_FFT**2)
         self.PSI_FFT = np.arctan2(self.ELL2_FFT, self.ELL1_FFT)
-        # mu bins
-        self.mu = self.config_bin['mu']
     
     def HM(self, M, bL=None, **args):
         """
@@ -184,8 +195,6 @@ class FastNaturalComponents:
         HM = [self.HM(_, bL=bL) for _ in M]
 
         # GammaM
-        mu = self.mu
-        dlnt= self.config_bin['dlnt']
         self.Gamma0M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
         self.Gamma1M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
         self.Gamma2M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
@@ -195,7 +204,7 @@ class FastNaturalComponents:
                 self.ell1_fft, self.ell2_fft, \
                 _HM*self.ELL1_FFT**2*self.ELL2_FFT**2, \
                 **self.config_fftlog)
-            for _mu in mu:
+            for _mu in self.mu:
                 # Get (n,m) from M.
                 m, n = [(_M-3,-_M-3), (-_M-1,_M-1), (_M+1,-_M-3), (_M-3,-_M+1)][_mu]
                 if dlnt is None:
@@ -227,10 +236,9 @@ class FastNaturalComponents:
                     self.Gamma3M[ _M+self.Mmax] = GM
                     self.Gamma2M[-_M+self.Mmax] = GM.T
 
-        if self.config_bin['phi'] is None:
+        if self.phi is None:
             return
         M = np.arange(-self.Mmax, self.Mmax+1)
-        self.phi = self.config_bin['phi']
         expMphi = np.exp(1j*M[:,None]*self.phi[None,:])
         # resum multipoles
         self.Gamma0 = np.tensordot(expMphi, self.Gamma0M, axes=([0],[0]))/(2*np.pi)
@@ -295,7 +303,7 @@ def x2ortho(mu, t1, t2, phi):
     phi (float): The value of phi.
     """
     # Compute prefactor
-    sin2pb, cos2pb = utils.sincos2angbar(np.arctan2(t2, t1), np.pi-phi)
+    sin2pb, cos2pb = sincos2angbar(np.arctan2(t2, t1), np.pi-phi)
     if mu==0 or mu==1 or mu==2:
         out = cos2pb - 1j*sin2pb
     elif mu==3:

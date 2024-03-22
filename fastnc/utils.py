@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/19 15:19:39
+Last edit  : 2024/03/22 13:06:32
 
 Description:
 utils.py contains utility functions for fastnc.
@@ -58,3 +58,15 @@ def sincos2angbar(psi, delta):
     sin2b = np.cos(2*psi) * np.sin(delta)
     norm  = np.sqrt(cos2b**2 + sin2b**2)
     return sin2b/norm, cos2b/norm
+
+def merge_config_kwargs(config=None, **kwargs):
+    return {**(config or {}), **kwargs}
+
+def get_config_key(config, key, default=None, **kwargs):
+    config = merge_config_kwargs(config, **kwargs)
+    return config.get(key, default)
+
+def update_config(config_base, config=None, **kwargs):
+    config = merge_config_kwargs(config, **kwargs)
+    config_base.update((key, value) for key, value in config.items() \
+            if key in config_base)

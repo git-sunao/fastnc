@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/21 23:06:15
+Last edit  : 2024/03/22 15:28:45
 
 Description:
 coupling.py contains classes for 
