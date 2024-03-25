@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/02/06 21:31:07
+Last edit  : 2024/03/25 17:45:17
 
 Description:
 This is the interpolation module of fastnc.
