@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/25 16:55:36
+Last edit  : 2024/03/25 19:30:29
 
 Description:
 This is the module of fastnc, which calculate the
@@ -288,6 +288,10 @@ class FastNaturalComponents:
         self.Gamma1M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
         self.Gamma2M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
         self.Gamma3M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
+        # For the sake of speed, we first loop over M
+        # and then over mu. This is because the kernels of the 
+        # natural-component multipoles only depends on M but not on mu.
+        # This allows us to compute the kernels only once for each M.
         for _M, _HM in zip(M, HM):
             tb  = two_Bessel( \
                 self.ell1_fft, self.ell2_fft, \

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/02/01 00:21:45
+Last edit  : 2024/03/25 19:27:05
 
 Description:
 This contains some useful functions for development:
@@ -9,7 +9,6 @@ plotting, triangle plotter, stopwatch, etc.
 '''
 import matplotlib.pyplot as plt
 import numpy as np
-from . import trigutils
 from scipy.special import sici
 from scipy.special import yv, struve
 import time

@@ -10,6 +10,7 @@ from . import coupling
 from . import halofit
 from . import trigutils
 from . import utils
-from . import devtool
 from . import onejnc
-from . import integration
+# no longer used
+# from . import devtool
+# from . import integration
