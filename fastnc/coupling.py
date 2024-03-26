@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/25 17:38:24
+Last edit  : 2024/03/26 17:48:00
 
 Description:
 coupling.py contains classes for 
@@ -18,8 +18,8 @@ from .integration import aint
 def get_cache_dir():
     # first we look for the environmental variable
     cache_dir = os.environ.get('FASTNC_CACHE_DIR')
-    cache_dir = os.path.expanduser(cache_dir)
     if cache_dir is not None:
+        cache_dir = os.path.expanduser(cache_dir)
         return cache_dir
     # finally we use the default directory
     cache_dir = '~/.fastnc'

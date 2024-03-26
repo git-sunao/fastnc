@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/25 19:30:29
+Last edit  : 2024/03/26 18:02:19
 
 Description:
 This is the module of fastnc, which calculate the
@@ -127,6 +127,7 @@ class FastNaturalComponents:
             "multipole_type of bispectrum and FastNaturalComponents must be the same"
         # set bispectrum multipole
         self.bispectrum = bispectrum
+        self.set_fftgrid()
         
     def set_bin(self, config=None, **kwargs):
         """
@@ -240,12 +241,13 @@ class FastNaturalComponents:
         HM = np.sum(((-1)**(L+1)*GLM.T*bL.T).T, axis=0)
         return HM
 
-    def get_bins(self, bin_type='multipole', mesh=True):
+    def get_bins(self, bin_type='multipole', t1_unit='radian', mesh=True):
         """
         Get the bins on which the theory is computed.
 
         Parameters:
             bin_type (str): The type of bin. Either 'multipole' or 'SAS'.
+            t1_unit (str) : The unit of t1. Either 'radian' or 'arcmin'.
             mesh (bool)   : Whether to return meshgrid or not.
         
         Returns:
@@ -253,13 +255,14 @@ class FastNaturalComponents:
             bin2 (array): The second bin.
             bin3 (array): The third bin.
         """
+        ufactor = 1.0 if t1_unit == 'radian' else 180.0*60.0/np.pi
         if bin_type == 'multipole':
-            bin1 = self.t1
-            bin2 = self.t2
+            bin1 = self.t1 * ufactor
+            bin2 = self.t2 * ufactor
             bin3 = np.arange(-self.Mmax, self.Mmax+1)
         elif bin_type == 'SAS':
-            bin1 = self.t1
-            bin2 = self.t2
+            bin1 = self.t1 * ufactor
+            bin2 = self.t2 * ufactor
             bin3 = self.phi
         else:
             raise ValueError('Error: bin_type={} is not expected'.format(bin_type))
@@ -300,12 +303,13 @@ class FastNaturalComponents:
             for _mu in self.mu:
                 # Get (n,m) from M.
                 m, n = [(_M-3,-_M-3), (-_M-1,_M-1), (_M+1,-_M-3), (_M-3,-_M+1)][_mu]
-                if dlnt is None:
+                if self.config_bin['dlnt'] is None:
                     # compute GammaM on FFT grid
                     GM = tb.two_Bessel(np.abs(m), np.abs(n))[2]
-                elif dlnt is not None:
+                elif self.config_bin['dlnt'] is not None:
                     # compute GammaM on FFT grid with bin-averaging effect
-                    GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), dlnt, dlnt)[2]
+                    GM = tb.two_Bessel_binave(np.abs(m), np.abs(n), \
+                        self.config_bin['dlnt'], self.config_bin['dlnt'])[2]
                 # Apply (-1)**m and (-1)**n
                 # These originate to J_m(x) = (-1)^m J_{-m}(x)
                 GM *= (-1.)**m if m<0 else 1

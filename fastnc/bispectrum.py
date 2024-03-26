@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/26 16:20:43
+Last edit  : 2024/03/26 16:50:23
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -47,27 +47,25 @@ class BispectrumBase:
         nellbin (int)       : number of bins for ell
         npsibin (int)       : number of bins for psi
         nmubin (int)        : number of bins for mu
-        Lmax (int)          : maximum multipole
+        Lmax (int)          : maximum multipole (default: None)
         multipole_type (str): type of multipole decomposition
         method (str)        : method for multipole evaluation
-        use_multipole (bool): whether to use multipole decomposition
     
     Usage:
     >>> b = BispectrumBase()
     >>> b.set_cosmology(cosmo)
     >>> b.set_source_distribution(zs, pzs)
     >>> b.set_ell1mu_range(ell1min, ell1max, epmu)
-    >>> b.interpolate(nrbin=35, nubin=25, nvbin=25, method='linear', nzbin=20)
-    >>> b.decompose(Lmax, nellbin=100, npsibin=50, nmubin=50, method_decomp='linear', method_bispec='interp')
-    >>> b.kappa_bispectrum_multipole(L, ell, psi)
-    >>> b.kappa_bispectrum_resum(ell1, ell2, ell3)
+    >>> b.interpolate(scombs=None, **args)
+    >>> b.decompose(scombs=None, method_bispec='interp', **args)
+    >>> b.kappa_bispectrum_multipole(L, ell, psi, scomb=scomb)
     """
     # default configs
     config_scale     = dict(ell1min=None, ell1max=None, epmu=1e-7)
     config_losint    = dict(zmin=1e-4, nzbin=30)
     config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True)
-    config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=1, \
-        multipole_type='legendre', method='gauss-legendre', use_multipole=True)
+    config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=None, \
+        multipole_type='legendre', method='gauss-legendre')
 
     def __init__(self, config=None, **kwargs):
         # set the support range of ell1, ell2
@@ -211,12 +209,11 @@ class BispectrumBase:
             Lmax (int)          : maximum multipole
             multipole_type (str): type of multipole decomposition
             method (str)        : method for multipole evaluation
-            use_multipole (bool): whether to use multipole decomposition
         """
         # update config
         update_config(self.config_multipole, config, **kwargs)
         # source to class attributes
-        if not self.config_multipole['use_multipole']: return 0
+        if self.config_multipole['Lmax'] is None: return 0
         ell = np.logspace(np.log10(self.ellmin), np.log10(self.ellmax), \
             self.config_multipole['nellbin'])
         psi = loglinear(self.psimin, 1e-3, self.psimax, 50, \
@@ -545,7 +542,7 @@ class BispectrumBase:
                 self.ELL1_interp, 
                 self.ELL2_interp, 
                 self.ELL3_interp, 
-                sample_combination=sc,
+                scomb=sc,
                 window=False,
                 bm=bm, 
                 return_bm=True, 
@@ -612,7 +609,7 @@ class BispectrumBase:
             scomb (tuple) : sample combination
         """
         # parse sample_combination
-        sample_combination = self.parse_sample_combination(sample_combination)
+        scomb = self.parse_sample_combination(scomb)
         # cast to array
         isscalar = np.isscalar(L)
         if isscalar:
@@ -623,7 +620,7 @@ class BispectrumBase:
         grid = (np.log(self.ell_multipole), np.log(self.pzs_multipole))
         for i, _L in enumerate(L):
             # interpolate
-            z = self.bL_multipole[sample_combination][_L, :, :]
+            z = self.bL_multipole[scomb][_L, :, :]
             ip= rgi(grid, z, bounds_error=True)
             # convert psi to pi/2-psi if psi > pi/4
             psi = psi.copy()
@@ -649,10 +646,10 @@ class BispectrumBase:
             psi (array)   : psi array
             scomb (tuple) : sample combination
         """
-        sample_combination = self.parse_sample_combination(sample_combination)
+        scomb = self.parse_sample_combination(scomb)
         ell, psi, mu = trigutils.x1x2x3_to_xpsimu(ell1, ell2, ell3)
         L = np.arange(self.Lmax_multipole)
-        bL = self.kappa_bispectrum_multipole(L, ell, psi, sample_combination=sample_combination)
+        bL = self.kappa_bispectrum_multipole(L, ell, psi, scomb=scomb)
         pL = np.array([eval_legendre(_L, mu) for _L in L])
         out = np.sum(bL*pL, axis=0)
         return out
