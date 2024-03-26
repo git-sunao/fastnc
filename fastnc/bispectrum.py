@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/25 17:32:01
+Last edit  : 2024/03/26 16:20:43
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -666,9 +666,9 @@ class BispectrumHalofit(BispectrumBase):
     # default configs
     config_scale     = dict(ell1min=1e-1, ell1max=1e5, epmu=1e-7)
     
-    def __init__(self, config_scale=None, config_losint=None, config_interp=None, config_multipole=None):
+    def __init__(self, config=None, **kwargs):
         self.halofit = Halofit()
-        super().__init__(config_scale, config_losint, config_interp, config_multipole)
+        super().__init__(config, **kwargs)
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
@@ -728,8 +728,8 @@ class BispectrumNFW1Halo(BispectrumBase):
     # default configs
     config_scale     = dict(ell1min=1e-2, ell1max=1e5, epmu=1e-7)
     
-    def __init__(self, cosmo=None, zs=None, pzs=None, rs=10.0):
-        super().__init__(cosmo, zs, pzs)
+    def __init__(self, config=None, **kwargs):
+        super().__init__(config, **kwargs)
         self.set_rs(rs)
 
     def set_rs(self, rs):
