@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/25 19:37:36
+Last edit  : 2024/03/25 21:00:58
 
 Description:
 utils.py contains utility functions for fastnc.
