@@ -31,7 +31,7 @@ class FastNaturalComponents:
     config_bin     = {'t1':None, 'phi':None, 'mu':[0,1,2,3], 'dlnt':None}
     
     def __init__(self, Lmax, Mmax, config_bin=None, config_fftgrid=None, config_fftlog=None, \
-            projection='x', multipole_type='legendre', verbose=True):
+            projection='x', multipole_type='legendre', verbose=True, use_cache=True):
         """
         Parameters
         ----------
@@ -81,18 +81,18 @@ class FastNaturalComponents:
         self.verbose = verbose
         # initialize mode coupling function
         self.multipole_type = multipole_type
-        self.init_mode_coupling_function()
+        self.init_mode_coupling_function(use_cache)
         
-    def init_mode_coupling_function(self):
+    def init_mode_coupling_function(self, use_cache=True):
         """
         Initialize mode coupling function.
 
         multipole_type (str): The type of multipole. Either 'legendre' or 'fourier'.
         """
         if self.multipole_type == 'legendre':
-            self.GLM = MCF222LegendreFourier(self.Lmax, self.Mmax, verbose=self.verbose)
+            self.GLM = MCF222LegendreFourier(self.Lmax, self.Mmax, verbose=self.verbose, use_cache=use_cache)
         elif self.multipole_type == 'fourier':
-            self.GLM = MCF222FourierFourier(self.Lmax, self.Mmax, verbose=self.verbose)
+            self.GLM = MCF222FourierFourier(self.Lmax, self.Mmax, verbose=self.verbose, use_cache=use_cache)
         else:
             raise ValueError('Error: multipole_type={} is not expected'.format(self.multipole_type))
 

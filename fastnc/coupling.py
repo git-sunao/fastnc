@@ -94,7 +94,7 @@ class CacheManager:
 
 class ModeCouplingFunctionBase:
     name = 'ModeCouplingFunctionBase'
-    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-5, verbose=True, cache=True):
+    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-5, verbose=True, use_cache=True):
         """
         Base class for mode coupling function.
 
@@ -110,16 +110,16 @@ class ModeCouplingFunctionBase:
         self.psi = np.linspace(0, np.pi/2, Npsi)
         self.tol = tol
         self.verbose = verbose
-        self.cache = cache
+        self.use_cache = use_cache
 
         # mode coupling function data
         self.data = dict()
         # load cache if exists
-        self.load_cache()
+        self.load_cache() if self.use_cache else None
         # compute mode coupling function
         self.compute()
         # save cache
-        self.save_cache()
+        self.save_cache() if self.use_cache else None
 
     def compute(self):
         """
