@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/26 16:50:23
+Last edit  : 2024/04/08 17:28:29
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -66,6 +66,7 @@ class BispectrumBase:
     config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True)
     config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=None, \
         multipole_type='legendre', method='gauss-legendre')
+    config_IA        = dict(NLA=False)
 
     def __init__(self, config=None, **kwargs):
         # set the support range of ell1, ell2
@@ -76,6 +77,8 @@ class BispectrumBase:
         self.set_interpolation_grid(config, **kwargs)
         # init multipole decomposition grid
         self.set_multipole_grid(config, **kwargs)
+        # init intrinsic alignment model
+        update_config(self.config_IA, config, **kwargs)
         
     # Binning
     def set_losint(self, config=None, **kwargs):
@@ -269,10 +272,12 @@ class BispectrumBase:
         # compute array of chi and z
         z   = np.linspace(0, 5, 100)
         chi = self.cosmo.comoving_distance(z).value * self.cosmo.h # Mpc/h
+        dzdchi = np.diff(z)/np.diff(chi)
 
         # spline chi <-> z
         self.z2chi = ius(z, chi)
         self.chi2z = ius(chi, z)
+        self.z2dzdchi = ius(0.5*(z[1:]+z[:-1]), dzdchi, ext=1)
         self.has_changed = True
 
     def set_source_distribution(self, zs_list, pzs_list, sample_names=None):
@@ -303,6 +308,15 @@ class BispectrumBase:
         # rise flag
         self.has_changed = True
 
+    def set_NLA_param(self, params):
+        """
+        Set parameters for nonlinear alignment effect.
+
+        Parameters:
+            params (dict) : parameters for nonlinear alignment effect
+        """
+        self.NLA_params = params
+
     def set_window_function(self, window_function):
         """
         Set window function to be multiplied to the bispectrum.
@@ -320,15 +334,14 @@ class BispectrumBase:
             zs (array) : redshift array
             pzs (array): probability distribution of source galaxies
         """
+        prefactor = 3/2 * (100/299792)**2 * self.cosmo.Om0
         if zs.size == 1:
-            zl = np.linspace(0.0, zs, nzlbin)
+            zl = np.linspace(self.zmin_losint, zs, nzlbin)
             chil = self.z2chi(zl)
             chis = self.z2chi(zs)
-            g = 1.-chil/chis
-            z2g = ius(zl, g, ext=1)
-            chi2g = ius(chil, g, ext=1)
+            g = prefactor*(1.-chil/chis)
         else:
-            zl = np.linspace(0, zs.max(), nzlbin)
+            zl = np.linspace(self.zmin_losint, zs.max(), nzlbin)
             chil = self.z2chi(zl)
             chis = self.z2chi(zs)
             CHIL, CHIS = np.meshgrid(chil, chis, indexing='ij')
@@ -338,12 +351,41 @@ class BispectrumBase:
             I = np.divide(CHIL, CHIS, out=I, where=CHIS > CHIL)
             I = (pzs*(1-I))
 
-            g = np.trapz(I, zs, axis=1)/np.trapz(pzs, zs)
-            z2g = ius(zl, g, ext=1)
-            chi2g = ius(chil, g, ext=1)
-        return z2g, chi2g
+            g = prefactor*np.trapz(I, zs, axis=1)/np.trapz(pzs, zs)
+        return zl, chil, g
 
-    def compute_lensing_kernel(self, nzlbin=101):
+    def _compute_NLA_kernel_per_sample(self, zs, pzs, nzlbin=101):
+        """
+        Compute the kernel of nonlinear alignment effect.
+
+        Parameters:
+            zs (array) : redshift array
+            pzs (array): probability distribution of source galaxies
+
+        Note:
+            In order for this to work, the following attributes must be set:
+            - self.cosmo
+            - self.z2chi
+            - self.z2dzdchi
+            - self.z2lgr
+        """
+        # model param
+        AIA = self.NLA_params['AIA']
+        alphaIA = self.NLA_params['alphaIA']
+        z0 = self.NLA_params.get('z0',0.0)
+        # constant
+        c1rhocrit = 0.0134
+        # compute kernel
+        zsmax = zs if zs.size==1 else np.max(zs)
+        zl = np.linspace(self.zmin_losint, zsmax, nzlbin)
+        chil = self.z2chi(zl)
+        fIA = - AIA * ((1+zl)/(1+z0))**alphaIA * c1rhocrit * self.cosmo.Om0 / self.z2lgr(zl)
+        pchis = np.interp(zl, zs, pzs, left=0, right=0) * self.z2dzdchi(zl)
+        norm = np.trapz(pchis, chil)
+        g = fIA * pchis / norm / chil
+        return zl, chil, g
+
+    def compute_kernel(self, nzlbin=101):
         """
         Compute lensing kernel for all samples.
 
@@ -353,9 +395,12 @@ class BispectrumBase:
         self.z2g_dict = dict()
         self.chi2g_dict = dict()
         for name in self.sample_names:
-            z2g, chi2g = self._compute_lensing_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
-            self.z2g_dict[name] = z2g
-            self.chi2g_dict[name] = chi2g
+            z, chi, g = self._compute_lensing_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
+            if self.config_IA['NLA']:
+                z, chi, gNLA = self._compute_NLA_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
+                g += gNLA
+            self.z2g_dict[name] = ius(z, g, ext=1)
+            self.chi2g_dict[name] = ius(chi, g, ext=1)
         self.zmax_losint = max([self.zs_dict[name].max() for name in self.sample_names])
 
     def get_all_sample_combinations(self):
@@ -498,9 +543,6 @@ class BispectrumBase:
 
         # integrate
         bk = np.trapz(i, chi, axis=1)
-
-        # Multiply prefactor
-        bk *= (3/2 * (100/299792)**2 * self.cosmo.Om0)**3
 
         # multiply window 
         if hasattr(self, 'window_function') and window:
@@ -711,6 +753,7 @@ class BispectrumHalofit(BispectrumBase):
             z (float)  : redshift
             lgr (float): linear growth rate
         """
+        self.z2lgr = ius(z, lgr, ext=1)
         self.halofit.set_lgr(z, lgr)
         self.has_changed = True
 
