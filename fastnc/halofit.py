@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/25 17:44:04
+Last edit  : 2024/04/08 18:12:59
 
 Description:
 halofit.py contains the Halofit class. 
@@ -578,45 +578,46 @@ class Halofit:
         
         return Btot
     
-    def get_Rb_bihalofit(self, args):
+    def get_Rb_bihalofit(self, k1, k2, k3, z):
         """
         Returns the baryon ratio on bispectrum.
 
-        args: a structured array with key: k1, k2, k3 z
+        Parameters:
+            k1           (np.ndarray): array of comoving Fourier modes in h/Mpc unit
+            k2           (np.ndarray): array of comoving Fourier modes in h/Mpc unit
+            k3           (np.ndarray): array of comoving Fourier modes in h/Mpc unit
+            z            (np.ndarray): array of redshifts
         """
         # ratio of modes
         kmin, kmid, kmax = np.sort([k1,k2,k3], axis=0)
         
         # Baryon effective redshift
-        sel = kmax <= kmin + kmid
+        sel = z<5
         
         # coefficients
         a = 1/(1+z[sel])
-        A0  = np.zeros(a.size)
+        A0  = np.zeros(a.shape)
         A0[a>0.5] = 0.068*(a[a>0.5]-0.5)**0.47
         mu0 = 0.018*a + 0.837*a**2
         si0 = 0.881*mu0
         al0 = 2.346
-        A1  = np.zeros(a.size)
+        A1  = np.zeros(a.shape)
         A1[a>0.2] = 1.052*(a[a>0.2]-0.2)**1.41
         mu1 = np.abs(0.172+3.048*a-0.675*a**2)
         si1 = (0.494-0.039*a)*mu1
         kst = 29.90 - 38.73*a+24.30*a**2
         al2 = 2.25
         be2 = 0.563/((a/0.06)**0.02+1) / al2
-        
+
         # Assign baryon ratios
-        Rb = np.ones(z.size)
+        Rb = np.ones(z.shape)
         for k in [k1[sel], k2[sel], k3[sel]]:
             x = np.log10(k)
             Rb[sel]*= A0*np.exp(-np.abs((x-mu0)/si0)**al0) \
                         - A1*np.exp(-((x-mu1)/si1)**2) \
                         + ((k/kst)**al2+1)**be2
-        
-        Rb[z[sel]>5] = 1.0
-        Rb[np.logical_not(sel)] = np.nan
-        
-        return rb
+                
+        return Rb
     
 def window_tophat(x):
     """

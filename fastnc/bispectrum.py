@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/08 17:28:29
+Last edit  : 2024/04/08 18:03:56
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -18,7 +18,7 @@ from scipy.special import eval_legendre
 from . import trigutils
 from .halofit import Halofit
 from .multipole import MultipoleLegendre, MultipoleFourier
-from .utils import loglinear, edge_correction, update_config
+from .utils import loglinear, edge_correction, update_config, get_config_key
 
 
 wPlanck18 = wCDM(H0=Planck18.H0, Om0=Planck18.Om0, Ode0=Planck18.Ode0, w0=-1.0, meta=Planck18.meta, name='wPlanck18')
@@ -708,6 +708,7 @@ class BispectrumHalofit(BispectrumBase):
     def __init__(self, config=None, **kwargs):
         self.halofit = Halofit()
         super().__init__(config, **kwargs)
+        self.multiply_Rb = get_config_key(config, 'multiply_Rb', default=False, **kwargs)
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
@@ -758,7 +759,10 @@ class BispectrumHalofit(BispectrumBase):
         self.has_changed = True
 
     def matter_bispectrum(self, k1, k2, k3, z, all_physical=True, which=['Bh1', 'Bh3']):
-        return self.halofit.get_bihalofit(k1, k2, k3, z, all_physical=all_physical, which=which)
+        b = self.halofit.get_bihalofit(k1, k2, k3, z, all_physical=all_physical, which=which)
+        if self.multiply_Rb:
+            b *= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
+        return b
 
 class BispectrumNFW1Halo(BispectrumBase):
     """
