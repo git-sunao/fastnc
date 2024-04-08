@@ -1,5 +1,5 @@
 __author__ = 'Sunao Sugiyama, Rafael Heringer Gomes'
-__version__ = '1.0.2'
+__version__ = '1.1.0'
 __url__ = 'https://github.com/git-sunao/fastnc'
 # core modules:
 from . import fastnc
@@ -10,6 +10,5 @@ from . import coupling
 from . import halofit
 from . import trigutils
 from . import utils
-from . import devtool
 from . import onejnc
-from . import integration
+from . import devtool

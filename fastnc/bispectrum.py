@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/21 18:00:50
+Last edit  : 2024/03/26 16:50:23
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -14,91 +14,121 @@ from scipy.interpolate import RegularGridInterpolator as rgi
 from astropy.cosmology import wCDM, Planck18
 from scipy.special import sici
 from scipy.special import eval_legendre
-from time import time
-
+# fastnc modules
 from . import trigutils
 from .halofit import Halofit
 from .multipole import MultipoleLegendre, MultipoleFourier
-from .utils import loglinear, edge_correction
+from .utils import loglinear, edge_correction, update_config
 
 
 wPlanck18 = wCDM(H0=Planck18.H0, Om0=Planck18.Om0, Ode0=Planck18.Ode0, w0=-1.0, meta=Planck18.meta, name='wPlanck18')
 
 class BispectrumBase:
-    """
+    r"""
     Base class for bispectrum computation.
 
+    Parameters:
+        config (dict)       : A configuration dict that can be used to pass in the below kwargs if
+                              desired.  This dict is allowed to have addition entries in addition
+                              to those listed below, which are ignored here. (default: None)
+        verbose (bool)      : Whether to print the progress. (default: True)
+
+    Keyword arguments:
+        ell1min (float)     : minimum of ell1 and ell2
+        ell1max (float)     : maximum of ell1 and ell2
+        epmu (float)        : small number to avoid the squeezed limit
+        zmin (float)        : minimum of redshift
+        nzbin (int)         : number of bins for redshift
+        nrbin (int)         : number of bins for r
+        nubin (int)         : number of bins for u
+        nvbin (int)         : number of bins for v
+        method (str)        : method for interpolation
+        use_interp (bool)   : whether to use interpolation
+        nellbin (int)       : number of bins for ell
+        npsibin (int)       : number of bins for psi
+        nmubin (int)        : number of bins for mu
+        Lmax (int)          : maximum multipole (default: None)
+        multipole_type (str): type of multipole decomposition
+        method (str)        : method for multipole evaluation
+    
     Usage:
     >>> b = BispectrumBase()
     >>> b.set_cosmology(cosmo)
     >>> b.set_source_distribution(zs, pzs)
     >>> b.set_ell1mu_range(ell1min, ell1max, epmu)
-    >>> b.interpolate(nrbin=35, nubin=25, nvbin=25, method='linear', nzbin=20)
-    >>> b.decompose(Lmax, nellbin=100, npsibin=50, nmubin=50, method_decomp='linear', method_bispec='interp')
-    >>> b.kappa_bispectrum_multipole(L, ell, psi)
-    >>> b.kappa_bispectrum_resum(ell1, ell2, ell3)
+    >>> b.interpolate(scombs=None, **args)
+    >>> b.decompose(scombs=None, method_bispec='interp', **args)
+    >>> b.kappa_bispectrum_multipole(L, ell, psi, scomb=scomb)
     """
     # default configs
     config_scale     = dict(ell1min=None, ell1max=None, epmu=1e-7)
     config_losint    = dict(zmin=1e-4, nzbin=30)
-    config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use=True)
-    config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=1, \
-        multipole_type='legendre', method='gauss-legendre', use=True)
+    config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True)
+    config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=None, \
+        multipole_type='legendre', method='gauss-legendre')
 
-    def __init__(self, config_scale=None, config_losint=None, config_interp=None, config_multipole=None):
-        """
-        Initialize BispectrumBase.
-
-        config_scale (dict): config for scale (this should not be changed)
-        config_losint (dict): config for line-of-sight integration
-        config_interp (dict): config for interpolation
-        config_multipole (dict): config for multipole decomposition
-        """
+    def __init__(self, config=None, **kwargs):
         # set the support range of ell1, ell2
-        self.set_scale_range(**(config_scale or {}))
+        self.set_scale_range(config, **kwargs)
         # init line-of-sight integration config
-        self.set_losint(**(config_losint or {}))
+        self.set_losint(config, **kwargs)
         # init interpolation grid
-        self.set_interpolation_grid(**(config_interp or {}))
+        self.set_interpolation_grid(config, **kwargs)
         # init multipole decomposition grid
-        self.set_multipole_grid(**(config_multipole or {}))
+        self.set_multipole_grid(config, **kwargs)
         
     # Binning
-    def set_losint(self, **config):
+    def set_losint(self, config=None, **kwargs):
         """
         Set line-of-sight integration config.
 
-        Possible config keys are:
-            zmin (float): minimum of redshift
-            nzbin (int): number of bins for redshift
+        Parameters:
+            config (dict)       : A configuration dict that can be used to pass in the below kwargs if
+                                  desired.  This dict is allowed to have addition entries in addition
+                                  to those listed below, which are ignored here. (default: None)
+
+        Keyword arguments:
+            zmin (float)        : minimum of redshift
+            nzbin (int)         : number of bins for redshift
         """
         # update config
-        self.config_losint.update(config)
+        update_config(self.config_losint, config, **kwargs)
         # source to class attributes
         self.zmin_losint  = self.config_losint['zmin']
         self.nzbin_losint = self.config_losint['nzbin']
 
-    def set_scale_range(self, **config):
+    def set_scale_range(self, config=None, **kwargs):
         """
-        Set support range of ell1, ell2, mu, where
-        ell1 and ell2 are the two side lengths of the triangle,
-        and mu is the cosine of the **outer** angle of the triangle 
-        between ell1 and ell2. Thus the other side length ell3 can be
-        computed from ell1, ell2, and mu:
-
-            ell3 = (ell1**2 + ell2**2 + 2*ell1*ell2*mu)**0.5
+        Set support range of ell1, ell2, mu.
         
-        We avoid the squeezed limit of triangle by setting the minimum
-        of mu to be 1-epmu, where epmu is a small number.
+        Parameters:
+            config (dict)       : A configuration dict that can be used to pass in the below kwargs if
+                                  desired.  This dict is allowed to have addition entries in addition
+                                  to those listed below, which are ignored here. (default: None)
+        
+        Keyword arguments:
+            ell1min (float)     : minimum of ell1 and ell2
+            ell1max (float)     : maximum of ell1 and ell2
+            epmu (float)        : small number to avoid the squeezed limit
+        
+        Description:
+            Here ell1 and ell2 are the two side lengths of the triangle,
+            and mu is the cosine of the **outer** angle of the triangle 
+            between ell1 and ell2. Thus the other side length ell3 can be
+            computed from ell1, ell2, and mu:
 
-        Possible config keys are:
-            ell1min (float): minimum of ell1 and ell2
-            ell1max (float): maximum of ell1 and ell2
-            epmu (float): small number to avoid the squeezed limit
+                ell3 = (ell1**2 + ell2**2 + 2*ell1*ell2*mu)**0.5
+            
+            We avoid the squeezed limit of triangle by setting the minimum
+            of mu to be 1-epmu, where epmu is a small number.
+
+            Possible config keys are:
+                ell1min (float): minimum of ell1 and ell2
+                ell1max (float): maximum of ell1 and ell2
+                epmu (float): small number to avoid the squeezed limit
         """
         # update config
-        self.config_scale.update(config)
-        
+        update_config(self.config_scale, config, **kwargs)
         # fastnc args convention
         self.ell1min = self.config_scale['ell1min']
         self.ell1max = self.config_scale['ell1max']
@@ -122,21 +152,26 @@ class BispectrumBase:
         self.vmin = 0.0
         self.vmax = 1.0
 
-    def set_interpolation_grid(self, **config):
+    def set_interpolation_grid(self, config=None, **kwargs):
         """
         Set interpolation grid.
 
-        Possible config keys are:
-            nrbin (int): number of bins for r
-            nubin (int): number of bins for u
-            nvbin (int): number of bins for v
-            method (str): method for interpolation
-            use (bool): whether to use interpolation
+        Parameters:
+            config (dict)       : A configuration dict that can be used to pass in the below kwargs if
+                                  desired.  This dict is allowed to have addition entries in addition
+                                  to those listed below, which are ignored here. (default: None)
+        
+        Keyword arguments:
+            nrbin (int)         : number of bins for r
+            nubin (int)         : number of bins for u
+            nvbin (int)         : number of bins for v
+            method (str)        : method for interpolation
+            use_interp (bool)   : whether to use interpolation
         """
-        # update config 
-        self.config_interp.update(config)
+        # update config
+        update_config(self.config_interp, config, **kwargs)
         # source to class attributes
-        if not self.config_interp['use']: return 0
+        if not self.config_interp['use_interp']: return 0
         r = np.logspace(np.log10(self.rmin), np.log10(self.rmax), \
             self.config_interp['nrbin'])
         u = np.logspace(np.log10(self.umin), np.log10(self.umax), \
@@ -158,23 +193,27 @@ class BispectrumBase:
         # place holder for interpolation function
         self.bk_interp = dict()
 
-    def set_multipole_grid(self, **config):
+    def set_multipole_grid(self, config=None, **kwargs):
         """
         Set multipole decomposition grid.
 
-        Possible config keys are:
-            nellbin (int): number of bins for ell
-            npsibin (int): number of bins for psi
-            nmubin (int): number of bins for mu
-            Lmax (int): maximum multipole
+        Parameters:
+            config (dict)       : A configuration dict that can be used to pass in the below kwargs if
+                                  desired.  This dict is allowed to have addition entries in addition
+                                  to those listed below, which are ignored here. (default: None)
+        
+        Keyword arguments:
+            nellbin (int)       : number of bins for ell
+            npsibin (int)       : number of bins for psi
+            nmubin (int)        : number of bins for mu
+            Lmax (int)          : maximum multipole
             multipole_type (str): type of multipole decomposition
-            method (str): method for multipole evaluation
-            use (bool): whether to use multipole decomposition
+            method (str)        : method for multipole evaluation
         """
         # update config
-        self.config_multipole.update(config)
+        update_config(self.config_multipole, config, **kwargs)
         # source to class attributes
-        if not self.config_multipole['use']: return 0
+        if self.config_multipole['Lmax'] is None: return 0
         ell = np.logspace(np.log10(self.ellmin), np.log10(self.ellmax), \
             self.config_multipole['nellbin'])
         psi = loglinear(self.psimin, 1e-3, self.psimax, 50, \
@@ -222,7 +261,8 @@ class BispectrumBase:
         """
         Sets cosmology. 
 
-        cosmo (astropy.cosmology): cosmology
+        Parameters:
+            cosmo (astropy.cosmology): cosmology
         """
         self.cosmo = cosmo
 
@@ -239,8 +279,9 @@ class BispectrumBase:
         """
         Set source distribution.
 
-        zs_list (list): redshift array
-        pzs_list (list): probability distribution of source galaxies
+        Parameters:
+            zs_list (list)  : redshift array
+            pzs_list (list) : probability distribution of source galaxies
         """
         # setting attributes
         self.n_sample = len(zs_list)
@@ -271,12 +312,13 @@ class BispectrumBase:
         self.window_function = window_function
 
     # Redshift-bin related
-    def compute_lensing_kernel_per_sample(self, zs, pzs, nzlbin=101):
+    def _compute_lensing_kernel_per_sample(self, zs, pzs, nzlbin=101):
         """
         Set source distribution.
 
-        zs (array): redshift array
-        pzs (array): probability distribution of source galaxies
+        Parameters:
+            zs (array) : redshift array
+            pzs (array): probability distribution of source galaxies
         """
         if zs.size == 1:
             zl = np.linspace(0.0, zs, nzlbin)
@@ -305,12 +347,13 @@ class BispectrumBase:
         """
         Compute lensing kernel for all samples.
 
-        nzlbin (int): number of bins for lensing kernel
+        Parameters:
+            nzlbin (int): number of bins for lensing kernel
         """
         self.z2g_dict = dict()
         self.chi2g_dict = dict()
         for name in self.sample_names:
-            z2g, chi2g = self.compute_lensing_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
+            z2g, chi2g = self._compute_lensing_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
             self.z2g_dict[name] = z2g
             self.chi2g_dict[name] = chi2g
         self.zmax_losint = max([self.zs_dict[name].max() for name in self.sample_names])
@@ -329,67 +372,88 @@ class BispectrumBase:
                     combinations.append((name_i, name_j, name_k))
         return combinations
 
-    def parse_sample_combination(self, sample_combination):
+    def parse_sample_combination(self, scomb):
         """
         Parse sample combination to a list of sample names.
+
+        Parameters:
+            scomb (tuple) : a tuple of sample names (str) showing 
+                            the combination of samples.
+
+        Hint:
+            If you do not have idea about the sample names, run the following code
+            to get possible sample combinations.
+            >>> bispectrum.get_all_sample_combinations()
+            Here `bispectrum` is your bispectrum instance.
         """
-        if sample_combination is None:
+        if scomb is None:
             scs = self.get_all_sample_combinations()
             assert len(scs) == 1, "specify sample_combination!"
             return scs[0]
         else:
-            return sample_combination
+            return scomb
         
     # Spectra methods
     # matter power spectrum (to be implemented in subclasses)
     def matter_bispectrum(self, k1, k2, k3, z):
+        """
+        Compute matter bispectrum.
+
+        Parameters:
+            k1 (array) : k1 array in h/Mpc unit
+            k2 (array) : k2 array in h/Mpc unit
+            k3 (array) : k3 array in h/Mpc unit
+            z (array)  : redshift array
+        """
         raise NotImplementedError
 
     # kappa bispectrum interface
-    def kappa_bispectrum(self, ell1, ell2, ell3, \
-            sample_combination=None, \
+    def kappa_bispectrum(self, ell1, ell2, ell3, scomb=None, \
             method='direct', **args):
         """
         Compute kappa bispectrum.
 
-        ell1 (array): ell1 array
-        ell2 (array): ell2 array
-        ell3 (array): ell3 array
-        method (str): method for computing kappa bispectrum (direct, interp, resum)
+        Parameters:
+            ell1 (array)  : ell1 array
+            ell2 (array)  : ell2 array
+            ell3 (array)  : ell3 array
+            scomb (tuple) : sample combination
+            method (str)  : method for computing kappa bispectrum 
+                            (direct, interp, resum)
         """
         # parse sample_combination
-        sample_combination = self.parse_sample_combination(sample_combination)
+        scomb = self.parse_sample_combination(scomb)
 
         if method == 'direct':
-            return self.kappa_bispectrum_direct(ell1, ell2, ell3, sample_combination, **args)
+            return self.kappa_bispectrum_direct(ell1, ell2, ell3, scomb, **args)
         elif method == 'interp':
-            return self.kappa_bispectrum_interp(ell1, ell2, ell3, sample_combination)
+            return self.kappa_bispectrum_interp(ell1, ell2, ell3, scomb)
         elif method == 'resum':
-            return self.kappa_bispectrum_resum(ell1, ell2, ell3, sample_combination, **args)
+            return self.kappa_bispectrum_resum(ell1, ell2, ell3, scomb, **args)
         else:
             raise ValueError("method must be 'direct', 'interp', or 'resum'")
         
     # direct evaluation of kappa bispectrum from matter bispectrum
-    def kappa_bispectrum_direct(self, ell1, ell2, ell3, \
-            sample_combination=None, window=True, \
-            bm=None, return_bm=False, **args):
+    def kappa_bispectrum_direct(self, ell1, ell2, ell3, scomb=None, \
+            window=True, bm=None, return_bm=False, **args):
         """
         Compute kappa bispectrum by direct line-of-sight integration.
 
-        ell1 (array): ell1 array
-        ell2 (array): ell2 array
-        ell3 (array): ell3 array
-        sample_combination (tuple): sample combination
-        bm (array): matter bispectrum, if None, it is computed
-        return_bm (bool): return matter bispectrum if True
-        args (dict): arguments for matter_bispectrum
+        Parameters:
+            ell1 (array)  : ell1 array
+            ell2 (array)  : ell2 array
+            ell3 (array)  : ell3 array
+            scomb (tuple) : sample combination
+            bm (array)                : matter bispectrum, if None, it is computed
+            return_bm (bool)          : return matter bispectrum if True
+            args (dict)               : arguments for matter_bispectrum
 
         Note:
         The bm input can be used to save computation time when 
         computing kappa bispectrum for multiple sample_combinations.
         """
         # parse sample_combination
-        sample_combination = self.parse_sample_combination(sample_combination)
+        scomb = self.parse_sample_combination(scomb)
 
         # check scalar
         isscalar = np.isscalar(ell1)
@@ -414,7 +478,7 @@ class BispectrumBase:
         z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
         chi = self.z2chi(z)
         weight = 1
-        for name in sample_combination:
+        for name in scomb:
             weight *= self.chi2g_dict[str(name)](chi)
         weight *= 1.0/chi*(1+z)**3
 
@@ -455,46 +519,47 @@ class BispectrumBase:
             return bk
 
     # interpolation
-    def interpolate(self, sample_combinations=None, **args):
+    def interpolate(self, scombs=None, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
         (https://arxiv.org/abs/astro-ph/0307393). See also treecorr homepage
         (https://rmjarvis.github.io/TreeCorr/_build/html/correlation3.html).
 
-        sample_combinations (list): list of sample combinations
-        args (dict): arguments for matter_bispectrum
+        Parameters:
+            scombs (list): list of sample combinations
+            args (dict): arguments for matter_bispectrum
         """
         # If sample_combinations is not given, 
         # we get all possible combinations.
-        if sample_combinations is None:
-            sample_combinations = self.get_all_sample_combinations()
+        if scombs is None:
+            scombs = self.get_all_sample_combinations()
         # Prepare for the interpolation
         bm = None
         grid = (np.log(self.r_interp), np.log(self.u_interp), self.v_interp)
-        for sc in sample_combinations:
+        for sc in scombs:
             bk, bm = self.kappa_bispectrum_direct(
                 self.ELL1_interp, 
                 self.ELL2_interp, 
                 self.ELL3_interp, 
-                sample_combination=sc,
+                scomb=sc,
                 window=False,
                 bm=bm, 
                 return_bm=True, 
                 **args)
             self.bk_interp[sc] = rgi(grid, np.log(bk), method=self.method_interp)
 
-    def kappa_bispectrum_interp(self, ell1, ell2, ell3, \
-            sample_combination=None):
+    def kappa_bispectrum_interp(self, ell1, ell2, ell3, scomb=None):
         """
         Compute kappa bispectrum by interpolation.
 
-        ell1 (array): ell1 array
-        ell2 (array): ell2 array
-        ell3 (array): ell3 array
+        Parameters:
+            ell1 (array): ell1 array
+            ell2 (array): ell2 array
+            ell3 (array): ell3 array
         """
-        sample_combination = self.parse_sample_combination(sample_combination)
-        ip = self.bk_interp[sample_combination]
+        scomb = self.parse_sample_combination(scomb)
+        ip = self.bk_interp[scomb]
         r, u, v = trigutils.x1x2x3_to_ruv(ell1, ell2, ell3, signed=False)
         x = edge_correction(np.log(r), ip.grid[0].min(), ip.grid[0].max())
         y = edge_correction(np.log(u), ip.grid[1].min(), ip.grid[1].max())
@@ -506,18 +571,21 @@ class BispectrumBase:
         return bk
 
     # multipole decomposition
-    def decompose(self, sample_combinations=None, method_bispec='interp', **args):
+    def decompose(self, scombs=None, method_bispec='interp', **args):
         """
         Compute multipole decomposition of kappa bispectrum.
 
-        args (dict): arguments for kappa_bispectrum
+        Parameters:
+            scombs (list)       : list of sample combinations
+            method_bispec (str) : method for kappa_bispectrum
+            args (dict)         : arguments for kappa_bispectrum
         """
         # If sample_combinations is not given, 
         # we get all possible combinations.
-        if sample_combinations is None:
-            sample_combinations = self.get_all_sample_combinations()
+        if scombs is None:
+            scombs = self.get_all_sample_combinations()
         # Compute multipole
-        for sc in sample_combinations:
+        for sc in scombs:
             b = self.kappa_bispectrum(
                     self.ELL1_multipole, 
                     self.ELL2_multipole, 
@@ -530,17 +598,18 @@ class BispectrumBase:
             bL = self.multipole_decomposer.decompose(b, L, axis=2)
             self.bL_multipole[sc] = bL
 
-    def kappa_bispectrum_multipole(self, L, ell, psi, \
-            sample_combination=None):
+    def kappa_bispectrum_multipole(self, L, ell, psi, scomb=None):
         """
         Compute multipole of kappa bispectrum.
 
-        L (array): multipole
-        ell (array): ell array
-        psi (array): psi array
+        Parameters:
+            L (array)     : multipole
+            ell (array)   : ell array
+            psi (array)   : psi array
+            scomb (tuple) : sample combination
         """
         # parse sample_combination
-        sample_combination = self.parse_sample_combination(sample_combination)
+        scomb = self.parse_sample_combination(scomb)
         # cast to array
         isscalar = np.isscalar(L)
         if isscalar:
@@ -551,7 +620,7 @@ class BispectrumBase:
         grid = (np.log(self.ell_multipole), np.log(self.pzs_multipole))
         for i, _L in enumerate(L):
             # interpolate
-            z = self.bL_multipole[sample_combination][_L, :, :]
+            z = self.bL_multipole[scomb][_L, :, :]
             ip= rgi(grid, z, bounds_error=True)
             # convert psi to pi/2-psi if psi > pi/4
             psi = psi.copy()
@@ -567,19 +636,20 @@ class BispectrumBase:
             
         return out
 
-    def kappa_bispectrum_resum(self, ell1, ell2, ell3, \
-            sample_combination=None):
+    def kappa_bispectrum_resum(self, ell1, ell2, ell3, scomb=None):
         """
         Compute kappa bispectrum by resummation of multipoles.
 
-        ell1 (array): ell1 array
-        ell2 (array): ell2 array
-        ell3 (array): ell3 array
+        Parameters:
+            L (array)     : multipole
+            ell (array)   : ell array
+            psi (array)   : psi array
+            scomb (tuple) : sample combination
         """
-        sample_combination = self.parse_sample_combination(sample_combination)
+        scomb = self.parse_sample_combination(scomb)
         ell, psi, mu = trigutils.x1x2x3_to_xpsimu(ell1, ell2, ell3)
         L = np.arange(self.Lmax_multipole)
-        bL = self.kappa_bispectrum_multipole(L, ell, psi, sample_combination=sample_combination)
+        bL = self.kappa_bispectrum_multipole(L, ell, psi, scomb=scomb)
         pL = np.array([eval_legendre(_L, mu) for _L in L])
         out = np.sum(bL*pL, axis=0)
         return out
@@ -589,40 +659,58 @@ class BispectrumHalofit(BispectrumBase):
     """
     Bispectrum computed from halofit.
     """
+    __doc__ += BispectrumBase.__doc__
     # default configs
     config_scale     = dict(ell1min=1e-1, ell1max=1e5, epmu=1e-7)
-    def __init__(self, config_scale=None, config_losint=None, config_interp=None, config_multipole=None):
+    
+    def __init__(self, config=None, **kwargs):
         self.halofit = Halofit()
-        super().__init__(config_scale, config_losint, config_interp, config_multipole)
+        super().__init__(config, **kwargs)
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
         Sets cosmology. 
 
-        cosmo (astropy.cosmology): cosmology
-        ns (float): spectral index of linear power spectrum
-        sigma8 (float): sigma8 of linear power spectrum (at z=0.0)
+        Parameters:
+            cosmo (astropy.cosmology): cosmology
+            ns (float)               : spectral index of linear power spectrum
+            sigma8 (float)           : sigma8 of linear power spectrum (at z=0.0)
 
-        Note that the values of ns and sigma8 are set by two ways:
-        1. Assigning ns and sigma8 as arguments of this method.
-        2. Assigning ns and sigma8 to cosmo.meta.
+        Note:
+            Note that the values of ns and sigma8 are set by two ways:
+            1. Assigning ns and sigma8 as arguments of this method.
+            2. Assigning ns and sigma8 to cosmo.meta.
         """
         super().set_cosmology(cosmo)
         # parameters for halofit
         dcosmo={'Om0': cosmo.Om0, 
                 'Ode0': cosmo.Ode0,
-                'ns': cosmo.meta.get('n'),
-                'sigma8': cosmo.meta.get('sigma8'), 
+                'ns': ns or cosmo.meta.get('n'),
+                'sigma8': sigma8 or cosmo.meta.get('sigma8'), 
                 'w0': cosmo.w0, 
                 'wa': 0.0,
                 'fnu0': 0.0} 
         self.halofit.set_cosmology(dcosmo)
 
     def set_pklin(self, k, pklin):
+        """
+        Set linear power spectrum.
+
+        Parameters:
+            k (array)    : wavenumber array
+            pklin (array): linear power spectrum
+        """
         self.halofit.set_pklin(k, pklin)
         self.has_changed = True
 
     def set_lgr(self, z, lgr):
+        """
+        Set linear growth rate.
+
+        Parameters:
+            z (float)  : redshift
+            lgr (float): linear growth rate
+        """
         self.halofit.set_lgr(z, lgr)
         self.has_changed = True
 
@@ -633,10 +721,12 @@ class BispectrumNFW1Halo(BispectrumBase):
     """
     Toy model
     """
-    ell1min = 1e-2
-    ell1max = 1e5
-    def __init__(self, cosmo=None, zs=None, pzs=None, rs=10.0):
-        super().__init__(cosmo, zs, pzs)
+    __doc__ += BispectrumBase.__doc__
+    # default configs
+    config_scale     = dict(ell1min=1e-2, ell1max=1e5, epmu=1e-7)
+    
+    def __init__(self, config=None, **kwargs):
+        super().__init__(config, **kwargs)
         self.set_rs(rs)
 
     def set_rs(self, rs):

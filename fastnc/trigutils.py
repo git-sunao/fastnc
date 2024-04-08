@@ -1,44 +1,19 @@
 """
+Author: Sunao Sugiyama
+Last edit  : 2024/03/25 22:02:25
+
 This module provides the functions to manipulate the triangle configuration.
 Triangle can be specified by several different ways, and this module provides
 the conversion between them.
 
-1. `x1x2x3` -- (x1, x2, x3)
-    Side lengths of triangle. This specification of triangle 
-    is *unaware* of the triangle orientation.
-2. `xpsimu` -- (x, psi, mu)
-    With given side lengths of triangle, x1, x2, x3,
-        x1 = x * cos(psi), 
-        x2 = x * sin(psi), 
-        x3 = x * sqrt(1 - sin(2*psi)*mu)
-    and inversely
-        x   = sqrt(x1^2 + x2^2), 
-        psi = arctan(y=x2, x=x1), 
-        mu  = (cosine of inner anglebetween x1 and x2)
-    This specification of triangle is *unaware* of the triangle orientation.
-3. `x1x2phi3` -- (x1, x2, phi3)
-    With given side lengths of triangle, x1, x2, x3,
-        phi3 = arccos( (x1^2 + x2^2 - x3^2)/2/x1/x2 ),
-    i.e. phi3 is the angle between x1 and x2 sides.
-    This specification of triangle is *unaware* of the triangle orientation.
-4. `ruv` -- (r, u, v)
-    The convention of `treecorr`. With given side lengths of triangle, x1>x2>x3,
-        r = x2, 
-        u = x3/x2, 
-        v = \pm (x1-x2)/x3
-    where the sign of v is determined by the orientation of triangle: 
-    if the sides x1, x2, x3 are anti-clockwise, v is positive, otherwise negative. 
-    This specification of triangle is *aware* of the triangle orientation.
-5. `x1x2dvphi` -- (x1, x2, dvphi)
-    The convention of `fastnc`. With given side lengths of triangle, x1>x2>x3,
-        dvphi = phi3 - pi if v >= 0 else pi - phi3
-    Thus dvphi is the oriented outer angle of triangle.
-    This specification of triangle is *aware* of the triangle orientation.
-
-Note that the conversion between the orientation-unaware specifications can be ambiguous.
-
-Author: Sunao Sugiyama
-Last edit: 2023/11/27
+x1x2x3  (SSS) : Three side lengths parametrization. 
+                Triangle orientation is ambiguous.
+ruv     (RUV) : (r,u,v) parametrization introduced in M. Jarvis+2003
+                Triangle orientation is expressed by sign of v.
+x1x2phi (SAS) : Two side lengths and opening angle parametrization.
+                Triangle orientation is expressed by sign of phi.
+xpsimu        : Same as x1x2phi but ratio of x2/x1 is parametrized by tan(psi)
+                and phi is reparametrized as mu=cos(phi).
 """
 
 import numpy as np
@@ -54,6 +29,7 @@ def is_cyclic_permutation(x):
     
     return False
 
+# ruv <-> x1x2x3
 def ruv_to_x1x2x3(r, u, v):
     x1 = r*(1+u*np.abs(v))
     x2 = r
@@ -85,6 +61,7 @@ def x1x2x3_to_ruv(x1, x2, x3, signed=True, all_physical=True):
 
     return r, u, v
 
+# ruv <-> x1x2phi
 def ruv_to_x1x2phi(r, u, v, rot=0):
     if rot == 0:
         x1, x2, x3 = (1+u*np.abs(v)), 1., u
@@ -97,10 +74,18 @@ def ruv_to_x1x2phi(r, u, v, rot=0):
     x2 *= r
     return x1, x2, phi
 
+def x1x2phi_to_ruv(x1, x2, phi, rot=0):
+    pass
+
+# x1x2phi <-> x1x2x3
 def x1x2phi_to_x1x2x3(x1, x2, phi):
     x3 = np.sqrt(x1**2 + x2**2 - 2*x1*x2*np.cos(phi))
     return x1, x2, x3
 
+def x1x2x3_to_x1x2phi(x1, x2, x3):
+    pass
+
+# xpsimu <-> x1x2x3
 def xpsimu_to_x1x2x3(x, psi, mu):
     x1 = x * np.cos(psi)
     x2 = x * np.sin(psi)

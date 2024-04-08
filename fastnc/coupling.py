@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/21 18:06:40
+Last edit  : 2024/04/08 14:06:25
 
 Description:
 coupling.py contains classes for 
@@ -9,8 +9,6 @@ the computing multipole coupling functions
 '''
 import numpy as np
 from scipy.special import eval_legendre
-from tqdm import tqdm
-from glob import glob
 import pandas as pd
 import os
 # fastnc modules
@@ -93,33 +91,40 @@ class CacheManager:
         self.df.to_csv(self.databasename, index=False)
 
 class ModeCouplingFunctionBase:
-    name = 'ModeCouplingFunctionBase'
-    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-5, verbose=True, use_cache=True):
-        """
-        Base class for mode coupling function.
+    r"""
+    Compute and hold the multipole mode-coupling function between real
+    and Fourier spaces.
 
-        - Lmax (int)  : Maximum multipole moment.
-        - Max (int)   : Maximum angular Fourier mode.
-        - Npsi (int)  : Number of psi bins. Npsi is 
-                        forced to be odd to capture the 
+    Parameters:
+        Lmax (int)    : Maximum multipole moment.
+        Mmax (int)    : Maximum angular Fourier mode.
+        Npsi (int)    : Number of psi bins. Npsi is forced to be odd to capture the 
                         exact pi/2 point.
-        """
+        tol (float)   : Tolerance for the numerical integration.
+        verbose (bool): Whether to print verbose output.
+        cache (bool)  : Whether to use cache.
+    """
+
+    # name of the mode coupling function
+    name = 'ModeCouplingFunctionBase'
+    
+    def __init__(self, Lmax, Mmax, Npsi=200, tol=1e-5, verbose=True, cache=True):
         self.Lmax = Lmax
         self.Mmax = Mmax
         self.Npsi = int((Npsi//2)*2+1)
         self.psi = np.linspace(0, np.pi/2, Npsi)
         self.tol = tol
         self.verbose = verbose
-        self.use_cache = use_cache
+        self.cache = cache
 
         # mode coupling function data
         self.data = dict()
         # load cache if exists
-        self.load_cache() if self.use_cache else None
+        self.load_cache() if self.cache else None
         # compute mode coupling function
         self.compute()
         # save cache
-        self.save_cache() if self.use_cache else None
+        self.save_cache() if self.cache else None
 
     def compute(self):
         """
@@ -132,6 +137,9 @@ class ModeCouplingFunctionBase:
         return {'name':self.name, 'Npsi':self.Npsi, 'tol':self.tol}
 
     def save_cache(self):
+        """
+        Save the data to the cache.
+        """
         # load database and register the data info in the database
         database = CacheManager()
         database.register_entry(self._get_id())
@@ -140,6 +148,9 @@ class ModeCouplingFunctionBase:
         save_pickle(filename, self.data)
 
     def load_cache(self):
+        """
+        Load the data from the cache.
+        """
         # load database
         database = CacheManager()
         if database.in_database(self._get_id()):
@@ -150,17 +161,16 @@ class ModeCouplingFunctionBase:
 
     def __call__(self, L, M, psi):
         """
-        Compute the mode coupling function using 
-        the precomputed data.
+        Compute GLM for given L, M, and psi.
 
-        L (int or array): The multipole moment.
-        M (int): The angular Fourier mode.
+        L (array): The multipole moment.
+        M (array): The angular Fourier mode.
         psi (array): The psi values.
         """
         pass
 
 class MCF222LegendreFourier(ModeCouplingFunctionBase):
-    """
+    r"""
     Mode coupling function for spin-2, spin-2, spin-2 correlation function
     and decomposition using Legendre polynomials and Fourier modes
     for Fourier-space and real-space respectively.
@@ -168,7 +178,11 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
     .. math:
         G_LM(psi) = 4\\pi \\int_0^{\\pi} dx P_L(\\cos(x)) \\cos[2\\bar\\beta(\\psi, x) + M x]
     """
+    __doc__ += ModeCouplingFunctionBase.__doc__
+    
+    # name of the mode coupling function
     name = 'MCF222LegendreFourier'
+
     def _integrand(self, x, psi, L, M):
         x, psi = np.meshgrid(x, psi, indexing='ij')
         sin2bb, cos2bb = sincos2angbar(psi, x)
@@ -209,13 +223,6 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
                     self.data[(M,L)] -= bias
 
     def __call__(self, L, M, psi):
-        """
-        Compute GLM.
-
-        L (array): The multipole moment.
-        M (array): The angular Fourier mode.
-        psi (array): The psi values.
-        """
         Lisscalar = np.isscalar(L)
         if Lisscalar:
             L = np.array([L])
@@ -259,7 +266,7 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
         return out
 
 class MCF222FourierFourier(ModeCouplingFunctionBase):
-    """
+    r"""
     Mode coupling function for spin-2, spin-2, spin-2 correlation function
     and decomposition using Fourier modes both
     for Fourier-space and real-space respectively.
@@ -273,7 +280,11 @@ class MCF222FourierFourier(ModeCouplingFunctionBase):
         G_K(\\psi) = 4\\pi \\int_0^{\\pi} dx \\cos[2\\bar\\beta(\\psi, x) + K x]
 
     """
+    __doc__ += ModeCouplingFunctionBase.__doc__
+
+    # name of the mode coupling function
     name = 'MCF222FourierFourier'
+    
     def _integrand(self, x, psi, K):
         x, psi = np.meshgrid(x, psi, indexing='ij')
         sin2bb, cos2bb = sincos2angbar(psi, x)
@@ -295,13 +306,6 @@ class MCF222FourierFourier(ModeCouplingFunctionBase):
         # Correction?
 
     def __call__(self, L, M, psi):
-        """
-        Compute GLM.
-
-        L (array): The multipole moment.
-        M (array): The angular Fourier mode.
-        psi (array): The psi values.
-        """
         Lisscalar = np.isscalar(L)
         if Lisscalar:
             L = np.array([L])

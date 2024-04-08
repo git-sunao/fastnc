@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/21 21:41:14
+Last edit  : 2024/03/25 17:44:22
 
 Description:
 This is the integration module of fastnc.
@@ -24,21 +24,19 @@ def aint(fnc, xmin, xmax, Nx=2, axis=0, tol=1e-3, max_itern=10, err_fnc=None, ve
     """
     aint (function): Adaptive integration routine.
 
-    Parameters
-    ----------
-    fnc (function): Function to integrate.
-    xmin (float): Lower limit of integration.
-    xmax (float): Upper limit of integration.
-    Nx (int): Initial number of bins.
-    axis (int): Axis along which to integrate.
-    tol (float): Tolerance for error.
-    max_itern (int): Maximum number of iterations.
-    err_fnc (function): Function to calculate the error. Default is err_fnc_diff_by_norm.
-    verbose (bool): Verbose flag.
+    Parameters:
+        fnc (function): Function to integrate.
+        xmin (float): Lower limit of integration.
+        xmax (float): Upper limit of integration.
+        Nx (int): Initial number of bins.
+        axis (int): Axis along which to integrate.
+        tol (float): Tolerance for error.
+        max_itern (int): Maximum number of iterations.
+        err_fnc (function): Function to calculate the error. Default is err_fnc_diff_by_norm.
+        verbose (bool): Verbose flag.
 
-    Returns
-    -------
-    out (float): Integral.
+    Returns:
+        out (float): Integral.
     """
 
     if err_fnc is None:

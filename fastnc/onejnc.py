@@ -5,7 +5,6 @@ Last edit: 2024/01/18
 import numpy as np
 from . import fftlog
 from scipy.interpolate import InterpolatedUnivariateSpline as ius
-from scipy.integrate import simps
 from . import trigutils
 from .utils import loglinear
 

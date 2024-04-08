@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/01/30 00:20:53
+Last edit  : 2024/03/25 17:44:04
 
 Description:
 halofit.py contains the Halofit class. 
@@ -17,33 +17,32 @@ from scipy.special import gamma, gammaincc
 
 class Halofit:
     """
-    Halofit class.
+    Halofit class including power and bi spectrum.
+    Fitting formula of the nonlinear matter power spectrum 
+    based on the halo model. 
 
-    See https://arxiv.org/abs/1208.2701 for halofit model.
-    See https://arxiv.org/abs/1911.07886 for bihalofit model.
-
-    Attributes
-    ----------
-    k     (np.ndarray): array of comoving Fourier modes
-    pklin (np.ndarray): array of linear power spectrum at the wave numbers
-    z     (np.ndarray): array of redshifts
-    lgr   (np.ndarray): linear growth rate at the redshifts
-    """
-    def __init__(self, k=None, pklin=None, z=None, lgr=None, cosmo=None):
-        """
+    Parameters:
         k     (np.ndarray): array of comoving Fourier modes
         pklin (np.ndarray): array of linear power spectrum at the wave numbers
         z     (np.ndarray): array of redshifts
         lgr   (np.ndarray): linear growth rate at the redshifts
-        """
+
+    References:
+        See https://arxiv.org/abs/1208.2701 for halofit model.
+        See https://arxiv.org/abs/1911.07886 for bihalofit model.
+    """
+    def __init__(self, k=None, pklin=None, z=None, lgr=None, cosmo=None):
         self.set_lgr(z, lgr)
         self.set_pklin(k, pklin)
         self.set_cosmology(cosmo)
 
     def set_lgr(self, z, lgr):
         """
-        z     (np.ndarray): array of redshifts
-        lgr   (np.ndarray): linear growth rate at the redshifts
+        Set the linear growth rate at the redshifts.
+
+        Parameters:
+            z     (np.ndarray): array of redshifts
+            lgr   (np.ndarray): linear growth rate at the redshifts
         """
         self.z     = z
         self.lgr   = lgr
@@ -51,8 +50,11 @@ class Halofit:
     
     def set_pklin(self, k, pklin):
         """
-        k     (np.ndarray): array of comoving Fourier modes
-        pklin (np.ndarray): array of linear power spectrum at the wave numbers
+        Set the linear power spectrum at the wave numbers.
+
+        Parameters:
+            k     (np.ndarray): array of comoving Fourier modes
+            pklin (np.ndarray): array of linear power spectrum at the wave numbers
         """
         self.k     = k
         self.pklin = pklin
@@ -61,7 +63,10 @@ class Halofit:
 
     def set_cosmology(self, cosmo):
         """
-        cosmo (dict): dictionary of cosmological parameters
+        Set the cosmological parameters.
+
+        Parameters:
+            cosmo (dict): dictionary of cosmological parameters
 
         cosmo needs to have the following keys:
             Om0   : matter density parameter at z=0
@@ -99,6 +104,11 @@ class Halofit:
     def get_interpolated_pklin(self, k, z=None, ext=True):
         """
         Interpolate the power spectrum for a given redshift.
+
+        Parameters:
+            k   (np.ndarray): array of comoving Fourier modes
+            z   (float)     : redshift
+            ext (bool)      : if True, extrapolate the power spectrum for higher k
         """
         # array to store log(pk)
         pk = np.zeros_like(k)
@@ -132,34 +142,34 @@ class Halofit:
         """
         Calculate sigmaM.
 
-        k (np.ndarray): array of comoving Fourier modes
-        Delta (np.ndarray): array of Delta^2(k)
-        r (float): smoothing scale
-        window (function): window function
-        extrap (bool): if True, extrapolate the power spectrum for higher k
+        Parameters:
+            k (np.ndarray)    : array of comoving Fourier modes
+            Delta (np.ndarray): array of Delta^2(k)
+            r (float)         : smoothing scale
+            window (function) : window function
+            extrap (bool)     : if True, extrapolate the power spectrum for higher k
 
         Returns:
-        sigmam (float): sigmaM
+            sigmam (float): sigmaM
 
-        Note
-        ----
-        The integral is calculated by the Simpson's rule.
-        If extrap is True, the power spectrum is extrapolated by a power law: A k^n.
+        Note:
+            The integral is calculated by the Simpson's rule.
+            If extrap is True, the power spectrum is extrapolated by a power law: A k^n.
 
-        And the integral is calculated as follows:
+            And the integral is calculated as follows:
 
-        ..math::
-            sigma_m(R)  = \\int_-inf^inf dlnk Delta(k) W^2(kR)
-                        = \\int_-inf^kmax dlnk Delta(k) W^2(kR) + \\int_kmax^inf dlnk Delta(k) W^2(kR)
-                        ~ sum_i Delta_i W^2(k_i R) dlnk + \\int_kmax^inf dlnk Delta(k) W^2(kR)
+            ..math::
+                sigma_m(R)  = \\int_-inf^inf dlnk Delta(k) W^2(kR)
+                            = \\int_-inf^kmax dlnk Delta(k) W^2(kR) + \\int_kmax^inf dlnk Delta(k) W^2(kR)
+                            ~ sum_i Delta_i W^2(k_i R) dlnk + \\int_kmax^inf dlnk Delta(k) W^2(kR)
 
-        Assuming the Delta at high k can be approximated by a power law, ~ A k^n, and Gaussian window,
+            Assuming the Delta at high k can be approximated by a power law, ~ A k^n, and Gaussian window,
 
-        ..math::
-            sigma_m(R)  = I2 + \\int_kmax^inf dlnk Ak^n e^(-k^2R^2)
-                        = I2 + A R^(-n) Gamma(n/2) Gamma^reg(n/2, tmin)
+            ..math::
+                sigma_m(R)  = I2 + \\int_kmax^inf dlnk Ak^n e^(-k^2R^2)
+                            = I2 + A R^(-n) Gamma(n/2) Gamma^reg(n/2, tmin)
 
-        where tmin = kmax^2R^2, and Gamma^reg is the regularized gamma function.
+            where tmin = kmax^2R^2, and Gamma^reg is the regularized gamma function.
         """
         I2    = simps(Delta * window(k*r)**2, np.log(k))
 
@@ -175,6 +185,11 @@ class Halofit:
     def get_r_sigma(self, z, rtol=1e-5, maxiter=10):
         """
         Returns nonlinear scale, r_sigma.
+
+        Parameters:
+            z       (float): redshift
+            rtol    (float): relative tolerance
+            maxiter (int)  : maximum number of iterations
         """
         k     = np.logspace(-3, 2, 1000)
         Delta = self.get_interpolated_pklin(k, z)*k**3 / 2/np.pi**2
@@ -195,6 +210,10 @@ class Halofit:
     def get_neff(self, z, r_sigma=None):
         """
         Returns effective spectral index.
+
+        Parameters:
+            z       (float): redshift
+            r_sigma (float): smoothing scale
         """
         if r_sigma is None:
             r_sigma = self.get_r_sigma(z)
@@ -208,6 +227,10 @@ class Halofit:
     def get_C(self, z, r_sigma=None):
         """
         Returns spectral curvature.
+
+        Parameters:
+            z       (float): redshift
+            r_sigma (float): smoothing scale
         """
         if r_sigma is None:
             r_sigma = self.get_r_sigma(z)
@@ -222,6 +245,9 @@ class Halofit:
     def get_sigma8z(self, z):
         """
         Returns sigma8 at a given redshift z.
+
+        Parameters:
+            z (float): redshift
         """
         k       = np.logspace(-4, 2, 1000)
         Delta   = self.get_interpolated_pklin(k, z)*k**3 / 2/np.pi**2
@@ -231,6 +257,9 @@ class Halofit:
     def get_Omz(self, z):
         """
         Returns Omega_m(z).
+
+        Parameters:
+            z (float): redshift
         """
         Om0, Ode0, w0, wa = self.cosmo['Om0'], self.cosmo['Ode0'], self.cosmo['w0'], self.cosmo['wa']
         a = 1.0/(1+z)
@@ -242,6 +271,9 @@ class Halofit:
     def get_Odez(self, z):
         """
         Returns Omega_de(z).
+
+        Parameters:
+            z (float): redshift
         """
         Om0, Ode0, w0, wa = self.cosmo['Om0'], self.cosmo['Ode0'], self.cosmo['w0'], self.cosmo['wa']
         a = 1.0/(1+z)
@@ -253,6 +285,11 @@ class Halofit:
     def _init_spline(self, zmid=0.5, dz_low=0.15, dz_high=0.3):
         """
         Initialize the spline for halofit.
+
+        Parameters:
+            zmid    (float): the middle redshift for the spline
+            dz_low  (float): the lower redshift interval for the spline
+            dz_high (float): the higher redshift interval for the spline
         """
         # For acculate calculation, we divide z array into two sections
         # Defining zmid, the first section is [0, zmid) and the second is [zmid, max),
@@ -284,6 +321,9 @@ class Halofit:
     def get_halofit_coeffs(self, z):
         """
         Returns the coefficients of halofit.
+
+        Parameters:
+            z (np.ndarray): array of redshifts
         """
         r_sigma = ius(self.lazy_arrays['z'], self.lazy_arrays['r_sigma'])(z)
         neff    = ius(self.lazy_arrays['z'], self.lazy_arrays['neff'])(z)
@@ -329,6 +369,10 @@ class Halofit:
     def get_pkhalofit(self, k, z):
         """
         Returns the halofit prediction of nonlinear matter power spectrum.
+
+        Parameters:
+            k (np.ndarray): array of comoving Fourier modes
+            z (np.ndarray): array of redshifts
         """
         # update the internal variables
         self.update()
@@ -361,6 +405,9 @@ class Halofit:
         """
         Returns the coefficients of bihalofit, 
         or parts of coefficients which are independent of triangle.
+
+        Parameters:
+            z (np.ndarray): array of redshifts
         """
         r_sigma = ius(self.lazy_arrays['z'], self.lazy_arrays['r_sigma'])(z)
         neff    = ius(self.lazy_arrays['z'], self.lazy_arrays['neff'])(z)
@@ -423,6 +470,11 @@ class Halofit:
     def F2_tree(self, k1, k2, k3):
         """
         Returns the tree level bispectrum.
+
+        Parameters:
+            k1 (np.ndarray): array of comoving Fourier modes in h/Mpc unit
+            k2 (np.ndarray): array of comoving Fourier modes in h/Mpc unit
+            k3 (np.ndarray): array of comoving Fourier modes in h/Mpc unit
         """
         costheta12=0.5*(k3*k3-k1*k1-k2*k2)/(k1*k2)
         return (5./7.)+0.5*costheta12*(k1/k2+k2/k1)+(2./7.)*costheta12*costheta12
@@ -430,6 +482,16 @@ class Halofit:
     def get_bihalofit(self, k1, k2, k3, z, verbose=False, all_physical=False, which=['Bh3', 'Bh1']):
         """
         Returns the bihalofit prediction of matter bispectrum.
+
+        Parameters:
+            k1           (np.ndarray): array of comoving Fourier modes in h/Mpc unit
+            k2           (np.ndarray): array of comoving Fourier modes in h/Mpc unit
+            k3           (np.ndarray): array of comoving Fourier modes in h/Mpc unit
+            z            (np.ndarray): array of redshifts
+            verbose      (bool)      : if True, print the progress
+            all_physical (bool)      : if True, assumes all the triangle satisfy the 
+                                       triangle condition
+            which        (str or list): which part of bispectrum to calculate
         """
         if isinstance(which, str):
             which = [which]

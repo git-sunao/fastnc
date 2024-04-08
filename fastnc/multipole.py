@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/20 00:28:18
+Last edit  : 2024/03/25 17:49:02
 
 Description:
 multipole.py contains the Multipole class, 
@@ -9,21 +9,21 @@ which computes multipole moments
 '''
 import numpy as np
 from scipy.special import eval_legendre
-from scipy.interpolate import RegularGridInterpolator as rgi
 
 class MultipoleBase:
-    def __init__(self, x, Lmax, method='gauss-legendre', verbose=True):
-        """
-        Compute multipole of a function f(x).
-        using some basis function indexed by L.
-        The maximum multipole must be specified by Lmax.
+    """
+    Compute multipole of a function f(x).
+    using some basis function indexed by L.
+    The maximum multipole must be specified by Lmax.
 
+    Parameters:
         x (array)     : x values
         Lmax (int)    : maximum multipole moment
         method (str)  : method to compute the multipole moments. 
                         options are'gauss-legendre' or 'riemann'.
         verbose (bool): whether to print verbose output
-        """
+    """
+    def __init__(self, x, Lmax, method='gauss-legendre', verbose=True):
         self.x = x
         self.Lmax = Lmax
         self.method = method
@@ -44,7 +44,8 @@ class MultipoleBase:
         """
         Return the basis function for multipole indices L
 
-        L (array): multipole moment
+        Parameters:
+            L (array): multipole moment
         """
         NotImplementedError
 
@@ -56,7 +57,9 @@ class MultipoleBase:
             f(x) = a_i x + b_i 
         in each bin.
 
-        fx (array): fx values evaluated at self.x
+        Parameters:
+            fx (array): fx values evaluated at self.x
+            axis (int): axis along which to interpolate
         """
         assert self.x.size == fx.shape[axis], "shape of x and fx must be the same"
         fx = np.moveaxis(fx, axis, -1)
@@ -68,6 +71,15 @@ class MultipoleBase:
         return a, b
 
     def decompose(self, fx, L, axis=0):
+        """
+        Decompose a function f(x) into multipole moments
+        using the specified method.
+
+        Parameters:
+            fx (array): fx values evaluated at self.x
+            L (array): multipole moment
+            axis (int): axis along which to decompose
+        """
         if self.method == 'gauss-legendre':
             return self.__decompose_gauss_legendre(fx, L, axis=axis)
         elif self.method == 'riemann':
@@ -81,8 +93,10 @@ class MultipoleBase:
         using gauss-legendre method with coefficients of
         linear interpolation.
 
-        fx (array): fx values evaluated at self.x
-        L (array): multipole moment
+        Parameters:
+            fx (array): fx values evaluated at self.x
+            L (array) : multipole moment
+            axis (int): axis along which to decompose
         """
         a, b = self.__get_linear_interp_coeffs(fx, axis=axis)
         w0, w1 = self._get_basis_function(L)
@@ -98,14 +112,20 @@ class MultipoleBase:
         artificial high multipole moments, even though the 
         true high multipoles are zeros.
 
-        fx (array): fx values evaluated at self.x
-        L (array): multipole moment
+        Parameters:
+            fx (array): fx values evaluated at self.x
+            L (array) : multipole moment
+            axis (int): axis along which to decompose
         """
         w = self._get_basis_function(L)
         out = np.tensordot(w, f, axes=([1], [axis])) * (self.x[1]-self.x[0])
         return out
 
 class MultipoleLegendre(MultipoleBase):
+    """
+    Multipole decomposition with Legendre polynomials as basis.
+    """
+    __doc__ += MultipoleBase.__doc__
     # MultipoleLegendre class inherits MultipoleBase class
     def _init_basis_function(self):
         if self.method == 'gauss-legendre':
@@ -118,11 +138,6 @@ class MultipoleLegendre(MultipoleBase):
             raise ValueError(f"method {self.method} is not supported")
 
     def _get_basis_function(self, L):
-        """
-        Return the basis function for multipole indices L
-
-        L (array): multipole moment
-        """
         if self.method == 'gauss-legendre':
             # Note: Here axis is incremented by 1, because
             # L is added as the first axis on top of self.x.shape.
@@ -141,7 +156,8 @@ class MultipoleLegendre(MultipoleBase):
         Precompute the Legendre polynomials P_L(x) for all L, 
         to save computation time.
 
-        Lmax (int): maximum multipole moment
+        Parameters:
+            Lmax (int): maximum multipole moment
         """
         self.legendreP_table = dict()
         for L in np.arange(Lmax+1):
@@ -152,7 +168,8 @@ class MultipoleLegendre(MultipoleBase):
         """
         Return legendre polynomial P_L(x)
 
-        L (array): multipole moment
+        Parameters:
+            L (array): multipole moment
         """
         if np.isscalar(L):
             L = np.array([L])
@@ -167,6 +184,9 @@ class MultipoleLegendre(MultipoleBase):
     def __get_legendreP_int0(self, L):
         """
         Return integral of legendre polynomial P_L(x)
+
+        Parameters:
+            L (array): multipole moment
         """
         out = self.__get_legendreP(L+1) - self.__get_legendreP(L-1)
         # assign L=0
@@ -178,7 +198,8 @@ class MultipoleLegendre(MultipoleBase):
         Return integral of legendre polynomial P_L(x) with x:
         p_L^1 = (2L+1)\\int dx P_L(x) x
 
-        L (array): multipole moment
+        Parameters:
+            L (array): multipole moment
         """
         pL   = self.__get_legendreP(L)
         pLm1 = self.__get_legendreP(L-1)
@@ -194,6 +215,10 @@ class MultipoleLegendre(MultipoleBase):
         return out
     
 class MultipoleFourier(MultipoleBase):
+    """
+    Multipole decomposition with Fourier basis as basis.
+    """
+    __doc__ += MultipoleBase.__doc__
     # MultipoleFourier class inherits MultipoleBase class
     def _init_basis_function(self):
         """
@@ -203,11 +228,6 @@ class MultipoleFourier(MultipoleBase):
         pass
 
     def _get_basis_function(self, L):
-        """
-        Return the basis function for multipole indices L
-
-        L (array): multipole moment
-        """
         if self.method == 'gauss-legendre':
             w0 = np.zeros(L.shape+self.x.shape, dtype=complex)
             w1 = np.zeros(L.shape+self.x.shape, dtype=complex)
@@ -229,6 +249,11 @@ class MultipoleFourier(MultipoleBase):
         return basis
 
 class MultipoleSine(MultipoleBase):
+    """
+    Multipole decomposition with sine basis as basis.
+    """
+    __doc__ += MultipoleBase.__doc__
+    # MultipoleSine class inherits MultipoleBase class
     def _init_basis_function(self):
         """
         Sin basis is computationally low cost,
@@ -237,11 +262,6 @@ class MultipoleSine(MultipoleBase):
         pass
 
     def _get_basis_function(self, L):
-        """
-        Return the basis function for multipole indices L
-
-        L (array): multipole moment
-        """
         if self.method == 'gauss-legendre':
             w0 = np.zeros(L.shape+self.x.shape)
             w1 = np.zeros(L.shape+self.x.shape)
@@ -263,6 +283,11 @@ class MultipoleSine(MultipoleBase):
         return basis
 
 class MultipoleCosine(MultipoleBase):
+    """
+    Multipole decomposition with cosine basis as basis.
+    """
+    __doc__ += MultipoleBase.__doc__
+    # MultipoleCosine class inherits MultipoleBase class
     def _init_basis_function(self):
         """
         Cos basis is computationally low cost,
@@ -271,11 +296,6 @@ class MultipoleCosine(MultipoleBase):
         pass
 
     def _get_basis_function(self, L):
-        """
-        Return the basis function for multipole indices L
-
-        L (array): multipole moment
-        """
         if self.method == 'gauss-legendre':
             w0 = np.zeros(L.shape+self.x.shape)
             w1 = np.zeros(L.shape+self.x.shape)
