@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/26 17:48:00
+Last edit  : 2024/04/08 14:03:07
 
 Description:
 coupling.py contains classes for 
@@ -115,16 +115,16 @@ class ModeCouplingFunctionBase:
         self.psi = np.linspace(0, np.pi/2, Npsi)
         self.tol = tol
         self.verbose = verbose
-        self.cache = cache
+        self.use_cache = use_cache
 
         # mode coupling function data
         self.data = dict()
         # load cache if exists
-        self.load_cache()
+        self.load_cache() if self.use_cache else None
         # compute mode coupling function
         self.compute()
         # save cache
-        self.save_cache()
+        self.save_cache() if self.use_cache else None
 
     def compute(self):
         """

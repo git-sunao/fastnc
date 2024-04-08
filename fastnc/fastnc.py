@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/26 18:02:19
+Last edit  : 2024/04/08 14:02:10
 
 Description:
 This is the module of fastnc, which calculate the
@@ -110,9 +110,9 @@ class FastNaturalComponents:
         self.Mmax = self.config_multipole['Mmax']
         self.multipole_type = self.config_multipole['multipole_type']
         if self.multipole_type == 'legendre':
-            self.GLM = MCF222LegendreFourier(self.Lmax, self.Mmax, verbose=self.verbose)
+            self.GLM = MCF222LegendreFourier(self.Lmax, self.Mmax, verbose=self.verbose, use_cache=use_cache)
         elif self.multipole_type == 'fourier':
-            self.GLM = MCF222FourierFourier(self.Lmax, self.Mmax, verbose=self.verbose)
+            self.GLM = MCF222FourierFourier(self.Lmax, self.Mmax, verbose=self.verbose, use_cache=use_cache)
         else:
             raise ValueError('Error: multipole_type={} is not expected'.format(self.multipole_type))
 
