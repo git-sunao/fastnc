@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/08 14:02:10
+Last edit  : 2024/04/08 14:06:52
 
 Description:
 This is the module of fastnc, which calculate the
@@ -51,6 +51,7 @@ class FastNaturalComponents:
         nfft (int)            : The number of ell1 (or ell2) FFT grid points per one side of triangle. 
                                 (default: 150)
         multipole_type (str)  : The type of multipole. (default: 'legendre')
+        cache (bool)          : Whether to use cache for mode coupling function. (default: True)
         verbose (bool)        : Whether to print the progress. (default: True)
 
     Usage:
@@ -70,7 +71,7 @@ class FastNaturalComponents:
     """
     # default configuration
     projection       = 'x'
-    config_multipole = {'Lmax':None, 'Mmax':None, 'multipole_type':'legendre'}
+    config_multipole = {'Lmax':None, 'Mmax':None, 'multipole_type':'legendre', 'cache':True}
     config_bin       = {'t1':None, 'phi':None, 'mu':[0,1,2,3], 'dlnt':None}
     config_fftlog    = {'nu1':1.01, 'nu2':1.01, 'N_pad':0, 'xy':1}
     config_fftgrid   = {'auto':True, 'ell1min':None, 'ell1max':None, 'nfft':150}
@@ -110,9 +111,9 @@ class FastNaturalComponents:
         self.Mmax = self.config_multipole['Mmax']
         self.multipole_type = self.config_multipole['multipole_type']
         if self.multipole_type == 'legendre':
-            self.GLM = MCF222LegendreFourier(self.Lmax, self.Mmax, verbose=self.verbose, use_cache=use_cache)
+            self.GLM = MCF222LegendreFourier(self.Lmax, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
         elif self.multipole_type == 'fourier':
-            self.GLM = MCF222FourierFourier(self.Lmax, self.Mmax, verbose=self.verbose, use_cache=use_cache)
+            self.GLM = MCF222FourierFourier(self.Lmax, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
         else:
             raise ValueError('Error: multipole_type={} is not expected'.format(self.multipole_type))
 
