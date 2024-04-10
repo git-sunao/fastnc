@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/08 18:03:56
+Last edit  : 2024/04/10 16:31:31
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -437,6 +437,22 @@ class BispectrumBase:
             return scs[0]
         else:
             return scomb
+
+    def get_los_kernel(self, scomb):
+        # special case
+        if not isinstance(scomb, tuple):
+            z = scomb
+            if np.isscalar(z):
+                z = np.array([z])
+            return z, np.ones(z.shape)
+        # general case
+        z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
+        chi = self.z2chi(z)
+        weight = 1
+        for name in scomb:
+            weight *= self.chi2g_dict[str(name)](chi)
+        weight *= 1.0/chi*(1+z)**3
+        return z, weight
         
     # Spectra methods
     # matter power spectrum (to be implemented in subclasses)
@@ -520,12 +536,7 @@ class BispectrumBase:
         ell3 = ell3.ravel()
 
         # compute lensing weight, encoding geometrical dependence.
-        z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
-        chi = self.z2chi(z)
-        weight = 1
-        for name in scomb:
-            weight *= self.chi2g_dict[str(name)](chi)
-        weight *= 1.0/chi*(1+z)**3
+        z, kernel = self.get_los_kernel(scomb)
 
         # create grids
         ELL1, Z = np.meshgrid(ell1, z, indexing='ij')
@@ -539,7 +550,7 @@ class BispectrumBase:
             bm = self.matter_bispectrum(K1, K2, K3, Z, **args)
 
         # integrand
-        i = weight * bm
+        i = kernel * bm
 
         # integrate
         bk = np.trapz(i, chi, axis=1)
