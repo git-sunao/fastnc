@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/10 17:03:55
+Last edit  : 2024/04/10 17:57:49
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -468,7 +468,7 @@ class BispectrumBase:
             for name in scomb:
                 weight *= self.chi2g_dict[str(name)](chi)
             weight *= 1.0/chi*(1+z)**3
-        return z, weight
+        return z, chi, weight
 
     # kappa bispectrum interface
     def kappa_bispectrum(self, ell1, ell2, ell3, scomb=None, \
@@ -538,7 +538,7 @@ class BispectrumBase:
         ell3 = ell3.ravel()
 
         # line-of-sight integration kernel
-        z, kernel = self.get_los_kernel(scomb)
+        z, chi, kernel = self.get_los_kernel(scomb)
         
         # create grids
         ELL1, Z = np.meshgrid(ell1, z, indexing='ij')
@@ -555,7 +555,10 @@ class BispectrumBase:
         i = kernel * bm
 
         # integrate
-        bk = np.trapz(i, chi, axis=1)
+        if i.shape[1] > 1:
+            bk = np.trapz(i, chi, axis=1)
+        else:
+            bk = i
 
         # multiply window 
         if hasattr(self, 'window_function') and window:
