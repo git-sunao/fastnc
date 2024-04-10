@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/10 16:48:17
+Last edit  : 2024/04/10 17:03:55
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -452,6 +452,24 @@ class BispectrumBase:
         """
         raise NotImplementedError
 
+    def get_los_kernel(self, scomb):
+        # special case
+        if not isinstance(scomb, tuple):
+            z = scomb
+            if np.isscalar(z):
+                z = np.array([z])
+            chi = self.z2chi(z)
+            weight = np.ones(z.size)
+        else:
+            # compute lensing weight, encoding geometrical dependence.
+            z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
+            chi = self.z2chi(z)
+            weight = 1
+            for name in scomb:
+                weight *= self.chi2g_dict[str(name)](chi)
+            weight *= 1.0/chi*(1+z)**3
+        return z, weight
+
     # kappa bispectrum interface
     def kappa_bispectrum(self, ell1, ell2, ell3, scomb=None, \
             method='direct', **args):
@@ -480,7 +498,7 @@ class BispectrumBase:
         
     # direct evaluation of kappa bispectrum from matter bispectrum
     def kappa_bispectrum_direct(self, ell1, ell2, ell3, scomb=None, \
-            window=True, bm=None, return_bm=False, z_slice=None, **args):
+            window=True, bm=None, return_bm=False, z=None, **args):
         """
         Compute kappa bispectrum by direct line-of-sight integration.
 
@@ -519,24 +537,9 @@ class BispectrumBase:
         ell2 = ell2.ravel()
         ell3 = ell3.ravel()
 
-        # special patch to get kappa bispectrum w/o line-of-sight integration
-        # This will be used to prepare training data for CNN, without los
-        # integration.
-        if z_slice is not None:
-            z = z_slice
-            if np.isscalar(z):
-                z = np.array([z])
-            chi = self.z2chi(z)
-            weight = np.ones(z.size)
-        else:
-            # compute lensing weight, encoding geometrical dependence.
-            z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
-            chi = self.z2chi(z)
-            weight = 1
-            for name in scomb:
-                weight *= self.chi2g_dict[str(name)](chi)
-            weight *= 1.0/chi*(1+z)**3
-
+        # line-of-sight integration kernel
+        z, kernel = self.get_los_kernel(scomb)
+        
         # create grids
         ELL1, Z = np.meshgrid(ell1, z, indexing='ij')
         ELL2, Z = np.meshgrid(ell2, z, indexing='ij')
