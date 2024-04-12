@@ -122,14 +122,17 @@ class ModeCouplingFunctionBase:
         # load cache if exists
         self.load_cache() if self.cache else None
         # compute mode coupling function
-        self.compute()
+        has_changed = self.compute()
         # save cache
-        self.save_cache() if self.cache else None
+        self.save_cache() if self.cache and has_changed else None
 
     def compute(self):
         """
         This will compute the mode coupling function
         which was not found in the cache.
+
+        Returns:
+            bool: Whether the data has changed.
         """
         raise NotImplementedError
 
@@ -190,6 +193,7 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
         return out
         
     def compute(self, correct_bias=True):
+        has_changed = False
         # prepare todo list
         todo = []
         for L in range(self.Lmax+1):
@@ -205,6 +209,7 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
             args = {'L':L, 'M':M, 'psi':self.psi}
             o, c = aint(self._integrand, 0, np.pi, 2, tol=self.tol, **args)
             self.data[(L, M)] = o
+            has_changed = True
         # Correction
         # G_LM(psi) is exactly zero for L<M and psi<=pi/4. 
         # However, the numerical integration may give a non-zero value.
@@ -221,6 +226,8 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
                 self.data[(L,M)] -= bias
                 if (M,L) in self.data:
                     self.data[(M,L)] -= bias
+                has_changed = True
+        return has_changed
 
     def __call__(self, L, M, psi):
         Lisscalar = np.isscalar(L)
@@ -292,6 +299,7 @@ class MCF222FourierFourier(ModeCouplingFunctionBase):
         return out
         
     def compute(self, correct_bias=True):
+        has_changed = False
         self.Kmax = self.Mmax + self.Lmax
         # compute GK
         for K in range(self.Kmax+1):
@@ -303,7 +311,9 @@ class MCF222FourierFourier(ModeCouplingFunctionBase):
             args = {'K':K, 'psi':self.psi}
             o, c = aint(self._integrand, 0, np.pi, 2, tol=self.tol, **args)
             self.data[K] = o
+            has_changed = True
         # Correction?
+        return has_changed
 
     def __call__(self, L, M, psi):
         Lisscalar = np.isscalar(L)
