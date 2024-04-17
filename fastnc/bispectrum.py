@@ -548,7 +548,7 @@ class BispectrumBase:
         K1, K2, K3 = ELL1/CHI, ELL2/CHI, ELL3/CHI
 
         # compute matter bispectrum
-        if bm is None:
+        if (bm is None) or not isinstance(scomb, tuple):
             bm = self.matter_bispectrum(K1, K2, K3, Z, **args)
 
         # integrand
