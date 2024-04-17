@@ -7,7 +7,6 @@ Description:
 utils.py contains utility functions for fastnc.
 '''
 import numpy as np
-import pickle
 
 # Binning utilities
 def loglinear(xmin, xmid, xmax, nbin1, nbin2):
@@ -47,29 +46,6 @@ def edge_correction(x, vmin, vmax, atol=1e-8, rtol=1e-5):
     out[np.logical_and(np.isclose(x, vmin, atol, rtol), x<vmin)] = vmin
     out[np.logical_and(np.isclose(x, vmax, atol, rtol), x>vmax)] = vmax
     return out
-
-# Pickle I/O utilities
-def save_pickle(filename, obj):
-    """
-    Save an object to a pickle file.
-
-    Parameters:
-        filename (str) : The filename.
-        obj            : The object to save.
-    """
-    with open(filename, 'wb') as f:
-        pickle.dump(obj, f)
-
-def load_pickle(filename):
-    """
-    Load a pickle file.
-    
-    Parameters:
-        filename (str) : The filename.
-    """
-    with open(filename, 'rb') as f:
-        obj = pickle.load(f)
-    return obj
 
 # Triangle phase factor
 def sincos2angbar(psi, delta):

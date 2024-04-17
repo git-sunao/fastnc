@@ -11,8 +11,9 @@ import numpy as np
 from scipy.special import eval_legendre
 import pandas as pd
 import os
+import json
 # fastnc modules
-from .utils import save_pickle, load_pickle, sincos2angbar
+from .utils import sincos2angbar
 from .integration import aint
 
 def get_cache_dir():
@@ -81,7 +82,7 @@ class CacheManager:
         # Generate a new filename that does not already exist in the dataframe
         i = 1
         while True:
-            new_filename = f"coupling-{i}.pkl"
+            new_filename = f"coupling-{i}.npz"
             if new_filename not in self.df['filename'].values:
                 return new_filename
             i += 1
@@ -148,7 +149,10 @@ class ModeCouplingFunctionBase:
         database.register_entry(self._get_id())
         # save the data to the cache
         filename = database.get_entry_filename(self._get_id())
-        save_pickle(filename, self.data)
+        # because the npz file only accepts string keys,
+        # we convert the keys to string using json encoding
+        cache = {json.dumps(key): value for key, value in self.data.items()}
+        np.savez(filename, **cache)
 
     def load_cache(self):
         """
@@ -160,7 +164,12 @@ class ModeCouplingFunctionBase:
             # load the data from the cache
             filename = database.get_entry_filename(self._get_id())
             print(f'Loading cache from cache at {filename}') if self.verbose else None
-            self.data = load_pickle(filename)
+            cache = dict(np.load(filename))
+            # decoding
+            # because json encodes tuple into string which looks like a list,
+            # we convert the decoded string into tuple by hand since list
+            # is not hashable: it cannot be used for the key of dict.
+            self.data = {tuple(json.loads(key)): value for key, value in cache.items()}
 
     def __call__(self, L, M, psi):
         """
