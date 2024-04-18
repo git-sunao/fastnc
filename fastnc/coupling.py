@@ -125,7 +125,14 @@ class ModeCouplingFunctionBase:
         # compute mode coupling function
         has_changed = self.compute()
         # save cache
-        self.save_cache() if self.cache and has_changed else None
+        if self.cache and has_changed and self.is_rank0():
+            self.save_cache()
+
+    def is_rank0(self):
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        return rank == 0
 
     def compute(self):
         """
