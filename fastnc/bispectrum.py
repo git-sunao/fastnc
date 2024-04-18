@@ -724,7 +724,7 @@ class BispectrumHalofit(BispectrumBase):
     def __init__(self, config=None, **kwargs):
         self.halofit = Halofit()
         super().__init__(config, **kwargs)
-        self.multiply_Rb = get_config_key(config, 'multiply_Rb', default=False, **kwargs)
+        self.set_baryon_param({'fb':1.0})
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
@@ -774,10 +774,21 @@ class BispectrumHalofit(BispectrumBase):
         self.halofit.set_lgr(z, lgr)
         self.has_changed = True
 
+    def set_baryon_param(self, params):
+        """
+        Set parameter(s) of baryon
+
+        keywords:
+            fb: suppression factor relative to TNG-300
+        """
+        self.baryon_params = params
+
     def matter_bispectrum(self, k1, k2, k3, z, all_physical=True, which=['Bh1', 'Bh3']):
         b = self.halofit.get_bihalofit(k1, k2, k3, z, all_physical=all_physical, which=which)
-        if self.multiply_Rb:
-            b *= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
+        fb = self.baryon_params['fb']
+        if fb != 0:
+            Rb= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
+            b*= 1.0 + fb * (Rb-1.0)
         return b
 
 class BispectrumNFW1Halo(BispectrumBase):
