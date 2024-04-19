@@ -436,7 +436,10 @@ class BispectrumBase:
             assert len(scs) == 1, "specify sample_combination!"
             return scs[0]
         else:
-            return tuple(scomb)
+            if np.isscalar(scomb):
+                return scomb
+            else:
+                return tuple(scomb)
         
     # Spectra methods
     # matter power spectrum (to be implemented in subclasses)
@@ -454,7 +457,7 @@ class BispectrumBase:
 
     def get_los_kernel(self, scomb):
         # special case
-        if not isinstance(scomb, tuple):
+        if np.isscalar(scomb):
             z = scomb
             if np.isscalar(z):
                 z = np.array([z])
@@ -466,7 +469,7 @@ class BispectrumBase:
             chi = self.z2chi(z)
             weight = 1
             for name in scomb:
-                weight *= self.chi2g_dict[str(name)](chi)
+                weight *= self.chi2g_dict[name](chi)
             weight *= 1.0/chi*(1+z)**3
         return z, chi, weight
 
@@ -596,6 +599,7 @@ class BispectrumBase:
         bm = None
         grid = (np.log(self.r_interp), np.log(self.u_interp), self.v_interp)
         for sc in scombs:
+            sc = self.parse_sample_combination(sc)
             bk, bm = self.kappa_bispectrum_direct(
                 self.ELL1_interp, 
                 self.ELL2_interp, 
@@ -644,6 +648,7 @@ class BispectrumBase:
             scombs = self.get_all_sample_combinations()
         # Compute multipole
         for sc in scombs:
+            sc = self.parse_sample_combination(sc)
             b = self.kappa_bispectrum(
                     self.ELL1_multipole, 
                     self.ELL2_multipole, 
