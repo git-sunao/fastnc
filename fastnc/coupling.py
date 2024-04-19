@@ -170,7 +170,7 @@ class ModeCouplingFunctionBase:
             # because json encodes tuple into string which looks like a list,
             # we convert the decoded string into tuple by hand since list
             # is not hashable: it cannot be used for the key of dict.
-            self.data = {tuple(json.loads(key)): value for key, value in cache.items()}
+            self.data = {tuple(json.loads(key)): value for key, value in dict(cache).items()}
 
     def __call__(self, L, M, psi):
         """
