@@ -13,7 +13,7 @@ import pandas as pd
 import os
 import json
 # fastnc modules
-from .utils import sincos2angbar
+from .utils import sincos2angbar, npload_lock, npsavez_lock
 from .integration import aint
 
 def get_cache_dir():
@@ -125,14 +125,8 @@ class ModeCouplingFunctionBase:
         # compute mode coupling function
         has_changed = self.compute()
         # save cache
-        if self.cache and has_changed and self.is_rank0():
+        if self.cache and has_changed:
             self.save_cache()
-
-    def is_rank0(self):
-        from mpi4py import MPI
-        comm = MPI.COMM_WORLD
-        rank = comm.Get_rank()
-        return rank == 0
 
     def compute(self):
         """
@@ -159,7 +153,7 @@ class ModeCouplingFunctionBase:
         # because the npz file only accepts string keys,
         # we convert the keys to string using json encoding
         cache = {json.dumps(key): value for key, value in self.data.items()}
-        np.savez(filename, **cache)
+        npsavez_lock(filename, data, suffix='.npz')
 
     def load_cache(self):
         """
@@ -171,7 +165,7 @@ class ModeCouplingFunctionBase:
             # load the data from the cache
             filename = database.get_entry_filename(self._get_id())
             print(f'Loading cache from cache at {filename}') if self.verbose else None
-            cache = dict(np.load(filename))
+            cache = npload_lock(filename, suffix='.npz')
             # decoding
             # because json encodes tuple into string which looks like a list,
             # we convert the decoded string into tuple by hand since list

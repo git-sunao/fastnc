@@ -7,6 +7,34 @@ Description:
 utils.py contains utility functions for fastnc.
 '''
 import numpy as np
+import fcntl
+import os
+
+# file locking
+def acquire_lock(lock_file):
+    lock_fd = open(lock_file, 'w')
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+def release_lock(lock_file):
+    lock_fd = open(lock_file, 'w')
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+def npload_lock(filename, suffix='.npz'):
+    lock_file = filename.replace(suffix, '.lock')
+    acquire_lock(lock_file)
+    try:
+        data = np.load(filename)
+    finally:
+        release_lock(lock_file)
+    return data
+
+def npsavez_lock(filename, data, suffix='.npz'):
+    lock_file = filename.replace(suffix, '.lock')
+    acquire_lock(lock_file)
+    try:
+        np.savez(filename, **data)
+    finally:
+        release_lock(lock_file)
 
 # Binning utilities
 def loglinear(xmin, xmid, xmax, nbin1, nbin2):
