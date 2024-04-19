@@ -153,7 +153,7 @@ class ModeCouplingFunctionBase:
         # because the npz file only accepts string keys,
         # we convert the keys to string using json encoding
         cache = {json.dumps(key): value for key, value in self.data.items()}
-        npsavez_lock(filename, data, suffix='.npz')
+        npsavez_lock(filename, cache, suffix='.npz')
 
     def load_cache(self):
         """
