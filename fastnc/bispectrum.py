@@ -436,7 +436,7 @@ class BispectrumBase:
             assert len(scs) == 1, "specify sample_combination!"
             return scs[0]
         else:
-            return scomb
+            return tuple(scomb)
         
     # Spectra methods
     # matter power spectrum (to be implemented in subclasses)
