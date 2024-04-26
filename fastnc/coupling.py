@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/08 14:06:25
+Last edit  : 2024/04/26 18:20:56
 
 Description:
 coupling.py contains classes for 
@@ -15,6 +15,7 @@ import json
 # fastnc modules
 from .utils import sincos2angbar, npload_lock, npsavez_lock
 from .integration import aint
+from mpi4py import MPI
 
 def get_cache_dir():
     # first we look for the environmental variable
@@ -149,11 +150,12 @@ class ModeCouplingFunctionBase:
         database = CacheManager()
         database.register_entry(self._get_id())
         # save the data to the cache
-        filename = database.get_entry_filename(self._get_id())
         # because the npz file only accepts string keys,
         # we convert the keys to string using json encoding
-        cache = {json.dumps(key): value for key, value in self.data.items()}
-        npsavez_lock(filename, cache, suffix='.npz')
+        if MPI.COMM_WORLD.Get_rank() == 0:
+            filename = database.get_entry_filename(self._get_id())
+            cache = {json.dumps(key): value for key, value in self.data.items()}
+            npsavez_lock(filename, cache, suffix='.npz')
 
     def load_cache(self):
         """
