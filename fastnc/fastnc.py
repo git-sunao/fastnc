@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/08 14:06:52
+Last edit  : 2024/04/29 12:33:34
 
 Description:
 This is the module of fastnc, which calculate the
@@ -210,7 +210,7 @@ class FastNaturalComponents:
         else:
             nfft= self.config_fftgrid['nfft']
             self.ell1_fft = np.logspace(np.log10(ell1min), np.log10(ell1max), nfft)
-            self.t1 = self.t1_fft = self.config_fftlog['xy']/self.ell1_fft
+            self.t1 = self.t1_fft = self.config_fftlog['xy']/self.ell1_fft[::-1]
             self.down_sampler = np.arange(nfft) # no downsampling
         # Allocate the same bin to second side
         self.t2 = self.t1
