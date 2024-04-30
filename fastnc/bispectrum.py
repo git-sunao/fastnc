@@ -64,7 +64,7 @@ class BispectrumBase:
     """
     # default configs
     config_scale     = dict(ell1min=None, ell1max=None, epmu=1e-7)
-    config_losint    = dict(zmin=1e-4, zmid=1e-1, nzbin_log=10, nzbin_lin=20)
+    config_losint    = dict(zmin=1e-4, zmid=1e-1, nzbin_log=15, nzbin_lin=20)
     config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True)
     config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=None, \
         multipole_type='legendre', method='gauss-legendre')
