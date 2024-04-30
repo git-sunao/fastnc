@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/10 17:57:49
+Last edit  : 2024/04/30 17:09:34
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -38,7 +38,9 @@ class BispectrumBase:
         ell1max (float)     : maximum of ell1 and ell2
         epmu (float)        : small number to avoid the squeezed limit
         zmin (float)        : minimum of redshift
-        nzbin (int)         : number of bins for redshift
+        zmid (float)        : middle of redshift to switch from log to linear binning
+        nzbin_log (int)     : number of bins for redshift in log scale
+        nzbin_lin (int)     : number of bins for redshift in linear scale
         nrbin (int)         : number of bins for r
         nubin (int)         : number of bins for u
         nvbin (int)         : number of bins for v
@@ -62,7 +64,7 @@ class BispectrumBase:
     """
     # default configs
     config_scale     = dict(ell1min=None, ell1max=None, epmu=1e-7)
-    config_losint    = dict(zmin=1e-4, nzbin=30)
+    config_losint    = dict(zmin=1e-4, zmid=1e-1, nzbin_log=10, nzbin_lin=20)
     config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True)
     config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=None, \
         multipole_type='legendre', method='gauss-legendre')
@@ -98,7 +100,9 @@ class BispectrumBase:
         update_config(self.config_losint, config, **kwargs)
         # source to class attributes
         self.zmin_losint  = self.config_losint['zmin']
-        self.nzbin_losint = self.config_losint['nzbin']
+        self.zmid_losint  = self.config_losint['zmid']
+        self.nzbin_log_losint = self.config_losint['nzbin_log']
+        self.nzbin_lin_losint = self.config_losint['nzbin_lin']
 
     def set_scale_range(self, config=None, **kwargs):
         """
@@ -465,7 +469,8 @@ class BispectrumBase:
             weight = np.ones(z.size)
         else:
             # compute lensing weight, encoding geometrical dependence.
-            z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
+            z = loglinear(self.zmin_losint, self.zmid_losint, self.zmax_losint, \
+                self.nzbin_log_losint, self.nzbin_lin_losint)
             chi = self.z2chi(z)
             weight = 1
             for name in scomb:
