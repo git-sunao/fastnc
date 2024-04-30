@@ -462,7 +462,10 @@ class BispectrumBase:
             weight = np.ones(z.size)
         else:
             # compute lensing weight, encoding geometrical dependence.
-            z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
+            z_a = np.logspace(np.log10(self.zmin_losint), -1, 20)
+            z_b = np.linspace(0.15,self.zmax_losint,num=30)
+            #z = np.logspace(np.log10(self.zmin_losint), np.log10(self.zmax_losint), self.nzbin_losint)
+            z = np.concatenate((z_a,z_b))
             chi = self.z2chi(z)
             weight = 1
             for name in scomb:
