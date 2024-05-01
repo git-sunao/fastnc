@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/30 17:09:34
+Last edit  : 2024/05/01 18:42:33
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -471,6 +471,7 @@ class BispectrumBase:
             # compute lensing weight, encoding geometrical dependence.
             z = loglinear(self.zmin_losint, self.zmid_losint, self.zmax_losint, \
                 self.nzbin_log_losint, self.nzbin_lin_losint)
+            print(z)
             chi = self.z2chi(z)
             weight = 1
             for name in scomb:

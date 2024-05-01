@@ -1,5 +1,5 @@
 __author__ = 'Sunao Sugiyama, Rafael Heringer Gomes'
-__version__ = '1.1.9'
+__version__ = '1.1.10'
 __url__ = 'https://github.com/git-sunao/fastnc'
 # core modules:
 from . import fastnc

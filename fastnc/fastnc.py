@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/29 12:33:34
+Last edit  : 2024/04/30 20:05:49
 
 Description:
 This is the module of fastnc, which calculate the
@@ -221,7 +221,7 @@ class FastNaturalComponents:
         self.ELL_FFT  = np.sqrt(self.ELL1_FFT**2 + self.ELL2_FFT**2)
         self.PSI_FFT = np.arctan2(self.ELL2_FFT, self.ELL1_FFT)
     
-    def HM(self, M, bL=None, **args):
+    def HM(self, M, bL=None, L=None, **args):
         """
         Compute H_M(l1, l2 = \\sum_L (-1)^L * G_LM * b_L(l1, l2) on FFT grid.
 
@@ -232,7 +232,8 @@ class FastNaturalComponents:
                         By supplying bL, you can avoid recomputation of bL.
         """
         # Get bispectrum multipole indices, L array
-        L = np.arange(self.Lmax+1)
+        if L is None:
+            L = np.arange(self.Lmax+1)
         # Get bispectrum multipole
         if bL is None:
             bL = self.bispectrum.kappa_bispectrum_multipole(
