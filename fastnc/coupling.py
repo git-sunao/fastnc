@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/26 18:20:56
+Last edit  : 2024/05/02 13:24:49
 
 Description:
 coupling.py contains classes for 
@@ -128,6 +128,8 @@ class ModeCouplingFunctionBase:
         # save cache
         if self.cache and has_changed:
             self.save_cache()
+        # correction for numerical bias
+        self.correct()
 
     def compute(self):
         """
@@ -136,6 +138,12 @@ class ModeCouplingFunctionBase:
 
         Returns:
             bool: Whether the data has changed.
+        """
+        raise NotImplementedError
+
+    def correct(self):
+        """
+        Correct the mode coupling function for numerical bias.
         """
         raise NotImplementedError
 
@@ -204,7 +212,7 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
         out = 4*np.pi*eval_legendre(L, np.cos(x)) * (cos2bb*np.cos(M*x) - sin2bb*np.sin(M*x))
         return out
         
-    def compute(self, correct_bias=True):
+    def compute(self):
         has_changed = False
         # prepare todo list
         todo = []
@@ -222,24 +230,27 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
             o, c = aint(self._integrand, 0, np.pi, 2, tol=self.tol, **args)
             self.data[(L, M)] = o
             has_changed = True
-        # Correction
-        # G_LM(psi) is exactly zero for L<M and psi<=pi/4. 
-        # However, the numerical integration may give a non-zero value.
-        # From my experience, the same amount of error is also present in
-        # G_ML if G_LM is biased. Hence we subtract the error in G_LM(psi<=pi/4)
-        # from G_LM(psi) and G_ML(psi).
-        if correct_bias:
-            for (L,M), data in self.data.items():
-                if L>=M:
-                    continue
-                # estimate the bias in G_LM(psi<=np.pi/4)
-                bias = np.mean(data[self.psi<=np.pi/4])
-                # subtract the bias
-                self.data[(L,M)] -= bias
-                if (M,L) in self.data:
-                    self.data[(M,L)] -= bias
-                has_changed = True
         return has_changed
+
+    def correct(self):
+        """
+        Correct the mode coupling function for numerical bias.
+        
+        G_LM(psi) is exactly zero for L<M and psi<=pi/4. 
+        However, the numerical integration may give a non-zero value.
+        From my experience, the same amount of error is also present in
+        G_ML if G_LM is biased. Hence we subtract the error in G_LM(psi<=pi/4)
+        from G_LM(psi) and G_ML(psi).
+        """
+        for (L,M), data in self.data.items():
+            if L>=M:
+                continue
+            # estimate the bias in G_LM(psi<=np.pi/4)
+            bias = np.mean(data[self.psi<=np.pi/4])
+            # subtract the bias
+            self.data[(L,M)] -= bias
+            if (M,L) in self.data:
+                self.data[(M,L)] -= bias
 
     def __call__(self, L, M, psi):
         Lisscalar = np.isscalar(L)
