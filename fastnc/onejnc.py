@@ -34,12 +34,12 @@ class OneJNaturalConponent:
         out = cos2b/norm + 1j*sin2b/norm
         return out
     
-    def expi6alpha(self, psi, dbeta, tau, phi):
+    def expiNalpha(self, psi, dbeta, tau, phi, N=6):
         cosa = np.cos(tau-psi) * np.cos((dbeta+phi)/2)
         sina = np.cos(tau+psi) * np.sin((dbeta+phi)/2)
         norm = np.sqrt(cosa**2 + sina**2)
         eia = cosa/norm - 1j*sina/norm
-        out = eia**6
+        out = eia**N
         return out
 
     def r(self, psi, dbeta, tau, phi):
@@ -47,7 +47,7 @@ class OneJNaturalConponent:
         out = np.sqrt(out)
         return out
 
-    def get_f_of_logA(self, psi, dbeta, extrap=False):
+    def get_f_of_logA(self, psi, dbeta, order=6, extrap=False):
         ell = np.logspace(np.log10(self.ellmin), np.log10(self.ellmax), 1024)
         ell1, ell2, ell3 = trigutils.xpsimu_to_x1x2x3(ell, psi, -np.cos(dbeta))
         bs = self.bispectrum.kappa_bispectrum(ell1, ell2, ell3, method=self.method_bispec)
@@ -55,25 +55,67 @@ class OneJNaturalConponent:
         N_extrap_high = int(0.1*ell.size) if bs[-1] != 0 and extrap else 0
         N_extrap_low  = int(0.1*ell.size) if bs[0] != 0 and extrap else 0
         hankel = fftlog.hankel(ell, ell**4*bs, N_extrap_low=N_extrap_low, N_extrap_high=N_extrap_high, N_pad=400)
-        A, f = hankel.hankel(6)
+        A, f = hankel.hankel(order)
         f_of_logA = ius(np.log(A), A*f, ext=1)
         return f_of_logA
 
     def integrand0(self, t, tau, phi, psi, dbeta):
-        f_of_logA = self.get_f_of_logA(psi, dbeta)
+        f_of_logA = self.get_f_of_logA(psi, dbeta, order=6)
 
         out = 0
         for _psi in [psi, np.pi/2-psi]:
             for _dbeta in [dbeta, -dbeta]:
                 r = self.r(_psi, _dbeta, tau, phi)
-                p = self.expi6alpha(_psi, _dbeta, tau, phi)
+                p = self.expiNalpha(_psi, _dbeta, tau, phi, N=6)
                 p2= np.sin(2*_psi)*self.exp2ibarbeta(_psi, _dbeta)
                 A = t*r
                 out+= f_of_logA(np.log(A))*p*p2/A
 
         return out
+    
+    def integrand1(self, t, tau, phi, psi, dbeta):
+        f_of_logA = self.get_f_of_logA(psi, dbeta, order=2)
 
-    def Gamma0(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=100):
+        out = 0
+        for _psi in [psi, np.pi/2-psi]:
+            for _dbeta in [dbeta, -dbeta]:
+                r = self.r(_psi, _dbeta, tau, phi)
+                p = self.expiNalpha(_psi, _dbeta, tau, phi, N=2)
+                p2= np.sin(2*_psi)*self.exp2ibarbeta(_psi, _dbeta) * np.exp(-2j*dbeta)
+                A = t*r
+                out+= f_of_logA(np.log(A))*p*p2/A
+
+        return out
+    
+    def integrand2(self, t, tau, phi, psi, dbeta):
+        f_of_logA = self.get_f_of_logA(psi, dbeta, order=2)
+
+        out = 0
+        for _psi in [psi, np.pi/2-psi]:
+            for _dbeta in [dbeta, -dbeta]:
+                r = self.r(_psi, _dbeta, tau, phi)
+                p = self.expiNalpha(_psi, _dbeta, tau, phi, N=2)
+                p2= np.sin(2*_psi)*self.exp2ibarbeta(_psi, _dbeta) * np.exp(+2j*dbeta) * np.exp(2j*phi)
+                A = t*r
+                out+= f_of_logA(np.log(A))*p*p2/A
+
+        return out
+
+    def integrand3(self, t, tau, phi, psi, dbeta):
+        f_of_logA = self.get_f_of_logA(psi, dbeta, order=2)
+
+        out = 0
+        for _psi in [psi, np.pi/2-psi]:
+            for _dbeta in [dbeta, -dbeta]:
+                r = self.r(_psi, _dbeta, tau, phi)
+                p = self.expiNalpha(_psi, _dbeta, tau, phi, N=2)
+                p2= np.sin(2*_psi)*np.conj(self.exp2ibarbeta(_psi, _dbeta)) * np.exp(-2j*phi)
+                A = t*r
+                out+= f_of_logA(np.log(A))*p*p2/A
+
+        return out
+
+    def GammaN(self, t, tau, phi, N, projection='x', nbin_psi=100, nbin_dbeta=100):
         """
         t (array)
         tau (float)
@@ -88,9 +130,28 @@ class OneJNaturalConponent:
         for _psi in psi:
             _ = []
             for _dbeta in dbeta:
-                v = self.integrand0(t, tau, phi, _psi, _dbeta)
+                if N == 0:
+                    v = self.integrand0(t, tau, phi, _psi, _dbeta)
+                elif N == 1:
+                    v = self.integrand1(t, tau, phi, _psi, _dbeta)
+                elif N == 2:
+                    v = self.integrand2(t, tau, phi, _psi, _dbeta)
+                elif N == 3:
+                    v = self.integrand3(t, tau, phi, _psi, _dbeta)
                 _.append(v)
             out.append(np.trapz(_, dbeta, axis=0))
         out = -1/(2*np.pi)**3/2 * np.trapz(out, psi, axis=0)
 
         return out
+
+    def Gamma0(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=100):
+        return self.GammaN(t, tau, phi, 0, projection=projection, nbin_psi=nbin_psi, nbin_dbeta=nbin_dbeta)
+    
+    def Gamma1(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=100):
+        return self.GammaN(t, tau, phi, 1, projection=projection, nbin_psi=nbin_psi, nbin_dbeta=nbin_dbeta)
+    
+    def Gamma2(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=100):
+        return self.GammaN(t, tau, phi, 2, projection=projection, nbin_psi=nbin_psi, nbin_dbeta=nbin_dbeta)
+
+    def Gamma3(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=100):
+        return self.GammaN(t, tau, phi, 3, projection=projection, nbin_psi=nbin_psi, nbin_dbeta=nbin_dbeta)
