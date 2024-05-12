@@ -81,7 +81,7 @@ class OneJNaturalConponent:
             for _dbeta in [dbeta, -dbeta]:
                 r = self.r(_psi, _dbeta, tau, phi)
                 p = self.expiNalpha(_psi, _dbeta, tau, phi, N=2)
-                p2= np.sin(2*_psi)*self.exp2ibarbeta(_psi, _dbeta) * np.exp(-2j*dbeta)
+                p2= np.sin(2*_psi)*self.exp2ibarbeta(_psi, _dbeta) * np.exp(-2j*_dbeta)
                 A = t*r
                 out+= f_of_logA(np.log(A))*p*p2/A
 
@@ -95,7 +95,7 @@ class OneJNaturalConponent:
             for _dbeta in [dbeta, -dbeta]:
                 r = self.r(_psi, _dbeta, tau, phi)
                 p = self.expiNalpha(_psi, _dbeta, tau, phi, N=2)
-                p2= np.sin(2*_psi)*self.exp2ibarbeta(_psi, _dbeta) * np.exp(+2j*dbeta) * np.exp(2j*phi)
+                p2= np.sin(2*_psi)*self.exp2ibarbeta(_psi, _dbeta) * np.exp(+2j*_dbeta) * np.exp(2j*phi)
                 A = t*r
                 out+= f_of_logA(np.log(A))*p*p2/A
 
