@@ -86,11 +86,13 @@ class OneJNaturalConponent:
 
         return o0, o1, o2, o3
 
-    def compute(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=101):
+    def compute_for_scalar(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=101):
         """
         t (array)
         tau (float)
         phi (float)
+
+        This takes 90sec for 100x100 grid.
         """
         # psi = loglinear(self.psimin, 1e-3, self.psimax, 60, 60)
         psi = np.linspace(self.psimin, self.psimax, nbin_psi)
@@ -127,7 +129,56 @@ class OneJNaturalConponent:
         gam2 = np.trapz(gam2, dbeta, axis=0)/2/(2*np.pi)**3
         gam3 = np.trapz(gam3, dbeta, axis=0)/2/(2*np.pi)**3
 
-        self.gam0 = gam0
-        self.gam1 = gam1
-        self.gam2 = gam2
-        self.gam3 = gam3
+        return gam0, gam1, gam2, gam3
+
+    def compute(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=101):
+        """
+        Note:
+            running this method can take really a long time.
+        """
+        shape = t.shape
+        t, tau, phi = t.ravel(), tau.ravel(), phi.ravel()
+
+        Gamma0 = np.zeros(t.size, dtype=complex)
+        Gamma1 = np.zeros(t.size, dtype=complex)
+        Gamma2 = np.zeros(t.size, dtype=complex)
+        Gamma3 = np.zeros(t.size, dtype=complex)
+
+        try:
+            from mpi4py import MPI
+            comm = MPI.COMM_WORLD
+            rank = comm.Get_rank()
+            size = comm.Get_size()
+        except:
+            comm = None
+            rank = 0
+            size = 1
+
+        _, idx = np.unique([tau, phi], axis=1, return_index=True)
+
+        for i in idx[rank::size]:
+            w = (tau==tau[i]) & (phi == phi[i])
+            g0, g1, g2, g3 = self.compute_for_scalar(t[w], tau[i], phi[i], nbin_psi=nbin_psi, nbin_dbeta=nbin_dbeta)
+            Gamma0[w] = g0
+            Gamma1[w] = g1
+            Gamma2[w] = g2
+            Gamma3[w] = g3
+
+        if (comm is not None) and rank==0:
+            recvbuf0 = np.empty([size, t.size], dtype=complex)
+            recvbuf1 = np.empty([size, t.size], dtype=complex)
+            recvbuf2 = np.empty([size, t.size], dtype=complex)
+            recvbuf3 = np.empty([size, t.size], dtype=complex)
+            comm.Gather(Gamma0, recvbuf0, root=0)
+            comm.Gather(Gamma1, recvbuf1, root=0)
+            comm.Gather(Gamma2, recvbuf2, root=0)
+            comm.Gather(Gamma3, recvbuf3, root=0)
+            Gamma0 = np.sum(recvbuf0, axis=0)
+            Gamma1 = np.sum(recvbuf1, axis=0)
+            Gamma2 = np.sum(recvbuf2, axis=0)
+            Gamma3 = np.sum(recvbuf3, axis=0)
+
+        self.Gamma0 = Gamma0.reshape(shape)
+        self.Gamma1 = Gamma1.reshape(shape)
+        self.Gamma2 = Gamma2.reshape(shape)
+        self.Gamma3 = Gamma3.reshape(shape)
