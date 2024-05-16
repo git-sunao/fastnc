@@ -134,7 +134,7 @@ class OneJNaturalConponent:
     def compute(self, t, tau, phi, projection='x', nbin_psi=100, nbin_dbeta=101):
         """
         Note:
-            running this method can take really a long time.
+            running this method can take a really long time.
         """
         shape = t.shape
         t, tau, phi = t.ravel(), tau.ravel(), phi.ravel()

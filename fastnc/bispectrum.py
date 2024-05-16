@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/05/01 18:42:33
+Last edit  : 2024/05/15 15:31:52
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -471,7 +471,6 @@ class BispectrumBase:
             # compute lensing weight, encoding geometrical dependence.
             z = loglinear(self.zmin_losint, self.zmid_losint, self.zmax_losint, \
                 self.nzbin_log_losint, self.nzbin_lin_losint)
-            print(z)
             chi = self.z2chi(z)
             weight = 1
             for name in scomb:
@@ -507,7 +506,7 @@ class BispectrumBase:
         
     # direct evaluation of kappa bispectrum from matter bispectrum
     def kappa_bispectrum_direct(self, ell1, ell2, ell3, scomb=None, \
-            window=True, bm=None, return_bm=False, z=None, **args):
+            window=True, bm=None, return_bm=False, z=None, l_shift=0.0, **args):
         """
         Compute kappa bispectrum by direct line-of-sight integration.
 
@@ -554,7 +553,8 @@ class BispectrumBase:
         ELL2, Z = np.meshgrid(ell2, z, indexing='ij')
         ELL3, Z = np.meshgrid(ell3, z, indexing='ij')
         CHI = self.z2chi(Z)
-        K1, K2, K3 = ELL1/CHI, ELL2/CHI, ELL3/CHI
+        # K1, K2, K3 = ELL1/CHI, ELL2/CHI, ELL3/CHI
+        K1, K2, K3 = (ELL1+l_shift)/CHI, (ELL2+l_shift)/CHI, (ELL3+l_shift)/CHI
 
         # compute matter bispectrum
         if (bm is None) or not isinstance(scomb, tuple):
@@ -801,6 +801,171 @@ class BispectrumHalofit(BispectrumBase):
             Rb= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
             b*= 1.0 + fb * (Rb-1.0)
         return b
+
+class BispectrumGilMarin(BispectrumBase):
+    """
+    Bispectrum computed from Gil-Marin.
+
+    reference: https://arxiv.org/pdf/1111.4477
+    """
+    __doc__ += BispectrumBase.__doc__
+    # default configs
+    config_scale     = dict(ell1min=1e-1, ell1max=1e5, epmu=1e-7)
+    
+    def __init__(self, config=None, **kwargs):
+        self.halofit = Halofit()
+        super().__init__(config, **kwargs)
+
+        # gil marin's parameters
+        self.a1 = 0.484
+        self.a2 = 3.740
+        self.a3 = -0.849
+        self.a4 = 0.392
+        self.a5 = 1.013
+        self.a6 = -0.575
+        self.a7 = 0.128
+        self.a8 = -0.722
+        self.a9 = -0.926
+
+    def set_cosmology(self, cosmo, ns=None, sigma8=None):
+        """
+        Sets cosmology. 
+
+        Parameters:
+            cosmo (astropy.cosmology): cosmology
+            ns (float)               : spectral index of linear power spectrum
+            sigma8 (float)           : sigma8 of linear power spectrum (at z=0.0)
+
+        Note:
+            Note that the values of ns and sigma8 are set by two ways:
+            1. Assigning ns and sigma8 as arguments of this method.
+            2. Assigning ns and sigma8 to cosmo.meta.
+        """
+        super().set_cosmology(cosmo)
+        # parameters for halofit
+        dcosmo={'Om0': cosmo.Om0, 
+                'Ode0': cosmo.Ode0,
+                'ns': ns or cosmo.meta.get('n'),
+                'sigma8': sigma8 or cosmo.meta.get('sigma8'), 
+                'w0': cosmo.w0, 
+                'wa': 0.0,
+                'fnu0': 0.0} 
+        self.halofit.set_cosmology(dcosmo)
+
+    def set_pklin(self, k, pklin):
+        """
+        Set linear power spectrum.
+
+        Parameters:
+            k (array)    : wavenumber array
+            pklin (array): linear power spectrum
+        """
+        self.halofit.set_pklin(k, pklin)
+        self.has_changed = True
+
+    def set_lgr(self, z, lgr):
+        """
+        Set linear growth rate.
+
+        Parameters:
+            z (float)  : redshift
+            lgr (float): linear growth rate
+        """
+        self.z2lgr = ius(z, lgr, ext=1)
+        self.halofit.set_lgr(z, lgr)
+        self.has_changed = True
+
+    def set_interp(self):
+        if self.has_changed:
+            self.set_k2n_gilmarin()
+            self.set_z2knl_gilmarin()
+            self.set_z2sigma8()
+            self.has_changed = False
+
+    def set_k2n_gilmarin(self):
+        """
+        Get effective spectral index from Gil-Marin.
+        """
+        k = self.halofit.k
+        pklin = self.halofit.pklin
+        neff = np.diff(np.log(pklin))/np.diff(np.log(k))
+        self.k2n = ius((k[1:]*k[:-1])**0.5, neff, ext=0)
+
+    def set_z2knl_gilmarin(self):
+        """
+        Get non-linear scale from Gil-Marin.
+        """
+        # Delta without linear growht factor
+        k = self.halofit.k
+        pklin = self.halofit.pklin
+        Delta = k**3*pklin/(2*np.pi**2)
+        # growth
+        z = np.linspace(0, self.halofit.z.max(), 100)
+        lgr = self.z2lgr(z)
+        knl = np.full_like(z, k.max())
+        for i in range(z.size):
+            _ = k[Delta*lgr[i]**2 < 1.0]
+            if _.size > 0:
+                knl[i] = _.max()
+        self.z2knl = ius(z, knl, ext=0)
+
+    def set_z2sigma8(self):
+        z = np.linspace(0, self.halofit.z.max(), 100)
+        s8= np.array([self.halofit.get_sigma8z(_z) for _z in z])
+        self.z2sigma8 = ius(z, s8, ext=0)
+
+    def Q3(self, n):
+        return (4 - 2 ** n) / (1 + 2 ** (n + 1))
+
+    def agm(self, k, z, knl):
+        n = self.k2n(k)
+        q = k / knl
+        factor = (q * self.a1) ** (n + self.a2)
+        sigma8 = self.z2sigma8(z)
+        return (1 + sigma8**self.a6 * (0.7 * self.Q3(n) ** (1 / 2)) * factor) / (1 + factor)
+
+    def bgm(self, k, knl):
+        q = k / knl
+        n = self.k2n(k)
+        return (1 + 0.2 * self.a3 * (n + 3) * (q * self.a7) ** (n + 3 + self.a8)) / (1 + (q * self.a7) ** (n + 3.5 + self.a8))
+
+    def cgm(self, k, knl):
+        q = k / knl
+        n = self.k2n(k)
+        return (1 + 4.5 * self.a4 / (1.5 + (n + 3) ** 4) * (q * self.a5) ** (n + 3 + self.a9)) / (1 + (q * self.a5) ** (n + 3.5 + self.a9))
+
+    def F2_eff(self, z, k1, k2, k3, knl):
+        dot = (-k3 ** 2 + k1 ** 2 + k2 ** 2) / 2
+        # f2 = 5 / 7 * self.agm(k1, z, knl) * self.agm(k2, z, knl) + 2 * dot ** 2 / (7 * k1 ** 2 * k2 ** 2) * self.bgm(k1, knl) * self.bgm(k2, knl) - dot * (
+        #             1 / k1 ** 2 + 1 / k2 ** 2) / 2 * self.cgm(k1, knl) * self.cgm(k2, knl)
+        f2 = 5 / 7 + 2 * dot ** 2 / (7 * k1 ** 2 * k2 ** 2) - dot * (1 / k1 ** 2 + 1 / k2 ** 2) / 2
+        return f2
+
+    def matter_bispectrum(self, k1, k2, k3, z, **kwargs):
+        print("Note: Gilmarin ignores kwargs.")
+
+        PNL1 = self.halofit.get_pkhalofit(k1[:,0], z[0,:]).T
+        PNL2 = self.halofit.get_pkhalofit(k2[:,0], z[0,:]).T
+        PNL3 = self.halofit.get_pkhalofit(k3[:,0], z[0,:]).T
+
+        # reshape
+        shape = k1.shape
+        k1 = k1.ravel()
+        k2 = k2.ravel()
+        k3 = k3.ravel()
+        z = z.ravel()
+        PNL1 = PNL1.ravel()
+        PNL2 = PNL2.ravel()
+        PNL3 = PNL3.ravel()
+
+        self.set_interp()
+        knl = self.z2knl(z)
+
+        bk  =  2 * (self.F2_eff(z, k1, k2, k3, knl) * PNL1 * PNL2 + \
+                    self.F2_eff(z, k2, k3, k1, knl) * PNL2 * PNL3 + \
+                    self.F2_eff(z, k3, k1, k2, knl) * PNL3 * PNL1)
+        bk  = bk.reshape(shape)
+        return bk
 
 class BispectrumNFW1Halo(BispectrumBase):
     """
