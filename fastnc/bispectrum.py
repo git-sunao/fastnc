@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/05/15 15:31:52
+Last edit  : 2024/06/08 00:21:40
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -50,6 +50,7 @@ class BispectrumBase:
         npsibin (int)       : number of bins for psi
         nmubin (int)        : number of bins for mu
         Lmax (int)          : maximum multipole (default: None)
+        Lmax_diag (nint)    : maximum multipole for diagonal elements (default: None)
         multipole_type (str): type of multipole decomposition
         method (str)        : method for multipole evaluation
     
@@ -66,7 +67,7 @@ class BispectrumBase:
     config_scale     = dict(ell1min=None, ell1max=None, epmu=1e-7)
     config_losint    = dict(zmin=1e-4, zmid=1e-1, nzbin_log=15, nzbin_lin=40)
     config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True)
-    config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, Lmax=None, \
+    config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, nmubin_log=30, Lmax=None, Lmax_diag=None, \
         multipole_type='legendre', method='gauss-legendre')
     config_IA        = dict(NLA=False)
 
@@ -226,14 +227,15 @@ class BispectrumBase:
         psi = loglinear(self.psimin, 1e-3, self.psimax, 50, \
             self.config_multipole['npsibin'])
         # capture the squeezed limit
-        mu = 1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, 30, \
+        mu = 1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, \
+            self.config_multipole['nmubin_log'], \
             self.config_multipole['nmubin'])[::-1]
         # create meshgrid
-        ELL, SPI, MU = np.meshgrid(ell, psi, mu, indexing='ij')
-        ELL1, ELL2, ELL3 = trigutils.xpsimu_to_x1x2x3(ELL, SPI, MU)
+        ELL, PSI, MU = np.meshgrid(ell, psi, mu, indexing='ij')
+        ELL1, ELL2, ELL3 = trigutils.xpsimu_to_x1x2x3(ELL, PSI, MU)
         # save grid
         self.ell_multipole = ell
-        self.pzs_multipole = psi
+        self.psi_multipole = psi
         self.ELL1_multipole = ELL1
         self.ELL2_multipole = ELL2
         self.ELL3_multipole = ELL3
@@ -242,22 +244,31 @@ class BispectrumBase:
         # maximum multipole
         self.Lmax_multipole = self.config_multipole['Lmax']
         self.multipole_type = self.config_multipole['multipole_type']
+        # For additional multipole decomposition at diagonal
+        self.Lmax_multipole_diag = self.config_multipole['Lmax_diag']
+        if self.Lmax_multipole_diag is None:
+            self.Lmax_multipole_diag = self.Lmax_multipole
+        ELL, MU = np.meshgrid(ell, mu, indexing='ij')
+        self.ELL1_multipole_diag = ELL/2**0.5
+        self.ELL2_multipole_diag = ELL/2**0.5
+        self.ELL3_multipole_diag = ELL*(1-MU)**0.5
+        self.bL_multipole_diag = dict()
         # Multipole calculator
         if self.multipole_type == 'legendre':
             self.multipole_decomposer = MultipoleLegendre(mu, \
-                self.Lmax_multipole, \
+                self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'fourier':
             self.multipole_decomposer = MultipoleFourier(mu, \
-                self.Lmax_multipole, \
+                self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'cosine':
             self.multipole_decomposer = MultipoleCosine(mu, \
-                self.Lmax_multipole, \
+                self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'sine':
             self.multipole_decomposer = MultipoleSine(mu, \
-                self.Lmax_multipole, \
+                self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         else:
             raise ValueError(f"multipole_type {multipole_type} is not supported" \
@@ -667,6 +678,27 @@ class BispectrumBase:
             bL = self.multipole_decomposer.decompose(b, L, axis=2)
             self.bL_multipole[sc] = bL
 
+        # You may want to calculate higher multipole especially for 
+        # diagonal elements, where ell1= ell2, corresponds to the 
+        # squeezed limit bispectrum.
+        if self.Lmax_multipole_diag <= self.Lmax_multipole:
+            return 0
+        print('Decomposing for diag.')
+        for sc in scombs:
+            sc = self.parse_sample_combination(sc)
+            b = self.kappa_bispectrum(
+                    self.ELL1_multipole_diag, 
+                    self.ELL1_multipole_diag, 
+                    self.ELL1_multipole_diag, 
+                    sc, 
+                    method=method_bispec, 
+                    **args)
+            # Compute multipoles
+            L = np.arange(self.Lmax_multipole, self.Lmax_multipole_diag+1)
+            bL = self.multipole_decomposer.decompose(b, L, axis=1)
+            self.bL_multipole_diag[sc] = bL
+
+
     def kappa_bispectrum_multipole(self, L, ell, psi, scomb=None):
         """
         Compute multipole of kappa bispectrum.
@@ -686,7 +718,7 @@ class BispectrumBase:
 
         # compute multipole
         out = np.zeros((L.size,) + ell.shape)
-        grid = (np.log(self.ell_multipole), np.log(self.pzs_multipole))
+        grid = (np.log(self.ell_multipole), np.log(self.psi_multipole))
         for i, _L in enumerate(L):
             # interpolate
             z = self.bL_multipole[scomb][_L, :, :]
@@ -705,7 +737,36 @@ class BispectrumBase:
             
         return out
 
-    def kappa_bispectrum_resum(self, ell1, ell2, ell3, scomb=None):
+    def kappa_bispectrum_multipole_diag(self, L, ell1, scomb=None):
+        """
+        Compute multipole of kappa bispectrum.
+
+        Parameters:
+            L (array)     : multipole
+            ell1 (array)   : ell1 array
+            scomb (tuple) : sample combination
+        """
+        # parse sample_combination
+        scomb = self.parse_sample_combination(scomb)
+        # cast to array
+        isscalar = np.isscalar(L)
+        if isscalar:
+            L = np.array([L])
+
+        # compute multipole
+        out = np.zeros((L.size,) + ell1.shape)
+        for i, _L in enumerate(L):
+            # interpolate
+            z = self.bL_multipole_diag[scomb][_L-self.Lmax_multipole, :]
+            ip= ius(np.log(self.ell_multipole/2**0.5), z)
+            out[i] = ip(np.log(ell1))
+
+        if isscalar:
+            out = out[0]
+            
+        return out
+
+    def kappa_bispectrum_resum(self, ell1, ell2, ell3, scomb=None, Lmax=None):
         """
         Compute kappa bispectrum by resummation of multipoles.
 
@@ -717,9 +778,11 @@ class BispectrumBase:
         """
         scomb = self.parse_sample_combination(scomb)
         ell, psi, mu = trigutils.x1x2x3_to_xpsimu(ell1, ell2, ell3)
-        L = np.arange(self.Lmax_multipole)
+        L = np.arange(Lmax or self.Lmax_multipole)
         bL = self.kappa_bispectrum_multipole(L, ell, psi, scomb=scomb)
-        pL = np.array([eval_legendre(_L, mu) for _L in L])
+        # pL = np.array([eval_legendre(_L, mu) for _L in L])
+        _ = np.linspace(-1, 1, 100)
+        pL = np.array([ius(_, eval_legendre(_L, _))(mu) for _L in L])
         out = np.sum(bL*pL, axis=0)
         return out
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/05/02 13:24:49
+Last edit  : 2024/06/07 13:16:55
 
 Description:
 coupling.py contains classes for 
@@ -268,21 +268,26 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
             raise ValueError('M={} is larger than Mmax={}'.format(M, self.Mmax))
         if np.any(M<-self.Mmax):
             raise ValueError('M={} is smaller than -Mmax={}'.format(M, self.Mmax))
-        
+
         # collect todo
         todo = []
         for _L in L:
             for _M in M:
                 todo.append([_L, _M])
 
+        # Avoid the same computation
+        shape = psi.shape
+        psi_unique, inv = np.unique(psi.ravel(), return_inverse=True)
+
         out = []
         for _L, _M in todo:
             # Use the symmetry for M<0
             # G_{LM}(psi) = G_{L(-M)}(np.pi/2-psi)
             if _M>0:
-                o = np.interp(psi, self.psi, self.data[(_L, _M)])
+                o = np.interp(psi_unique, self.psi, self.data[(_L, _M)])
             else:
-                o = np.interp(np.pi/2-psi, self.psi, self.data[(_L, -_M)])
+                o = np.interp(np.pi/2-psi_unique, self.psi, self.data[(_L, -_M)])
+            o = o[inv].reshape(shape)
             out.append(o)
         out = np.array(out).reshape(L.shape+M.shape+psi.shape)
 
@@ -331,7 +336,7 @@ class MCF222FourierFourier(ModeCouplingFunctionBase):
             # in the cache
             if K in self.data:
                 continue
-            args = {'K':K, 'psi':self.psi}
+            args = {'K':(K), 'psi':self.psi}
             o, c = aint(self._integrand, 0, np.pi, 2, tol=self.tol, **args)
             self.data[K] = o
             has_changed = True
@@ -381,3 +386,6 @@ class MCF222FourierFourier(ModeCouplingFunctionBase):
             out = out[:,0]
 
         return out
+
+    def correct(self):
+        pass

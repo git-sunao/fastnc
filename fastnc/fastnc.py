@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/30 20:05:49
+Last edit  : 2024/06/07 23:36:23
 
 Description:
 This is the module of fastnc, which calculate the
@@ -71,7 +71,7 @@ class FastNaturalComponents:
     """
     # default configuration
     projection       = 'x'
-    config_multipole = {'Lmax':None, 'Mmax':None, 'multipole_type':'legendre', 'cache':True}
+    config_multipole = {'Lmax':None, 'Mmax':None, 'Lmax_diag':None, 'multipole_type':'legendre', 'cache':True}
     config_bin       = {'t1':None, 'phi':None, 'mu':[0,1,2,3], 'dlnt':None}
     config_fftlog    = {'nu1':1.01, 'nu2':1.01, 'N_pad':0, 'xy':1}
     config_fftgrid   = {'auto':True, 'ell1min':None, 'ell1max':None, 'nfft':150}
@@ -108,12 +108,15 @@ class FastNaturalComponents:
         update_config(self.config_multipole, config, **kwargs)
         # initialize mode coupling function
         self.Lmax = self.config_multipole['Lmax']
+        self.Lmax_diag = self.config_multipole['Lmax_diag']
+        if self.Lmax_diag is None:
+            self.Lmax_diag = self.Lmax
         self.Mmax = self.config_multipole['Mmax']
         self.multipole_type = self.config_multipole['multipole_type']
         if self.multipole_type == 'legendre':
-            self.GLM = MCF222LegendreFourier(self.Lmax, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
+            self.GLM = MCF222LegendreFourier(self.Lmax_diag, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
         elif self.multipole_type == 'fourier':
-            self.GLM = MCF222FourierFourier(self.Lmax, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
+            self.GLM = MCF222FourierFourier(self.Lmax_diag, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
         else:
             raise ValueError('Error: multipole_type={} is not expected'.format(self.multipole_type))
 
@@ -221,7 +224,7 @@ class FastNaturalComponents:
         self.ELL_FFT  = np.sqrt(self.ELL1_FFT**2 + self.ELL2_FFT**2)
         self.PSI_FFT = np.arctan2(self.ELL2_FFT, self.ELL1_FFT)
     
-    def HM(self, M, bL=None, L=None, **args):
+    def HM(self, M, bL=None, L=None, bL_diag=None, L_diag=None, **args):
         """
         Compute H_M(l1, l2 = \\sum_L (-1)^L * G_LM * b_L(l1, l2) on FFT grid.
 
@@ -238,9 +241,23 @@ class FastNaturalComponents:
         if bL is None:
             bL = self.bispectrum.kappa_bispectrum_multipole(
                 L, self.ELL_FFT, self.PSI_FFT, **args)
-        # Sum up GLM*bL over L
         GLM = self.GLM(L, M, self.PSI_FFT)
+        # Sum up GLM*bL over L
         HM = np.sum(((-1)**(L+1)*GLM.T*bL.T).T, axis=0)
+
+        if self.Lmax_diag <= self.Lmax:
+            return HM
+
+        # Do the same for diag
+        if L_diag is None:
+            L_diag = np.arange(self.Lmax, self.Lmax_diag+1)
+        if bL_diag is None:
+            bL_diag = self.bispectrum.kappa_bispectrum_multipole_diag(
+                L_diag, self.ell1_fft, **args)
+        GLM_diag = self.GLM(L_diag, M, np.array([np.pi/4]))[0,:]
+        HM_diag = np.sum(((-1)**(L_diag+1)*GLM_diag.T*bL_diag.T).T, axis=0)
+        HM += np.diag(HM_diag)
+
         return HM
 
     def get_bins(self, bin_type='multipole', t1_unit='radian', mesh=True):
@@ -280,19 +297,33 @@ class FastNaturalComponents:
         self.bispectrum.kappa_bispectrum_multipole, e.g.
         sample_combination.
         """
+        timer = args.pop('timer', lambda _: None)
+        # 
+        Lmin = args.pop('Lmin', 0)
+        Lmax = args.pop('Lmax', self.Lmax)
+        Mmax = args.pop('Mmax', self.Mmax)
         # natural-component multipole indices
-        M = np.arange(self.Mmax+1)
-        L = np.arange(self.Lmax+1)
+        M = np.arange(Mmax+1)
+        L = np.arange(Lmin, Lmax+1)
         # First we compute the kernel HM for all M
         bL = self.bispectrum.kappa_bispectrum_multipole(
             L, self.ELL_FFT, self.PSI_FFT, **args)
-        HM = [self.HM(_, bL=bL) for _ in M]
+        timer('multipole')
+        if self.Lmax_diag > self.Lmax:
+            L_diag = np.arange(self.Lmax, self.Lmax_diag+1)
+            bL_diag = self.bispectrum.kappa_bispectrum_multipole_diag(
+                L_diag, self.ell1_fft, **args)
+            timer('multipole diag')
+        else:
+            L_diag = bL_diag = None
+        HM = [self.HM(_, bL=bL, L=L, L_diag=L_diag, bL_diag=bL_diag) for _ in M]
+        timer('HM')
 
         # GammaM
-        self.Gamma0M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
-        self.Gamma1M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
-        self.Gamma2M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
-        self.Gamma3M = np.zeros((2*self.Mmax+1, self.t1.size, self.t2.size))
+        self.Gamma0M = np.zeros((2*Mmax+1, self.t1.size, self.t2.size))
+        self.Gamma1M = np.zeros((2*Mmax+1, self.t1.size, self.t2.size))
+        self.Gamma2M = np.zeros((2*Mmax+1, self.t1.size, self.t2.size))
+        self.Gamma3M = np.zeros((2*Mmax+1, self.t1.size, self.t2.size))
         # For the sake of speed, we first loop over M
         # and then over mu. This is because the kernels of the 
         # natural-component multipoles only depends on M but not on mu.
@@ -323,29 +354,32 @@ class FastNaturalComponents:
 
                 # Store
                 if _mu == 0:
-                    self.Gamma0M[ _M+self.Mmax] = GM
-                    self.Gamma0M[-_M+self.Mmax] = GM.T
+                    self.Gamma0M[ _M+Mmax] = GM
+                    self.Gamma0M[-_M+Mmax] = GM.T
                 elif _mu == 1:
-                    self.Gamma1M[ _M+self.Mmax] = GM.T
-                    self.Gamma1M[-_M+self.Mmax] = GM
+                    self.Gamma1M[ _M+Mmax] = GM.T
+                    self.Gamma1M[-_M+Mmax] = GM
                 elif _mu == 2:
-                    self.Gamma2M[ _M+self.Mmax] = GM
-                    self.Gamma3M[-_M+self.Mmax] = GM.T
+                    self.Gamma2M[ _M+Mmax] = GM
+                    self.Gamma3M[-_M+Mmax] = GM.T
                 elif _mu == 3:
-                    self.Gamma3M[ _M+self.Mmax] = GM
-                    self.Gamma2M[-_M+self.Mmax] = GM.T
+                    self.Gamma3M[ _M+Mmax] = GM
+                    self.Gamma2M[-_M+Mmax] = GM.T
+        timer('GammaM')
 
         if self.phi is None:
             return
-        M = np.arange(-self.Mmax, self.Mmax+1)
+        M = np.arange(-Mmax, Mmax+1)
         expMphi = np.exp(1j*M[:,None]*self.phi[None,:])
         # resum multipoles
         self.Gamma0 = np.tensordot(expMphi, self.Gamma0M, axes=([0],[0]))/(2*np.pi)
         self.Gamma1 = np.tensordot(expMphi, self.Gamma1M, axes=([0],[0]))/(2*np.pi)
         self.Gamma2 = np.tensordot(expMphi, self.Gamma2M, axes=([0],[0]))/(2*np.pi)
         self.Gamma3 = np.tensordot(expMphi, self.Gamma3M, axes=([0],[0]))/(2*np.pi)
+        timer('Gamma')
         # change shear projection
         self._change_shear_projection('x', self.projection)
+        timer('projection')
     
     def _change_shear_projection(self, dept, dest):
         """
