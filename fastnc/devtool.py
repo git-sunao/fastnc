@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/06/07 11:38:43
+Last edit  : 2024/06/09 16:05:56
 
 Description:
 This contains some useful functions for development:
@@ -52,6 +52,44 @@ class Timer:
             text += f'{name.ljust(ljust)} & {dt:.3f} s \\\\' + '\n'
         text += hline + '\n'
         text += f'Total'.ljust(ljust)+f' & {self.lap_time[-1]-self.lap_time[0]:.3f} s \\\\' + '\n'
+        if wrap:
+            text = '\\begin{tabular}{|l|c|}\n'+hline2+'\n'+ text +hline2+'\n'+ '\\end{tabular}'
+        return text
+    @classmethod
+    def average(cls, *timers):
+        times = []
+        for timer in timers:
+            names, dt = timer.get_name_runtime(group=False)
+            times.append(dt)
+        times = np.mean(times, axis=0)
+        timer = Timer()
+        times = timer.lap_time[0] + np.cumsum(times)
+        timer.lap_name = np.append(timer.lap_name, names)
+        timer.lap_time = np.append(timer.lap_time, times)
+        return timer
+    @classmethod
+    def compare(cls, *timers, group=True, wrap=True):
+        text = ''
+        hline = '\\hline'
+        hline2= '\\hline\\hline'
+        
+        times = []
+        for timer in timers:
+            names, dt = timer.get_name_runtime(group=group)
+            times.append(dt)
+        times = np.array(times)
+
+        ljust = max([len(name) for name in names])
+        for i, name in enumerate(names):
+            text += f'{name.ljust(ljust)}'
+            for j in range(len(timers)):
+                text += f' & {times[j][i]:.3f} s'
+            text += '\\\\\n'
+        text += hline + '\n'
+        text += f'Total'.ljust(ljust)
+        for j in range(len(timers)):
+            text += f' & {timers[j].lap_time[-1]-timers[j].lap_time[0]:.3f} s'
+        text += '\\\\\n'
         if wrap:
             text = '\\begin{tabular}{|l|c|}\n'+hline2+'\n'+ text +hline2+'\n'+ '\\end{tabular}'
         return text

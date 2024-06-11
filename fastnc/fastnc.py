@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/06/07 23:36:23
+Last edit  : 2024/06/09 17:34:18
 
 Description:
 This is the module of fastnc, which calculate the
@@ -71,7 +71,8 @@ class FastNaturalComponents:
     """
     # default configuration
     projection       = 'x'
-    config_multipole = {'Lmax':None, 'Mmax':None, 'Lmax_diag':None, 'multipole_type':'legendre', 'cache':True}
+    config_multipole = {'Lmax':None, 'Mmax':None, 'Lmax_diag':None, 'multipole_type':'legendre', \
+                        'use_GLM_table':False, 'cache':True}
     config_bin       = {'t1':None, 'phi':None, 'mu':[0,1,2,3], 'dlnt':None}
     config_fftlog    = {'nu1':1.01, 'nu2':1.01, 'N_pad':0, 'xy':1}
     config_fftgrid   = {'auto':True, 'ell1min':None, 'ell1max':None, 'nfft':150}
@@ -223,6 +224,9 @@ class FastNaturalComponents:
         self.ELL1_FFT, self.ELL2_FFT = np.meshgrid(self.ell1_fft, self.ell2_fft, indexing='ij')
         self.ELL_FFT  = np.sqrt(self.ELL1_FFT**2 + self.ELL2_FFT**2)
         self.PSI_FFT = np.arctan2(self.ELL2_FFT, self.ELL1_FFT)
+        if self.config_multipole['use_GLM_table']:
+            print('Preparing GLM table...') if self.verbose else None
+            self.GLM.set_table(self.PSI_FFT)
     
     def HM(self, M, bL=None, L=None, bL_diag=None, L_diag=None, **args):
         """
@@ -241,7 +245,10 @@ class FastNaturalComponents:
         if bL is None:
             bL = self.bispectrum.kappa_bispectrum_multipole(
                 L, self.ELL_FFT, self.PSI_FFT, **args)
-        GLM = self.GLM(L, M, self.PSI_FFT)
+        if self.config_multipole['use_GLM_table']:
+            GLM = self.GLM.from_table(L, M)
+        else:
+            GLM = self.GLM(L, M, self.PSI_FFT)
         # Sum up GLM*bL over L
         HM = np.sum(((-1)**(L+1)*GLM.T*bL.T).T, axis=0)
 

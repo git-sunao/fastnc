@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/06/07 13:16:55
+Last edit  : 2024/06/09 17:37:16
 
 Description:
 coupling.py contains classes for 
@@ -192,6 +192,61 @@ class ModeCouplingFunctionBase:
         """
         pass
 
+    def set_table(self, psi):
+        """
+        Set the table of GLM on the given psi values.
+        """
+        L = np.arange(self.Lmax+1)
+        M = np.arange(-self.Mmax, self.Mmax+1)
+
+        shape = psi.shape
+        psi_unique, inv = np.unique(psi.ravel(), return_inverse=True)
+
+        table = self(L, M, psi_unique)
+        
+        self.table_info = {}
+        for i in range(L.size):
+            for j in range(M.size):
+                self.table_info[(L[i], M[j])] = table[i,j]
+        self.table_info['inv'] = inv
+        self.table_info['shape'] = shape
+
+    def from_table(self, L, M):
+        """
+        Get the GLM from the table.
+        """
+        Lisscalar = np.isscalar(L)
+        if Lisscalar:
+            L = np.array([L])
+        Misscalar = np.isscalar(M)
+        if Misscalar:
+            M = np.array([M])
+
+        # collect todo
+        todo = []
+        for _L in L:
+            for _M in M:
+                todo.append([_L, _M])
+
+
+        inv = self.table_info['inv']
+        shape = self.table_info['shape']
+
+        out = []
+        for _L, _M in todo:
+            o = self.table_info[(_L, _M)][inv].reshape(shape)
+            out.append(o)
+        out = np.array(out).reshape(L.shape+M.shape+shape)
+
+        if Lisscalar and Misscalar:
+            out = out[0,0]
+        elif Lisscalar:
+            out = out[0]
+        elif Misscalar:
+            out = out[:,0]
+
+        return out
+        
 class MCF222LegendreFourier(ModeCouplingFunctionBase):
     r"""
     Mode coupling function for spin-2, spin-2, spin-2 correlation function
