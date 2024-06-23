@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/06/09 17:34:18
+Last edit  : 2024/06/23 01:06:06
 
 Description:
 This is the module of fastnc, which calculate the
@@ -327,10 +327,10 @@ class FastNaturalComponents:
         timer('HM')
 
         # GammaM
-        self.Gamma0M = np.zeros((2*Mmax+1, self.t1.size, self.t2.size))
-        self.Gamma1M = np.zeros((2*Mmax+1, self.t1.size, self.t2.size))
-        self.Gamma2M = np.zeros((2*Mmax+1, self.t1.size, self.t2.size))
-        self.Gamma3M = np.zeros((2*Mmax+1, self.t1.size, self.t2.size))
+        self.Gamma0M = np.zeros((self.t1.size, self.t2.size, 2*Mmax+1))
+        self.Gamma1M = np.zeros((self.t1.size, self.t2.size, 2*Mmax+1))
+        self.Gamma2M = np.zeros((self.t1.size, self.t2.size, 2*Mmax+1))
+        self.Gamma3M = np.zeros((self.t1.size, self.t2.size, 2*Mmax+1))
         # For the sake of speed, we first loop over M
         # and then over mu. This is because the kernels of the 
         # natural-component multipoles only depends on M but not on mu.
@@ -361,17 +361,17 @@ class FastNaturalComponents:
 
                 # Store
                 if _mu == 0:
-                    self.Gamma0M[ _M+Mmax] = GM
-                    self.Gamma0M[-_M+Mmax] = GM.T
+                    self.Gamma0M[:,:, _M+Mmax] = GM
+                    self.Gamma0M[:,:,-_M+Mmax] = GM.T
                 elif _mu == 1:
-                    self.Gamma1M[ _M+Mmax] = GM.T
-                    self.Gamma1M[-_M+Mmax] = GM
+                    self.Gamma1M[:,:, _M+Mmax] = GM.T
+                    self.Gamma1M[:,:,-_M+Mmax] = GM
                 elif _mu == 2:
-                    self.Gamma2M[ _M+Mmax] = GM
-                    self.Gamma3M[-_M+Mmax] = GM.T
+                    self.Gamma2M[:,:, _M+Mmax] = GM
+                    self.Gamma3M[:,:,-_M+Mmax] = GM.T
                 elif _mu == 3:
-                    self.Gamma3M[ _M+Mmax] = GM
-                    self.Gamma2M[-_M+Mmax] = GM.T
+                    self.Gamma3M[:,:, _M+Mmax] = GM
+                    self.Gamma2M[:,:,-_M+Mmax] = GM.T
         timer('GammaM')
 
         if self.phi is None:
@@ -379,10 +379,10 @@ class FastNaturalComponents:
         M = np.arange(-Mmax, Mmax+1)
         expMphi = np.exp(1j*M[:,None]*self.phi[None,:])
         # resum multipoles
-        self.Gamma0 = np.tensordot(expMphi, self.Gamma0M, axes=([0],[0]))/(2*np.pi)
-        self.Gamma1 = np.tensordot(expMphi, self.Gamma1M, axes=([0],[0]))/(2*np.pi)
-        self.Gamma2 = np.tensordot(expMphi, self.Gamma2M, axes=([0],[0]))/(2*np.pi)
-        self.Gamma3 = np.tensordot(expMphi, self.Gamma3M, axes=([0],[0]))/(2*np.pi)
+        self.Gamma0 = np.dot(self.Gamma0M, expMphi)/(2*np.pi)
+        self.Gamma1 = np.dot(self.Gamma1M, expMphi)/(2*np.pi)
+        self.Gamma2 = np.dot(self.Gamma2M, expMphi)/(2*np.pi)
+        self.Gamma3 = np.dot(self.Gamma3M, expMphi)/(2*np.pi)
         timer('Gamma')
         # change shear projection
         self._change_shear_projection('x', self.projection)
@@ -399,9 +399,9 @@ class FastNaturalComponents:
         if self.verbose and dept != dest:
             print('changing shear projection from {} to {}'.format(dept, dest))
         # attributes are 1d arrays, so we cast them to 3d arrays
-        PHI = self.phi[:,None,None]
-        T1  = self.t1[None,:,None]
-        T2  = self.t2[None,None,:]
+        T1  = self.t1[:,None,None]
+        T2  = self.t2[None,:,None]
+        PHI = self.phi[None,None,:]
         # Convert
         if dept == dest:
             return
