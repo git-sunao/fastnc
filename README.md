@@ -8,12 +8,14 @@ For now, you can install
 ```
 python setup.py install
 ```
-
-
-To be updated
-- pip
-- conda
-- manual
+You can also install the pacakge from pip or conda:
+```
+pip install fastnc
+```
+or 
+```
+conda install 
+```
 
 ## Get started
 Tutorial notebook is available at [tutorial.ipynb](docs/tutorial.ipynb).
