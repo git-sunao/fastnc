@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/06/23 01:06:06
+Last edit  : 2024/06/27 15:00:15
 
 Description:
 This is the module of fastnc, which calculate the
@@ -250,7 +250,7 @@ class FastNaturalComponents:
         else:
             GLM = self.GLM(L, M, self.PSI_FFT)
         # Sum up GLM*bL over L
-        HM = np.sum(((-1)**(L+1)*GLM.T*bL.T).T, axis=0)
+        HM = np.sum(((-1)**L*GLM.T*bL.T).T, axis=0)
 
         if self.Lmax_diag <= self.Lmax:
             return HM
@@ -262,7 +262,7 @@ class FastNaturalComponents:
             bL_diag = self.bispectrum.kappa_bispectrum_multipole_diag(
                 L_diag, self.ell1_fft, **args)
         GLM_diag = self.GLM(L_diag, M, np.array([np.pi/4]))[0,:]
-        HM_diag = np.sum(((-1)**(L_diag+1)*GLM_diag.T*bL_diag.T).T, axis=0)
+        HM_diag = np.sum(((-1)**L_diag*GLM_diag.T*bL_diag.T).T, axis=0)
         HM += np.diag(HM_diag)
 
         return HM

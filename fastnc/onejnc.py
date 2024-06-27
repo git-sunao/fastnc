@@ -124,10 +124,10 @@ class OneJNaturalConponent:
         gam1 = np.trapz(gam1, psi, axis=0)
         gam2 = np.trapz(gam2, psi, axis=0)
         gam3 = np.trapz(gam3, psi, axis=0)
-        gam0 = np.trapz(gam0, dbeta, axis=0)/2/(2*np.pi)**3
-        gam1 = np.trapz(gam1, dbeta, axis=0)/2/(2*np.pi)**3
-        gam2 = np.trapz(gam2, dbeta, axis=0)/2/(2*np.pi)**3
-        gam3 = np.trapz(gam3, dbeta, axis=0)/2/(2*np.pi)**3
+        gam0 = -np.trapz(gam0, dbeta, axis=0)/2/(2*np.pi)**3
+        gam1 = -np.trapz(gam1, dbeta, axis=0)/2/(2*np.pi)**3
+        gam2 = -np.trapz(gam2, dbeta, axis=0)/2/(2*np.pi)**3
+        gam3 = -np.trapz(gam3, dbeta, axis=0)/2/(2*np.pi)**3
 
         return gam0, gam1, gam2, gam3
 
