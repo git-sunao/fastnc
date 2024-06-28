@@ -4,20 +4,20 @@ fast computation of natural components from given bispectrum.
 Cite Sugiyama+2024 (in prep.)
 
 ## Installation
-For now, you can install
-```
-python setup.py install
-```
-You can also install the pacakge from pip or conda:
+From [pip](https://pypi.org/project/fastnc/)
 ```
 pip install fastnc
 ```
-or 
+From [conda](https://anaconda.org/ssunao/fastnc)
 ```
 conda install ssunao::fastnc
 ```
+You can also install the package manually after cloning this [fastnc](https://github.com/git-sunao/fastnc) repo
+```
+pip install .
+```
 
-## Get started
+## Getting started
 Tutorial notebook is available at [tutorial.ipynb](docs/tutorial.ipynb).
 
 ## Note on cache
