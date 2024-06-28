@@ -7,7 +7,6 @@ Description:
 This contains some useful functions for development:
 plotting, triangle plotter, stopwatch, etc.
 '''
-import matplotlib.pyplot as plt
 import numpy as np
 import time
 
@@ -96,6 +95,7 @@ class Timer:
 
 # triangle plotter
 def plot_triangle(ax, x1, x2, x3, loc='lower left', bbox_to_anchor=(0.75, 0.05), scale=0.2, sort=True, edgecolor='k', **kwargs):
+    import matplotlib.pyplot as plt
     if sort:
         x3, x2, x1 = np.sort([x1, x2, x3])
 

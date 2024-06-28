@@ -14,7 +14,7 @@ pip install fastnc
 ```
 or 
 ```
-conda install 
+conda install ssunao::fastnc
 ```
 
 ## Get started
