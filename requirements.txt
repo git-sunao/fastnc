@@ -2,3 +2,4 @@ numpy
 scipy
 astropy
 pandas
+mpi4py

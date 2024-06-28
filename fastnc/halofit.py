@@ -11,7 +11,7 @@ https://arxiv.org/abs/1911.07886
 '''
 import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline as ius
-from scipy.integrate import simps
+from scipy.integrate import simpson
 from scipy.optimize import bisect
 from scipy.special import gamma, gammaincc
 
@@ -171,7 +171,7 @@ class Halofit:
 
             where tmin = kmax^2R^2, and Gamma^reg is the regularized gamma function.
         """
-        I2    = simps(Delta * window(k*r)**2, np.log(k))
+        I2    = simpson(Delta * window(k*r)**2, np.log(k))
 
         if extrap:
             # spectral index and amplitude of Delta at high k
