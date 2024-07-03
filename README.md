@@ -1,7 +1,7 @@
 # fastnc
 fast computation of natural components from given bispectrum.
 
-Cite Sugiyama+2024 (in prep.)
+Cite Sugiyama+2024 [arxiv](http://arxiv.org/abs/2407.01798).
 
 ## Installation
 From [pip](https://pypi.org/project/fastnc/)
