@@ -1,4 +1,6 @@
 # fastnc
+[![Downloads](https://static.pepy.tech/badge/fastnc)](https://pepy.tech/project/fastnc)
+
 fast computation of natural components from given bispectrum.
 
 Cite Sugiyama+2024 [arxiv](http://arxiv.org/abs/2407.01798).
