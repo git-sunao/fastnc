@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/06/08 00:21:40
+Last edit  : 2024/09/16 12:31:18
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -65,7 +65,7 @@ class BispectrumBase:
     """
     # default configs
     config_scale     = dict(ell1min=None, ell1max=None, epmu=1e-7)
-    config_losint    = dict(zmin=1e-4, zmid=1e-1, nzbin_log=15, nzbin_lin=40)
+    config_losint    = dict(zmin=1e-4, zmid=1e-1, nzbin_log=15, nzbin_lin=40, zbin=None)
     config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True)
     config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, nmubin_log=30, Lmax=None, Lmax_diag=None, \
         multipole_type='legendre', method='gauss-legendre')
@@ -104,6 +104,7 @@ class BispectrumBase:
         self.zmid_losint  = self.config_losint['zmid']
         self.nzbin_log_losint = self.config_losint['nzbin_log']
         self.nzbin_lin_losint = self.config_losint['nzbin_lin']
+        self.zbin_losint = self.config_losint.get('zbin', None)
 
     def set_scale_range(self, config=None, **kwargs):
         """
@@ -471,8 +472,11 @@ class BispectrumBase:
         raise NotImplementedError
 
     def get_los_kernel(self, scomb):
-        # special case
-        if np.isscalar(scomb):
+        if np.isscalar(scomb) and isinstance(scomb, (int, float)):
+            # special case where the scomb is given by the redshift
+            # This is useful when computing the kappa bispectrum
+            # before los integration, which will be used e.g. as the training
+            # data for the los-integration independent emulator.
             z = scomb
             if np.isscalar(z):
                 z = np.array([z])
@@ -480,8 +484,13 @@ class BispectrumBase:
             weight = np.ones(z.size)
         else:
             # compute lensing weight, encoding geometrical dependence.
-            z = loglinear(self.zmin_losint, self.zmid_losint, self.zmax_losint, \
-                self.nzbin_log_losint, self.nzbin_lin_losint)
+            if hasattr(self, 'zbin_losint') and self.zbin_losint is not None:
+                print('[fastnc] Using user defined zbin for los int')
+                z = self.zbin_losint
+            else:
+                z = loglinear(self.zmin_losint, self.zmid_losint, self.zmax_losint, \
+                    self.nzbin_log_losint, self.nzbin_lin_losint)
+            
             chi = self.z2chi(z)
             weight = 1
             for name in scomb:
