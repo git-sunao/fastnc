@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/06/27 15:00:15
+Last edit  : 2024/11/26 09:05:34
 
 Description:
 This is the module of fastnc, which calculate the
@@ -90,7 +90,7 @@ class FastNaturalComponents:
         update_config(self.config_fftgrid, config, **kwargs)
         # setup fftlog config
         update_config(self.config_fftlog, config, **kwargs)
-        
+    
     def set_multipole(self, config=None, **kwargs):
         """
         Initialize mode coupling function.
@@ -281,7 +281,13 @@ class FastNaturalComponents:
             bin2 (array): The second bin.
             bin3 (array): The third bin.
         """
-        ufactor = 1.0 if t1_unit == 'radian' else 180.0*60.0/np.pi
+        # Factor for unit conversion for theta1 and theta2
+        if t1_unit == 'radian':
+            ufactor = 1.0
+        elif t1_unit == 'minute':
+            ufactor = 180.0*60.0/np.pi
+        else:
+            raise ValueError('Error: t1_unit={} is not expected'.format(t1_unit))
         if bin_type == 'multipole':
             bin1 = self.t1 * ufactor
             bin2 = self.t2 * ufactor
