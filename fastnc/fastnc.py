@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/11/26 09:05:34
+Last edit  : 2024/11/26 09:06:20
 
 Description:
 This is the module of fastnc, which calculate the
