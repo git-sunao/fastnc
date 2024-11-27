@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/11/27 14:42:59
+Last edit  : 2024/11/27 18:02:25
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -807,7 +807,7 @@ class BispectrumHalofit(BispectrumBase):
     def __init__(self, config=None, **kwargs):
         self.halofit = Halofit()
         super().__init__(config, **kwargs)
-        self.set_baryon_param({'fb':1.0})
+        self.set_baryon_param({'fb':0.0})
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
