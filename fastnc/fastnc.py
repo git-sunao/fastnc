@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/11/27 14:12:40
+Last edit  : 2024/11/27 15:31:12
 
 Description:
 This is the module of fastnc, which calculate the
@@ -623,6 +623,10 @@ class FastNaturalComponents:
 
         # Get Meshed Bins.
         t1m, t2m, phim = self.get_bins(bin_type='SAS', t1_unit=unit, t1_rep='mid', mesh=True)
+
+        # check
+        if np.any(phim.min() < 0) or np.any(phim.max()>np.pi):
+            raise ValueError("phi values must be in the range [0, pi]")
 
         # Pick s = d2, so dlogs is bin_size
         s = d2 = np.outer(1./R, t2m.ravel())
