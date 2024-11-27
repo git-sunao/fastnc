@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/09/16 12:31:18
+Last edit  : 2024/11/27 14:42:59
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -864,6 +864,8 @@ class BispectrumHalofit(BispectrumBase):
         keywords:
             fb: suppression factor relative to TNG-300
         """
+        if 'fb' not in params:
+            raise ValueError('fb must be given as a parameter (float)')
         self.baryon_params = params
 
     def matter_bispectrum(self, k1, k2, k3, z, all_physical=True, which=['Bh1', 'Bh3']):

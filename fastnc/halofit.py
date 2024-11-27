@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/04/08 18:12:59
+Last edit  : 2024/11/27 14:05:46
 
 Description:
 halofit.py contains the Halofit class. 
@@ -191,7 +191,7 @@ class Halofit:
             rtol    (float): relative tolerance
             maxiter (int)  : maximum number of iterations
         """
-        k     = np.logspace(-3, 2, 1000)
+        k     = np.logspace(-4, 2, 1000)
         Delta = self.get_interpolated_pklin(k, z)*k**3 / 2/np.pi**2
         def eq(R): return self._sigmam(k, Delta, R, window_gaussian, extrap=True) - 1.0
         # initial guess
