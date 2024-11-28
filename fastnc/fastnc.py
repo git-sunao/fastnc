@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/11/27 18:13:25
+Last edit  : 2024/11/28 09:43:15
 
 Description:
 This is the module of fastnc, which calculate the
@@ -416,7 +416,7 @@ class FastNaturalComponents:
             dept (str): The current shear projection.
             dest (str): The destination shear projection.
         """
-        if self.verbose and dept != dest and self.verbose:
+        if self.verbose and dept != dest:
             print('changing shear projection from {} to {}'.format(dept, dest))
         # attributes are 1d arrays, so we cast them to 3d arrays
         T1  = self.t1[:,None,None]
