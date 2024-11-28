@@ -629,10 +629,12 @@ class FastNaturalComponents:
             raise ValueError("phi values must be in the range [0, pi]")
 
         # Pick s = d2, so dlogs is bin_size
-        s = d2 = np.outer(1./R, t2m.ravel())
+        # s = d2 = np.outer(1./R, t2m.ravel())
+        s = d2 = np.outer(1./R, t1m.ravel())
 
         # d3
-        d3 = np.outer(1./R, t1m.ravel())
+        # d3 = np.outer(1./R, t1m.ravel())
+        d3 = np.outer(1./R, t2m.ravel())
         t = d3 * np.exp(1j * phim.ravel())
 
         # Next we need to construct the T values.
