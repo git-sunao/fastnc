@@ -171,7 +171,7 @@ class Halofit:
 
             where tmin = kmax^2R^2, and Gamma^reg is the regularized gamma function.
         """
-        I2    = simpson(Delta * window(k*r)**2, np.log(k))
+        I2    = simpson(Delta * window(k*r)**2, x=np.log(k))
 
         if extrap:
             # spectral index and amplitude of Delta at high k
