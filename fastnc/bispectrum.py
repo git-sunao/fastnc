@@ -866,7 +866,7 @@ class BispectrumHalofit(BispectrumBase):
         """
         if 'fb' not in params:
             raise ValueError('fb must be given as a parameter (float)')
-        self.baryon_params.update(param)
+        self.baryon_params.update(params)
 
     def matter_bispectrum(self, k1, k2, k3, z, all_physical=True, which=['Bh1', 'Bh3']):
         b = self.halofit.get_bihalofit(k1, k2, k3, z, all_physical=all_physical, which=which)
