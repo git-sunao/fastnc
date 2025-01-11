@@ -807,7 +807,7 @@ class BispectrumHalofit(BispectrumBase):
     def __init__(self, config=None, **kwargs):
         self.halofit = Halofit()
         super().__init__(config, **kwargs)
-        self.set_baryon_param({'fb':0.0})
+        self.set_baryon_param({'fb':0.0, 'suppress_only':False})
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
@@ -866,13 +866,15 @@ class BispectrumHalofit(BispectrumBase):
         """
         if 'fb' not in params:
             raise ValueError('fb must be given as a parameter (float)')
-        self.baryon_params = params
+        self.baryon_params.update(param)
 
     def matter_bispectrum(self, k1, k2, k3, z, all_physical=True, which=['Bh1', 'Bh3']):
         b = self.halofit.get_bihalofit(k1, k2, k3, z, all_physical=all_physical, which=which)
         fb = self.baryon_params['fb']
         if fb != 0:
             Rb= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
+            if self.baryon_params['suppress_only']:
+                Rb[Rb>=1.0] = 1.0
             b*= 1.0 + fb * (Rb-1.0)
         return b
 
