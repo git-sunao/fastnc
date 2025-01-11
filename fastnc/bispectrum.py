@@ -807,7 +807,7 @@ class BispectrumHalofit(BispectrumBase):
     def __init__(self, config=None, **kwargs):
         self.halofit = Halofit()
         super().__init__(config, **kwargs)
-        self.set_baryon_param({'fb':0.0, 'suppress_only':False})
+        self.baryon_params = {'fb':0.0, 'suppress_only':False}
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
