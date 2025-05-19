@@ -401,7 +401,7 @@ class BispectrumBase:
         zs, pzs = self.zs_dict[name], self.pzs_dict[name]
         
         # model param
-        if params['perbin']:
+        if self.NLA_params['perbin']:
             AIA = self.NLA_params[f'AIA_{name}']
         else:
             AIA = self.NLA_params['AIA']
