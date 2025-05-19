@@ -331,6 +331,17 @@ class BispectrumBase:
         Parameters:
             params (dict) : parameters for nonlinear alignment effect
         """
+        # check
+        # Default assumes the power law redshift evolution.
+        params['perbin'] = params.get('perbin', False)
+        if params['perbin']:
+            for name in self.sample_names:
+                IA_name = f'AIA_{name}'
+                assert IA_name in params, f'{IA_name} must be supplied.'
+        else:
+            assert 'AIA'     in params, 'AIA must be supplied.'
+        assert 'alphaIA' in params, 'alphaIA must be supplied.'
+        assert 'z0'      in params, 'z0 must be supplied.'
         self.NLA_params = params
 
     def set_window_function(self, window_function):
@@ -342,14 +353,16 @@ class BispectrumBase:
         self.window_function = window_function
 
     # Redshift-bin related
-    def _compute_lensing_kernel_per_sample(self, zs, pzs, nzlbin=101):
+    def _compute_lensing_kernel_per_sample(self, name, nzlbin=101):
         """
         Set source distribution.
 
         Parameters:
-            zs (array) : redshift array
-            pzs (array): probability distribution of source galaxies
+            name (str): sample name
         """
+        # get zs, pzs array
+        zs, pzs = self.zs_dict[name], self.pzs_dict[name]
+        
         prefactor = 3/2 * (100/299792)**2 * self.cosmo.Om0
         if zs.size == 1:
             zl = np.linspace(self.zmin_losint, zs, nzlbin)
@@ -370,13 +383,12 @@ class BispectrumBase:
             g = prefactor*np.trapz(I, zs, axis=1)/np.trapz(pzs, zs)
         return zl, chil, g
 
-    def _compute_NLA_kernel_per_sample(self, zs, pzs, nzlbin=101):
+    def _compute_NLA_kernel_per_sample(self, name, nzlbin=101):
         """
         Compute the kernel of nonlinear alignment effect.
 
         Parameters:
-            zs (array) : redshift array
-            pzs (array): probability distribution of source galaxies
+            name (str): sample name
 
         Note:
             In order for this to work, the following attributes must be set:
@@ -385,10 +397,16 @@ class BispectrumBase:
             - self.z2dzdchi
             - self.z2lgr
         """
+        # get zs, pzs array
+        zs, pzs = self.zs_dict[name], self.pzs_dict[name]
+        
         # model param
-        AIA = self.NLA_params['AIA']
+        if params['perbin']:
+            AIA = self.NLA_params[f'AIA_{name}']
+        else:
+            AIA = self.NLA_params['AIA']
         alphaIA = self.NLA_params['alphaIA']
-        z0 = self.NLA_params.get('z0',0.0)
+        z0 = self.NLA_params['z0']
         # constant
         c1rhocrit = 0.0134
         # compute kernel
@@ -411,9 +429,9 @@ class BispectrumBase:
         self.z2g_dict = dict()
         self.chi2g_dict = dict()
         for name in self.sample_names:
-            z, chi, g = self._compute_lensing_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
+            z, chi, g = self._compute_lensing_kernel_per_sample(name, nzlbin)
             if self.config_IA['NLA']:
-                z, chi, gNLA = self._compute_NLA_kernel_per_sample(self.zs_dict[name], self.pzs_dict[name], nzlbin)
+                z, chi, gNLA = self._compute_NLA_kernel_per_sample(name, nzlbin)
                 g += gNLA
             self.z2g_dict[name] = ius(z, g, ext=1)
             self.chi2g_dict[name] = ius(chi, g, ext=1)
