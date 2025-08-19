@@ -1,13 +1,13 @@
 #!/usr/bin/env python
-'''
+"""
 Author     : Sunao Sugiyama 
-Last edit  : 2024/11/27 18:02:25
+Last edit  : 2024/11/27 18:2:25
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
 and various methods of bispectrum: interpolation, 
 multipole decomposition, etc.
-'''
+"""
 import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline as ius
 from scipy.interpolate import RegularGridInterpolator as rgi
@@ -20,9 +20,10 @@ from .halofit import Halofit
 from .multipole import MultipoleLegendre, MultipoleFourier
 from .utils import loglinear, edge_correction, update_config, get_config_key
 from .baryon import BaryonModelBase
+from .ia_bispectra import BispectraIA
 
 
-wPlanck18 = wCDM(H0=Planck18.H0, Om0=Planck18.Om0, Ode0=Planck18.Ode0, w0=-1.0, meta=Planck18.meta, name='wPlanck18')
+wPlanck18 = wCDM(H0=Planck18.H0, Om0=Planck18.Om0, Ode0=Planck18.Ode0, w0=-1.0, meta=Planck18.meta, name="wPlanck18")
 
 class BispectrumBase:
     r"""
@@ -233,7 +234,7 @@ class BispectrumBase:
         # capture the squeezed limit
         mu = 1-loglinear(1-self.mumax, 5e-2, 1-self.mumin, \
             self.config_multipole['nmubin_log'], \
-            self.config_multipole['nmubin'])[::-1]
+            self.config_multipole['nmubin'])[::-1] #why did it remove the indices?
         # create meshgrid
         ELL, PSI, MU = np.meshgrid(ell, psi, mu, indexing='ij')
         ELL1, ELL2, ELL3 = trigutils.xpsimu_to_x1x2x3(ELL, PSI, MU)
@@ -419,7 +420,13 @@ class BispectrumBase:
         fIA = - AIA * ((1+zl)/(1+z0))**alphaIA * c1rhocrit * self.cosmo.Om0 / self.z2lgr(zl)
         pchis = np.interp(zl, zs, pzs, left=0, right=0) * self.z2dzdchi(zl)
         norm = np.trapz(pchis, chil)
-        g = fIA * pchis / norm / chil
+        #g = fIA * pchis / norm / chil
+        g = fIA * pchis / norm / chil / (zl+np.ones_like(zl))
+        #verify if there should be a factor of a(chil) here -- I added the factor but left the old version commented on top.
+        #the NLA kernel, which is fIA * pchis / norm, should be added to a lensing kernel which has the factor of chi/a.
+        #Our definition of the lensing kernel doesnt include this factor and the factor is added in the end by multiplying
+        #the bispectrum by *1/(chi*a**3) instead of *1/chi**4. However, to make the NLA kernel consistent, it should be
+        #multiplied by a/chil.
         return zl, chil, g
 
     def compute_kernel(self, nzlbin=101):
@@ -431,13 +438,28 @@ class BispectrumBase:
         """
         self.z2g_dict = dict()
         self.chi2g_dict = dict()
+        self.z2W_dict = dict() # Window function for TATT
+        self.chi2W_dict = dict() # Window function for TATT
+
         for name in self.sample_names:
             z, chi, g = self._compute_lensing_kernel_per_sample(name, nzlbin)
+
+            #Source galaxy window function for TATT
+            zs, pzs = self.zs_dict[name], self.pzs_dict[name]
+            pchis = pzs*self.z2dzdchi(zs)
+            chis = self.z2chi(zs)
+            norm_pchis = np.trapz(pchis, chis)
+            W_g = pchis / norm_pchis / chis / (zs + np.ones_like(zs))  # Normalized window function -- with a/chi term for compatible notation
+
             if self.config_IA['NLA']:
                 z, chi, gNLA = self._compute_NLA_kernel_per_sample(name, nzlbin)
                 g += gNLA
+
             self.z2g_dict[name] = ius(z, g, ext=1)
             self.chi2g_dict[name] = ius(chi, g, ext=1)
+            self.z2W_dict[name] = ius(zs, W_g, ext=1)
+            self.chi2W_dict[name] = ius(chis, W_g, ext=1)
+
         self.zmax_losint = max([self.zs_dict[name].max() for name in self.sample_names])
 
     def get_all_sample_combinations(self):
@@ -506,7 +528,15 @@ class BispectrumBase:
         r = self.baryon_model(k1,k2,k3,z)
         return b*r
 
-    def get_los_kernel(self, scomb):
+    def ia_bispectrum(self, k1, k2, k3, z, z_piv, a1, alpha1, a2, alpha2, bias_ta):
+        """
+        Compute intrinsic alignment bispectrum components.
+        This method should be implemented in subclasses.
+        """
+        raise NotImplementedError
+
+    def get_los_kernel(self, scomb, kernel_type='lensing'):
+
         if np.isscalar(scomb) and isinstance(scomb, (int, float)):
             # special case where the scomb is given by the redshift
             # This is useful when computing the kappa bispectrum
@@ -527,10 +557,19 @@ class BispectrumBase:
                     self.nzbin_log_losint, self.nzbin_lin_losint)
             
             chi = self.z2chi(z)
-            weight = 1
-            for name in scomb:
-                weight *= self.chi2g_dict[name](chi)
-            weight *= 1.0/chi*(1+z)**3
+            weight = np.ones_like(chi) # Ensure weight is an array
+            if kernel_type == 'lensing':
+                for name in scomb:
+                    weight *= self.chi2g_dict[name](chi)
+            elif kernel_type == 'shape_window':
+                for name in scomb:
+                    weight *= self.chi2W_dict[name](chi)
+            else:
+                raise ValueError("kernel_type must be 'lensing' or 'shape_window'")
+
+            #I commented this line out and added this factor directly on kappa_bispectrum_direct
+            #Because if we are doing TATT we will call this function three times but only need one factor
+            #weight *= 1.0/chi*(1+z)**3
         return z, chi, weight
 
     # kappa bispectrum interface
@@ -602,6 +641,7 @@ class BispectrumBase:
 
         # line-of-sight integration kernel
         z, chi, kernel = self.get_los_kernel(scomb)
+        kernel *= 1.0 / chi * (1 + z) ** 3 #I am doing this product here instead of inside get_los_kernel so that it may be compatible with the TATT kernel
         
         # create grids
         ELL1, Z = np.meshgrid(ell1, z, indexing='ij')
@@ -640,8 +680,148 @@ class BispectrumBase:
         else:
             return bk
 
+    def kappa_bispectrum_IA_direct(self, ell1, ell2, ell3, scomb=None, \
+            window=True, ia_bispec_comps=None, return_ia_bispec_comps=False, select_mode=None, z=None, l_shift=0.0):
+        """
+        Compute kappa bispectrum from intrinsic alignment bispectrum components by direct line-of-sight integration.
+
+        Parameters:
+            ell1 (array)  : ell1 array
+            ell2 (array)  : ell2 array
+            ell3 (array)  : ell3 array
+            scomb (tuple) : sample combination
+            ia_bispec_comps (tuple) : IA bispectrum components (B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE)
+            return_ia_bispec_comps (bool) : return IA bispectrum components if True
+            args (dict)               : arguments for ia_bispectrum
+        """
+
+        #set IA params
+        z_piv = self.IA_params['z0']
+        A1 = self.IA_params['a1']
+        alphaIA = self.IA_params['alphaIA']
+        A2 = self.IA_params['a2']
+        alphaIA_2 = self.IA_params['alphaIA_2']
+        bias_ta = self.IA_params['bias_ta']
+
+        # parse sample_combination
+        scomb = self.parse_sample_combination(scomb)
+
+        # check scalar
+        isscalar = np.isscalar(ell1)
+        if isscalar:
+            ell1 = np.array([ell1])
+            ell2 = np.array([ell2])
+            ell3 = np.array([ell3])
+
+        # check shape
+        if ell1.shape != ell2.shape or ell1.shape != ell3.shape:
+            raise ValueError("l1, l2, l3 must have the same shape")
+
+        # save input shape
+        shape = ell1.shape
+
+        # reshape to 1d
+        ell1 = ell1.ravel()
+        ell2 = ell2.ravel()
+        ell3 = ell3.ravel()
+
+        # line-of-sight integration kernel
+        if np.isscalar(scomb) and isinstance(scomb, (int, float)):
+            z_los, chi_los, kernel_1 = self.get_los_kernel(scomb)
+            kernel_2 = kernel_1
+            kernel_3 = kernel_1
+            W_1 = kernel_1
+            W_2 = kernel_1
+            W_3 = kernel_1
+
+        else:
+            z_los, chi_los, kernel_1 = self.get_los_kernel((scomb[0],), kernel_type='lensing')
+            z_los, chi_los, kernel_2 = self.get_los_kernel((scomb[1],), kernel_type='lensing')
+            z_los, chi_los, kernel_3 = self.get_los_kernel((scomb[2],), kernel_type='lensing')
+
+            z_los, chi_los, W_1 = self.get_los_kernel((scomb[0],), kernel_type='shape_window')
+            z_los, chi_los, W_2 = self.get_los_kernel((scomb[1],), kernel_type='shape_window')
+            z_los, chi_los, W_3 = self.get_los_kernel((scomb[2],), kernel_type='shape_window')
+
+        # create grids
+        ELL1, Z = np.meshgrid(ell1, z_los, indexing='ij')
+        ELL2, Z = np.meshgrid(ell2, z_los, indexing='ij')
+        ELL3, Z = np.meshgrid(ell3, z_los, indexing='ij')
+        CHI = self.z2chi(Z)
+        K1, K2, K3 = (ELL1+l_shift)/CHI, (ELL2+l_shift)/CHI, (ELL3+l_shift)/CHI
+
+        # compute IA bispectrum components
+        if ia_bispec_comps is None:
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectrum(K1, K2, K3, Z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta)
+        else:
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = ia_bispec_comps
+
+        adjust = 1 / chi_los * (1 + z_los) ** 3
+        integrand_ddE = kernel_1 * kernel_2 * W_3 * B_ddE * adjust
+        integrand_dEd = kernel_1 * W_2 * kernel_3 * B_dEd * adjust
+        integrand_Edd = W_1 * kernel_2 * kernel_3 * B_Edd * adjust
+
+        integrand_dEE = kernel_1 * W_2 * W_3 * B_dEE * adjust
+        integrand_EEd = W_1 * W_2 * kernel_3 * B_EEd * adjust
+        integrand_EdE = W_1 * kernel_2 * W_3 * B_EdE * adjust
+
+        integrand_EEE = W_1 * W_2 * W_3 * B_EEE * adjust
+
+        # Integrate each component
+        if integrand_ddE.shape[1] > 1:
+            bk_ddE = np.trapz(integrand_ddE, chi_los, axis=1)
+            bk_dEd = np.trapz(integrand_dEd, chi_los, axis=1)
+            bk_Edd = np.trapz(integrand_Edd, chi_los, axis=1)
+            bk_dEE = np.trapz(integrand_dEE, chi_los, axis=1)
+            bk_EEd = np.trapz(integrand_EEd, chi_los, axis=1)
+            bk_EdE = np.trapz(integrand_EdE, chi_los, axis=1)
+            bk_EEE = np.trapz(integrand_EEE, chi_los, axis=1)
+
+        else:
+            bk_ddE = kernel_1 * kernel_2 * W_3 * B_ddE
+            bk_dEd = kernel_1 * W_2 * kernel_3 * B_dEd
+            bk_Edd = W_1 * kernel_2 * kernel_3 * B_Edd
+            bk_dEE = kernel_1 * W_2 * W_3 * B_dEE
+            bk_EEd = W_1 * W_2 * kernel_3 * B_EEd
+            bk_EdE = W_1 * kernel_2 * W_3 * B_EdE
+            bk_EEE = W_1 * W_2 * W_3 * B_EEE
+
+        if select_mode == None:
+            bk_total = bk_ddE + bk_dEd + bk_Edd + bk_dEE + bk_EEd + bk_EdE + bk_EEE
+
+        elif select_mode == 'ddE':
+            bk_total = bk_ddE
+        elif select_mode == 'dEd':
+            bk_total = bk_dEd
+        elif select_mode == 'Edd':
+            bk_total = bk_Edd
+        elif select_mode == 'dEE':
+            bk_total = bk_dEE
+        elif select_mode == 'EEd':
+            bk_total = bk_EEd
+        elif select_mode == 'EdE':
+            bk_total = bk_EdE
+        elif select_mode == 'EEE':
+            bk_total = bk_EEE
+
+        # multiply window 
+        if hasattr(self, 'window_function') and window:
+            bk_total *= self.window_function(ell1, ell2, ell3)
+
+        # reshape to the original shape
+        bk_total = bk_total.reshape(shape)
+
+        # convert to scalar if input is scalar
+        if isscalar:
+            bk_total = bk_total[0]
+
+        if return_ia_bispec_comps:
+            return bk_total, (B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE)
+        else:
+            return bk_total
+
     # interpolation
-    def interpolate(self, scombs=None, **args):
+    def interpolate(self, scombs=None, select_tatt_component=None, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
@@ -659,18 +839,34 @@ class BispectrumBase:
         # Prepare for the interpolation
         bm = None
         grid = (np.log(self.r_interp), np.log(self.u_interp), self.v_interp)
-        for sc in scombs:
-            sc = self.parse_sample_combination(sc)
-            bk, bm = self.kappa_bispectrum_direct(
-                self.ELL1_interp, 
-                self.ELL2_interp, 
-                self.ELL3_interp, 
-                scomb=sc,
-                window=False,
-                bm=bm, 
-                return_bm=True, 
-                **args)
-            self.bk_interp[sc] = rgi(grid, np.log(bk), method=self.method_interp)
+
+        if hasattr(self, 'ia_bispectra_calculator'):
+            for sc in scombs:
+                sc = self.parse_sample_combination(sc)
+                bk = self.kappa_bispectrum_IA_direct(
+                    self.ELL1_interp,
+                    self.ELL2_interp,
+                    self.ELL3_interp,
+                    scomb=sc,
+                    window=False,
+                    select_mode=select_tatt_component,
+                    **args)
+                #not doing log here
+                self.bk_interp[sc] = rgi(grid, bk, method=self.method_interp)
+
+        else:
+            for sc in scombs:
+                sc = self.parse_sample_combination(sc)
+                bk, bm = self.kappa_bispectrum_direct(
+                    self.ELL1_interp,
+                    self.ELL2_interp,
+                    self.ELL3_interp,
+                    scomb=sc,
+                    window=False,
+                    bm=bm,
+                    return_bm=True,
+                    **args)
+                self.bk_interp[sc] = rgi(grid, np.log(bk), method=self.method_interp)
 
     def kappa_bispectrum_interp(self, ell1, ell2, ell3, scomb=None):
         """
@@ -687,7 +883,12 @@ class BispectrumBase:
         x = edge_correction(np.log(r), ip.grid[0].min(), ip.grid[0].max())
         y = edge_correction(np.log(u), ip.grid[1].min(), ip.grid[1].max())
         z = edge_correction(v, ip.grid[2].min(), ip.grid[2].max())
-        bk = np.exp(ip((x,y,z)))
+
+        if hasattr(self, 'ia_bispectra_calculator'):
+            bk = ip((x,y,z))
+        else:
+            bk = np.exp(ip((x,y,z)))
+
         # multiply window 
         if hasattr(self, 'window_function'):
             bk *= self.window_function(ell1, ell2, ell3)
@@ -903,6 +1104,127 @@ class BispectrumHalofit(BispectrumBase):
         b = self.halofit.get_bihalofit(k1, k2, k3, z, all_physical=all_physical, which=which)
         return b
 
+class BispectrumTATT(BispectrumBase):
+    """
+    Bispectrum computed from intrinsic alignment (TATT model).
+    """
+    __doc__ += BispectrumBase.__doc__
+    # default configs
+    config_scale     = dict(ell1min=1e-1, ell1max=1e5, epmu=1e-7)
+    
+    def __init__(self, config=None, **kwargs):
+        self.ia_bispectra_calculator = BispectraIA() #Initializes computation of TATT bispectra
+        self.halofit = Halofit() #Initializes computation of Bihalofit for renormalization
+        super().__init__(config, **kwargs)
+        self.IA_params = {}
+        self.baryon_params = {'fb': 0.0, 'suppress_only': False}
+
+    def set_cosmology(self, cosmo, ns=None, sigma8=None):
+        """
+        Sets cosmology. 
+
+        Parameters:
+            cosmo (astropy.cosmology): cosmology
+            ns (float)               : spectral index of linear power spectrum
+            sigma8 (float)           : sigma8 of linear power spectrum (at z=0.0)
+        """
+        super().set_cosmology(cosmo)
+        # parameters for IABispectra
+        dcosmo={'Om0': cosmo.Om0, 
+                'Ode0': cosmo.Ode0,
+                'ns': ns or cosmo.meta.get('n'),
+                'sigma8': sigma8 or cosmo.meta.get('sigma8'), 
+                'w0': cosmo.w0, 
+                'wa': 0.0,
+                'fnu0': 0.0} 
+        self.ia_bispectra_calculator.set_cosmology(dcosmo)
+        self.halofit.set_cosmology(dcosmo)
+
+    def set_pklin(self, k, pklin):
+
+        """
+        Set linear power spectrum.
+
+        Parameters:
+            k (array)    : wavenumber array
+            pklin (array): linear power spectrum
+
+        """
+        self.ia_bispectra_calculator.set_pklin(k, pklin)
+        self.halofit.set_pklin(k, pklin)
+        self.has_changed = True
+        
+    def set_pknl(self, k, pknl):
+
+        """
+        Set non-linear power spectrum.
+
+        Parameters:
+            k (array)    : wavenumber array
+            pknl (array): non-linear power spectrum
+
+        """
+        self.ia_bispectra_calculator.set_pknl(k, pknl)
+        self.has_changed = True
+        
+    def set_lgr(self, z, lgr):
+        """
+        Set linear growth rate.#
+
+        Parameters:
+            z (float)  : redshift
+            lgr (float): linear growth rate
+        """
+        self.z2lgr = ius(z, lgr, ext=1)
+        self.ia_bispectra_calculator.set_lgr(z, lgr)
+        self.halofit.set_lgr(z, lgr)
+        self.ia_bispectra_calculator.z2lgr = self.z2lgr
+        self.has_changed = True
+
+    def set_IA_param(self, params):
+        """
+        Set parameters for Intrinsic Alignment.
+
+        Parameters:
+            params (dict) : parameters for intrinsic alignment effect (a1, alpha1, a2, alpha2, bias_ta)
+        """
+        if 'a1' not in params or 'alphaIA' not in params or 'a2' not in params or 'alphaIA_2' not in params or 'bias_ta' not in params:
+            raise ValueError('a1, alphaIA, a2, alphaIA_2, and bias_ta must be given as parameters.')
+        self.IA_params.update(params)
+
+    def set_baryon_param(self, params):
+        """
+        Set parameter(s) of baryon for bispectrum renormalization
+
+        keywords:
+            fb: suppression factor relative to TNG-300
+        """
+        if 'fb' not in params:
+            raise ValueError('fb must be given as a parameter (float)')
+        self.baryon_params.update(params)
+
+    def ia_bispectrum(self, k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, renormalize=False):
+
+        # Here we renormalize the TATT bispectrum by a factor of B_bhilofit/B_tree to check consistency with NLA when a2=0 and bias_ta=0
+        if renormalize:
+            b = self.halofit.get_bihalofit(k1, k2, k3, z)
+            fb = self.baryon_params['fb']
+            if fb != 0:
+                Rb= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
+                if self.baryon_params['suppress_only']:
+                    Rb[Rb>=1.0] = 1.0
+                b*= 1.0 + fb * (Rb-1.0)
+            normalization = b
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = b*self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, renormalize=True)
+            B_vals = [B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE]
+            B_vals = [np.nan_to_num(B) for B in B_vals]
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = B_vals
+        else:
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, renormalize=False)
+
+        return B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE
+
+
 class BispectrumGilMarin(BispectrumBase):
     """
     Bispectrum computed from Gil-Marin.
@@ -1065,6 +1387,7 @@ class BispectrumGilMarin(BispectrumBase):
         bk  =  2 * (self.F2_eff(z, k1, k2, k3, knl) * PNL1 * PNL2 + \
                     self.F2_eff(z, k2, k3, k1, knl) * PNL2 * PNL3 + \
                     self.F2_eff(z, k3, k1, k2, knl) * PNL3 * PNL1)
+
         bk  = bk.reshape(shape)
         return bk
 
