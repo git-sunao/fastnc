@@ -446,10 +446,19 @@ class BispectrumBase:
 
             #Source galaxy window function for TATT
             zs, pzs = self.zs_dict[name], self.pzs_dict[name]
-            pchis = pzs*self.z2dzdchi(zs)
-            chis = self.z2chi(zs)
-            norm_pchis = np.trapz(pchis, chis)
-            W_g = pchis / norm_pchis / chis / (zs + np.ones_like(zs))  # Normalized window function -- with a/chi term for compatible notation
+            if zs.size == 1:
+                def always_unit():
+                    return 1
+                self.z2W_dict[name] = always_unit
+                self.chi2W_dict[name] = always_unit
+
+            else:
+                pchis = pzs*self.z2dzdchi(zs)
+                chis = self.z2chi(zs)
+                norm_pchis = np.trapz(pchis, chis)
+                W_g = pchis / norm_pchis / chis / (zs + np.ones_like(zs))  # Normalized window function -- with a/chi term for compatible notation
+                self.z2W_dict[name] = ius(zs, W_g, ext=1)
+                self.chi2W_dict[name] = ius(chis, W_g, ext=1)
 
             if self.config_IA['NLA']:
                 z, chi, gNLA = self._compute_NLA_kernel_per_sample(name, nzlbin)
@@ -457,8 +466,6 @@ class BispectrumBase:
 
             self.z2g_dict[name] = ius(z, g, ext=1)
             self.chi2g_dict[name] = ius(chi, g, ext=1)
-            self.z2W_dict[name] = ius(zs, W_g, ext=1)
-            self.chi2W_dict[name] = ius(chis, W_g, ext=1)
 
         self.zmax_losint = max([self.zs_dict[name].max() for name in self.sample_names])
 
