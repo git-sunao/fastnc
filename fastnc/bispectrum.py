@@ -366,6 +366,11 @@ class BispectrumBase:
         """
         # get zs, pzs array
         zs, pzs = self.zs_dict[name], self.pzs_dict[name]
+        #for debugging purposes, force the combination to be:
+        #zs = np.linspace(0, 2, 100)
+        #mug = 0.5
+        #sigmag = 0.05
+        #pzs = np.exp(-0.5 * ((zs - mug) / sigmag) ** 2) / (sigmag * np.sqrt(2 * np.pi))
         
         prefactor = 3/2 * (100/299792)**2 * self.cosmo.Om0
         if zs.size == 1:
@@ -446,6 +451,7 @@ class BispectrumBase:
 
             #Source galaxy window function for TATT
             zs, pzs = self.zs_dict[name], self.pzs_dict[name]
+
             if zs.size == 1:
                 def always_unit():
                     return 1
@@ -453,6 +459,14 @@ class BispectrumBase:
                 self.chi2W_dict[name] = always_unit
 
             else:
+
+                # for debugging purposes, force the combination to be:
+                #zs = np.linspace(0, 2, 100)
+                #mug = 0.5
+                #sigmag = 0.05
+                #pzs = np.exp(-0.5 * ((zs - mug) / sigmag) ** 2) / (sigmag * np.sqrt(2 * np.pi))
+
+                #resume
                 pchis = pzs*self.z2dzdchi(zs)
                 chis = self.z2chi(zs)
                 norm_pchis = np.trapz(pchis, chis)
@@ -466,6 +480,10 @@ class BispectrumBase:
 
             self.z2g_dict[name] = ius(z, g, ext=1)
             self.chi2g_dict[name] = ius(chi, g, ext=1)
+            print("we are now debugging at redshift 0.2")
+            print("start for name", name)
+            print("lensing kernel at z=0.2:", self.z2g_dict[name](0.2))
+            print("shape kernel at z=0.2:", self.z2W_dict[name](0.2))
 
         self.zmax_losint = max([self.zs_dict[name].max() for name in self.sample_names])
 
@@ -560,8 +578,9 @@ class BispectrumBase:
                 print('[fastnc] Using user defined zbin for los int')
                 z = self.zbin_losint
             else:
-                z = loglinear(self.zmin_losint, self.zmid_losint, self.zmax_losint, \
-                    self.nzbin_log_losint, self.nzbin_lin_losint)
+                #z = loglinear(self.zmin_losint, self.zmid_losint, self.zmax_losint, \
+                #    self.nzbin_log_losint, self.nzbin_lin_losint)
+                z = np.array([0.005,0.01,0.02,0.03,0.04,0.05,0.07,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,0.8,0.85,0.9,0.95,1.0,1.05,1.1,1.15,1.2,1.25,1.3,1.35,1.4,1.45,1.5])
             
             chi = self.z2chi(z)
             weight = np.ones_like(chi) # Ensure weight is an array
@@ -763,6 +782,18 @@ class BispectrumBase:
         else:
             B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = ia_bispec_comps
 
+        #print(scomb)
+        #if scomb[0] == 1 and scomb[1] == 1 and scomb[2] == 1:
+        #if scomb == 0.3:
+        #    print("kernel 1", kernel_1)
+        #    print("kernel 1", kernel_2)
+        #    print("kernel 1", kernel_3)
+        #    print("w1", W_1)
+        #    print("w2", W_2)
+        #    print("w3", W_3)
+        #    print("shape", np.shape(B_ddE))
+        #    print("B_ddE", B_ddE[:,11])
+            
         adjust = 1 / chi_los * (1 + z_los) ** 3
         integrand_ddE = kernel_1 * kernel_2 * W_3 * B_ddE * adjust
         integrand_dEd = kernel_1 * W_2 * kernel_3 * B_dEd * adjust
