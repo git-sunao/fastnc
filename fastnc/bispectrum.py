@@ -19,6 +19,7 @@ from . import trigutils
 from .halofit import Halofit
 from .multipole import MultipoleLegendre, MultipoleFourier
 from .utils import loglinear, edge_correction, update_config, get_config_key
+from .baryon import BaryonModelBase
 
 
 wPlanck18 = wCDM(H0=Planck18.H0, Om0=Planck18.Om0, Ode0=Planck18.Ode0, w0=-1.0, meta=Planck18.meta, name='wPlanck18')
@@ -82,6 +83,8 @@ class BispectrumBase:
         self.set_multipole_grid(config, **kwargs)
         # init intrinsic alignment model
         update_config(self.config_IA, config, **kwargs)
+        # set None for baryon model
+        self.set_baryon_model(BaryonModelBase())
         
     # Binning
     def set_losint(self, config=None, **kwargs):
@@ -477,7 +480,7 @@ class BispectrumBase:
         
     # Spectra methods
     # matter power spectrum (to be implemented in subclasses)
-    def matter_bispectrum(self, k1, k2, k3, z):
+    def matter_bispectrum_no_baryon(self, k1, k2, k3, z):
         """
         Compute matter bispectrum.
 
@@ -488,6 +491,20 @@ class BispectrumBase:
             z (array)  : redshift array
         """
         raise NotImplementedError
+
+    def matter_bispectrum(self, k1, k2, k3, z):
+        """
+        Matter bispetrum including baryon
+        
+        Parameters:
+            k1 (array) : k1 array in h/Mpc unit
+            k2 (array) : k2 array in h/Mpc unit
+            k3 (array) : k3 array in h/Mpc unit
+            z (array)  : redshift array
+        """
+        b = self.matter_bispectrum_no_baryon(k1,k2,k3,z)
+        r = self.baryon_model(k1,k2,k3,z)
+        return b*r
 
     def get_los_kernel(self, scomb):
         if np.isscalar(scomb) and isinstance(scomb, (int, float)):
@@ -813,6 +830,14 @@ class BispectrumBase:
         out = np.sum(bL*pL, axis=0)
         return out
 
+    def set_baryon_model(self, baryon_model):
+        """
+        Set a model of bispectrum suppression due to baryon
+        as a function of (k1,k2,k3,z).
+        Model parameter must be feeded already.
+        """
+        self.baryon_model = baryon_model
+
 
 class BispectrumHalofit(BispectrumBase):
     """
@@ -825,7 +850,6 @@ class BispectrumHalofit(BispectrumBase):
     def __init__(self, config=None, **kwargs):
         self.halofit = Halofit()
         super().__init__(config, **kwargs)
-        self.baryon_params = {'fb':0.0, 'suppress_only':False}
 
     def set_cosmology(self, cosmo, ns=None, sigma8=None):
         """
@@ -875,25 +899,8 @@ class BispectrumHalofit(BispectrumBase):
         self.halofit.set_lgr(z, lgr)
         self.has_changed = True
 
-    def set_baryon_param(self, params):
-        """
-        Set parameter(s) of baryon
-
-        keywords:
-            fb: suppression factor relative to TNG-300
-        """
-        if 'fb' not in params:
-            raise ValueError('fb must be given as a parameter (float)')
-        self.baryon_params.update(params)
-
-    def matter_bispectrum(self, k1, k2, k3, z, all_physical=True, which=['Bh1', 'Bh3']):
+    def matter_bispectrum_no_baryon(self, k1, k2, k3, z, all_physical=True, which=['Bh1', 'Bh3']):
         b = self.halofit.get_bihalofit(k1, k2, k3, z, all_physical=all_physical, which=which)
-        fb = self.baryon_params['fb']
-        if fb != 0:
-            Rb= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
-            if self.baryon_params['suppress_only']:
-                Rb[Rb>=1.0] = 1.0
-            b*= 1.0 + fb * (Rb-1.0)
         return b
 
 class BispectrumGilMarin(BispectrumBase):
@@ -1035,7 +1042,7 @@ class BispectrumGilMarin(BispectrumBase):
         f2 = 5 / 7 + 2 * dot ** 2 / (7 * k1 ** 2 * k2 ** 2) - dot * (1 / k1 ** 2 + 1 / k2 ** 2) / 2
         return f2
 
-    def matter_bispectrum(self, k1, k2, k3, z, **kwargs):
+    def matter_bispectrum_no_baryon(self, k1, k2, k3, z, **kwargs):
         print("Note: Gilmarin ignores kwargs.")
 
         PNL1 = self.halofit.get_pkhalofit(k1[:,0], z[0,:]).T
