@@ -707,7 +707,7 @@ class BispectrumBase:
             return bk
 
     def kappa_bispectrum_IA_direct(self, ell1, ell2, ell3, scomb=None, \
-            window=True, ia_bispec_comps=None, return_ia_bispec_comps=False, select_mode=None, z=None, l_shift=0.0):
+            window=True, ia_bispec_comps=None, return_ia_bispec_comps=False, select_mode=None, remove_alignment = False, z=None, l_shift=0.0):
         """
         Compute kappa bispectrum from intrinsic alignment bispectrum components by direct line-of-sight integration.
 
@@ -778,7 +778,7 @@ class BispectrumBase:
 
         # compute IA bispectrum components
         if ia_bispec_comps is None:
-            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectrum(K1, K2, K3, Z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta)
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectrum(K1, K2, K3, Z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=remove_alignment)
         else:
             B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = ia_bispec_comps
 
@@ -859,7 +859,7 @@ class BispectrumBase:
             return bk_total
 
     # interpolation
-    def interpolate(self, scombs=None, select_tatt_component=None, **args):
+    def interpolate(self, scombs=None, select_tatt_component=None, remove_alignment=False, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
@@ -888,6 +888,7 @@ class BispectrumBase:
                     scomb=sc,
                     window=False,
                     select_mode=select_tatt_component,
+                    remove_alignment = remove_alignment,
                     **args)
                 #not doing log here
                 self.bk_interp[sc] = rgi(grid, bk, method=self.method_interp)
@@ -1241,24 +1242,26 @@ class BispectrumTATT(BispectrumBase):
             raise ValueError('fb must be given as a parameter (float)')
         self.baryon_params.update(params)
 
-    def ia_bispectrum(self, k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, renormalize=False):
+    def ia_bispectrum(self, k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=False):
 
         # Here we renormalize the TATT bispectrum by a factor of B_bhilofit/B_tree to check consistency with NLA when a2=0 and bias_ta=0
-        if renormalize:
-            b = self.halofit.get_bihalofit(k1, k2, k3, z)
-            fb = self.baryon_params['fb']
-            if fb != 0:
-                Rb= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
-                if self.baryon_params['suppress_only']:
-                    Rb[Rb>=1.0] = 1.0
-                b*= 1.0 + fb * (Rb-1.0)
-            normalization = b
-            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = b*self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, renormalize=True)
-            B_vals = [B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE]
-            B_vals = [np.nan_to_num(B) for B in B_vals]
-            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = B_vals
+        #if renormalize:
+        #    b = self.halofit.get_bihalofit(k1, k2, k3, z)
+        #    fb = self.baryon_params['fb']
+        #    if fb != 0:
+        #        Rb= self.halofit.get_Rb_bihalofit(k1, k2, k3, z)
+        #        if self.baryon_params['suppress_only']:
+        #            Rb[Rb>=1.0] = 1.0
+        #        b*= 1.0 + fb * (Rb-1.0)
+        #    normalization = b
+        #    B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = b*self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, renormalize=True)
+        #    B_vals = [B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE]
+        #    B_vals = [np.nan_to_num(B) for B in B_vals]
+        #    B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = B_vals
+        if remove_alignment:
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=True)
         else:
-            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, renormalize=False)
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=False)
 
         return B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE
 

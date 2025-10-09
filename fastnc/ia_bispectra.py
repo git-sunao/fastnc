@@ -253,13 +253,13 @@ class BispectraIA:
         delta_K_0m3 = self.get_delta_K(m3_val)
 
         if m3_val == 0:
-            F_12_m3 = self.get_F_20(k1_vec, k2_vec, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ggs')
+            F_12_m3 = self.get_F_20(k1_vec, k2_vec, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='sgg')
         elif m3_val == 2:
-            F_12_m3 = self.get_F_22(k1_vec, k2_vec, k1_mag, k2_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ggs')
+            F_12_m3 = self.get_F_22(k1_vec, k2_vec, k1_mag, k2_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='sgg')
         else:
             raise ValueError("m3_val must be 0 or 2 for get_B022")
 
-        F0_23 = self.get_F_00(k2_vec, k3_vec, k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_2, cg2_3, mode='sgg')
+        F0_23 = self.get_F_00(k2_vec, k3_vec, k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_2, cg2_3, mode='ggs')
 
         if m2_val == 0:
             F_31_m2 = self.get_F_20(k3_vec, k1_vec, k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_2, cg2_3, mode='gsg')
@@ -307,7 +307,7 @@ class BispectraIA:
         term3 = delta_K_0m3 * delta_K_0m1 * F_31_m2
         return term1 + term2 + term3
 
-    def get_ia_bispectra(self, k1_mag, k2_mag, k3_mag, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, renormalize=True, do_non_linear=True):
+    def get_ia_bispectra(self, k1_mag, k2_mag, k3_mag, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=False, do_non_linear=True):
 
         #Get C1, C1delta and C2 params
         c1rhocrit = 0.0134
@@ -376,11 +376,11 @@ class BispectraIA:
         B_222_002_perm3 = self.get_B222(k1_vec, k2_vec, k3_vec, k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0,2,0)
         B_EEE = 3/16 * (np.sqrt(3/2) * B_222_000 - B_222_002_perm1 - B_222_002_perm2 - B_222_002_perm3)
 
-        tree_level_matter = 2 * (self.F2_tree(k1_mag, k2_mag, k3_mag) * PL1 * PL2 + self.F2_tree(k2_mag, k3_mag, k1_mag) * PL2 * PL3 +
+        tl_mat = 2 * (self.F2_tree(k1_mag, k2_mag, k3_mag) * PL1 * PL2 + self.F2_tree(k2_mag, k3_mag, k1_mag) * PL2 * PL3 +
                                  self.F2_tree(k3_mag, k1_mag, k2_mag) * PL3 * PL1)
 
-        if renormalize:
-            return B_ddE/tree_level_matter, B_dEd/tree_level_matter, B_Edd/tree_level_matter, B_dEE/tree_level_matter, \
-                   B_EEd/tree_level_matter, B_EdE/tree_level_matter, B_EEE/tree_level_matter
+        if remove_alignment:
+            return B_ddE - 1/2*cg1*tl_mat, B_dEd - 1/2*cg1*tl_mat, B_Edd - 1/2*cg1*tl_mat, B_dEE - 1/4*cg1**2*tl_mat, \
+                   B_EEd - 1/4*cg1**2*tl_mat, B_EdE - 1/4*cg1**2*tl_mat, B_EEE - 1/8*cg1**3*tl_mat
         else:
             return B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE
