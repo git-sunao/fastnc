@@ -174,7 +174,10 @@ class BispectraIA:
         term2 = cg2_2 * (0.25 * (k1x**2 - k1y**2 + k2x**2 - k2y**2) + 0.5 * k1_dot_k2 * (k1x*k2x))
         term3 = cg2_3 * (0.25 * (2*k1x**2 - k1y**2 + 2*k2x**2 - k2y**2))
 
-        if mode == 'ssg':
+        if mode == 'sgg':
+            result = cg1 * 2 * np.sqrt(2/3) * PL1 * PL2 * (term1 + term2 + term3)
+
+        elif mode == 'ssg':
             result = 2 * np.sqrt(2/3) * PL1 * PL2 * (term1 + term2 + term3)
 
         elif mode == 'gsg':
