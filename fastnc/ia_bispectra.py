@@ -210,7 +210,7 @@ class BispectraIA:
         if mode == 'ssg':
             result = partial
 
-        elif mode == 'gsg':
+        elif mode == 'gsg' or mode == 'sgg':
             result = cg1 * partial
 
         elif mode == 'ggg':
