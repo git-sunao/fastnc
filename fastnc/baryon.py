@@ -49,7 +49,7 @@ class BaryonTakahashiTNGfit(BaryonModelBase):
             # Force no enhancement
             if self.suponly:
                 s[s>1.0] = 1.0
-            return 1.0 + fb * (s-1.0)
+            return 1.0 + self.fb * (s-1.0)
 
 
 class SeparableInterpSVD:
