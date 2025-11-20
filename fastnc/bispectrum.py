@@ -480,10 +480,6 @@ class BispectrumBase:
 
             self.z2g_dict[name] = ius(z, g, ext=1)
             self.chi2g_dict[name] = ius(chi, g, ext=1)
-            print("we are now debugging at redshift 0.2")
-            print("start for name", name)
-            print("lensing kernel at z=0.2:", self.z2g_dict[name](0.2))
-            print("shape kernel at z=0.2:", self.z2W_dict[name](0.2))
 
         self.zmax_losint = max([self.zs_dict[name].max() for name in self.sample_names])
 
@@ -781,18 +777,6 @@ class BispectrumBase:
             B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectrum(K1, K2, K3, Z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=remove_alignment)
         else:
             B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = ia_bispec_comps
-
-        #print(scomb)
-        #if scomb[0] == 1 and scomb[1] == 1 and scomb[2] == 1:
-        #if scomb == 0.3:
-        #    print("kernel 1", kernel_1)
-        #    print("kernel 1", kernel_2)
-        #    print("kernel 1", kernel_3)
-        #    print("w1", W_1)
-        #    print("w2", W_2)
-        #    print("w3", W_3)
-        #    print("shape", np.shape(B_ddE))
-        #    print("B_ddE", B_ddE[:,11])
             
         adjust = 1 / chi_los * (1 + z_los) ** 3
         integrand_ddE = kernel_1 * kernel_2 * W_3 * B_ddE * adjust
