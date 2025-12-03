@@ -68,7 +68,7 @@ class BispectrumBase:
     # default configs
     config_scale     = dict(ell1min=None, ell1max=None, epmu=1e-7)
     config_losint    = dict(zmin=1e-4, zmid=1e-1, nzbin_log=15, nzbin_lin=40, zbin=None)
-    config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True)
+    config_interp    = dict(nrbin=35, nubin=35, nvbin=25, method='linear', use_interp=True, ell_grid=False, puv_grid = False)
     config_multipole = dict(nellbin=100, npsibin=80, nmubin=50, nmubin_log=30, Lmax=None, Lmax_diag=None, \
         multipole_type='legendre', method='gauss-legendre')
     config_IA        = dict(NLA=False)
@@ -185,26 +185,70 @@ class BispectrumBase:
         update_config(self.config_interp, config, **kwargs)
         # source to class attributes
         if not self.config_interp['use_interp']: return 0
-        r = np.logspace(np.log10(self.rmin), np.log10(self.rmax), \
-            self.config_interp['nrbin'])
-        u = np.logspace(np.log10(self.umin), np.log10(self.umax), \
-            self.config_interp['nubin'])
-        v = np.linspace(self.vmin, self.vmax, \
-            self.config_interp['nvbin'])
-        # create meshgrid
-        R, U, V = np.meshgrid(r, u, v, indexing='ij')
-        ELL1, ELL2, ELL3 = trigutils.ruv_to_x1x2x3(R, U, V)
-        # save grid
-        self.r_interp = r
-        self.u_interp = u
-        self.v_interp = v
-        self.ELL1_interp = ELL1
-        self.ELL2_interp = ELL2
-        self.ELL3_interp = ELL3
-        # method for interpolation
-        self.method_interp = self.config_interp['method']
-        # place holder for interpolation function
-        self.bk_interp = dict()
+        if not self.config_interp['ell_grid'] and not self.config_interp['puv_grid']:
+            print('ruv')
+            r = np.logspace(np.log10(self.rmin), np.log10(self.rmax), \
+                self.config_interp['nrbin'])
+            u = np.logspace(np.log10(self.umin), np.log10(self.umax), \
+                self.config_interp['nubin'])
+            v = np.linspace(self.vmin, self.vmax, \
+                self.config_interp['nvbin'])
+            # create meshgrid
+            R, U, V = np.meshgrid(r, u, v, indexing='ij')
+            ELL1, ELL2, ELL3 = trigutils.ruv_to_x1x2x3(R, U, V)
+            # save grid
+            self.r_interp = r
+            self.u_interp = u
+            self.v_interp = v
+            self.ELL1_interp = ELL1
+            self.ELL2_interp = ELL2
+            self.ELL3_interp = ELL3
+            # method for interpolation
+            self.method_interp = self.config_interp['method']
+            # place holder for interpolation function
+            self.bk_interp = dict()
+
+        elif self.config_interp['puv_grid']:
+            p = np.logspace(np.log10(self.rmin), np.log10(3*self.rmax), \
+                self.config_interp['nrbin'])
+            pu = np.linspace(0.000001,0.5,20)
+            pv = np.linspace(0.000001,0.5,20)
+            P, PU, PV = np.meshgrid(p, pu, pv, indexing='ij')
+            ELL1 = PU*P
+            ELL2 = PV*P
+            ELL3 = P*(1-PU-PV)
+            self.p_interp = p
+            self.pu_interp = pu
+            self.pv_interp = pv
+            self.ELL1_interp = ELL1
+            self.ELL2_interp = ELL2
+            self.ELL3_interp = ELL3
+            # method for interpolation
+            self.method_interp = self.config_interp['method']
+            # place holder for interpolation function
+            self.bk_interp = dict()
+
+        else:
+            print('ellgrid')
+            ell1 = np.logspace(0,3,70)
+            ell2 = np.logspace(0,3,70)
+            ell3 = np.logspace(0,3,70)
+            # create meshgrid
+            ELL1, ELL2, ELL3 = np.meshgrid(ell1, ell2, ell3, indexing='ij')
+            # save grid
+            self.ell1_interp = ell1
+            self.ell2_interp = ell2
+            self.ell3_interp = ell3
+            self.ELL1_interp = ELL1
+            self.ELL2_interp = ELL2
+            self.ELL3_interp = ELL3
+            print(np.shape(self.ELL1_interp))
+            print(np.shape(self.ELL2_interp))
+            print(np.shape(self.ELL3_interp))
+            # method for interpolation
+            self.method_interp = self.config_interp['method']
+            # place holder for interpolation function
+            self.bk_interp = dict()
 
     def set_multipole_grid(self, config=None, **kwargs):
         """
@@ -596,7 +640,7 @@ class BispectrumBase:
 
     # kappa bispectrum interface
     def kappa_bispectrum(self, ell1, ell2, ell3, scomb=None, \
-            method='direct', **args):
+            method='direct', puv_grid = False, **args):
         """
         Compute kappa bispectrum.
 
@@ -614,7 +658,7 @@ class BispectrumBase:
         if method == 'direct':
             return self.kappa_bispectrum_direct(ell1, ell2, ell3, scomb, **args)
         elif method == 'interp':
-            return self.kappa_bispectrum_interp(ell1, ell2, ell3, scomb)
+            return self.kappa_bispectrum_interp(ell1, ell2, ell3, scomb, puv_grid = puv_grid)
         elif method == 'resum':
             return self.kappa_bispectrum_resum(ell1, ell2, ell3, scomb, **args)
         else:
@@ -843,7 +887,7 @@ class BispectrumBase:
             return bk_total
 
     # interpolation
-    def interpolate(self, scombs=None, select_tatt_component=None, remove_alignment=False, **args):
+    def interpolate(self, scombs=None, select_tatt_component=None, remove_alignment=False, ell_grid = False, puv_grid = False, **args):
         """
         Interpolate kappa bispectrum. 
         The interpolation is done in (r,u,v)-space, which is defined in M. Jarvis+2003 
@@ -860,7 +904,16 @@ class BispectrumBase:
             scombs = self.get_all_sample_combinations()
         # Prepare for the interpolation
         bm = None
-        grid = (np.log(self.r_interp), np.log(self.u_interp), self.v_interp)
+        if not ell_grid and not puv_grid:
+            grid = (np.log(self.r_interp), np.log(self.u_interp), self.v_interp)
+            #print('grid shape',np.shape(grid))
+            #print('dimension 1 check',grid[1])
+        elif puv_grid:
+            grid = (np.log(self.p_interp), self.pu_interp, self.pv_interp)
+        else:
+            grid = (self.ell1_interp, self.ell2_interp, self.ell3_interp)
+            #print('grid shape',np.shape(grid))
+            #print('dimension 1 check',grid[1])
 
         if hasattr(self, 'ia_bispectra_calculator'):
             for sc in scombs:
@@ -875,6 +928,8 @@ class BispectrumBase:
                     remove_alignment = remove_alignment,
                     **args)
                 #not doing log here
+                #print(np.shape(bk))
+                #print(np.shape(grid))
                 self.bk_interp[sc] = rgi(grid, bk, method=self.method_interp)
 
         else:
@@ -891,7 +946,7 @@ class BispectrumBase:
                     **args)
                 self.bk_interp[sc] = rgi(grid, np.log(bk), method=self.method_interp)
 
-    def kappa_bispectrum_interp(self, ell1, ell2, ell3, scomb=None):
+    def kappa_bispectrum_interp(self, ell1, ell2, ell3, scomb=None, ell_grid=False, puv_grid = False):
         """
         Compute kappa bispectrum by interpolation.
 
@@ -907,8 +962,20 @@ class BispectrumBase:
         y = edge_correction(np.log(u), ip.grid[1].min(), ip.grid[1].max())
         z = edge_correction(v, ip.grid[2].min(), ip.grid[2].max())
 
+        p = ell1+ell2+ell3
+        pu = ell1/p
+        pv = ell2/p
+        px = edge_correction(np.log(p), ip.grid[0].min(), ip.grid[0].max())
+        py = edge_correction(pu, ip.grid[1].min(), ip.grid[1].max())
+        pz = edge_correction(pv, ip.grid[2].min(), ip.grid[2].max())
+
         if hasattr(self, 'ia_bispectra_calculator'):
-            bk = ip((x,y,z))
+            if ell_grid:
+                bk = ip((ell1,ell2,ell3))
+            elif puv_grid:
+                bk = ip((px,py,pz))
+            else:
+                bk = ip((x,y,z))
         else:
             bk = np.exp(ip((x,y,z)))
 
@@ -918,7 +985,7 @@ class BispectrumBase:
         return bk
 
     # multipole decomposition
-    def decompose(self, scombs=None, method_bispec='interp', **args):
+    def decompose(self, scombs=None, method_bispec='interp', puv_grid = False, **args):
         """
         Compute multipole decomposition of kappa bispectrum.
 
@@ -939,7 +1006,8 @@ class BispectrumBase:
                     self.ELL2_multipole, 
                     self.ELL3_multipole, 
                     sc, 
-                    method=method_bispec, 
+                    method=method_bispec,
+                    puv_grid = puv_grid,
                     **args)
             # Compute multipoles
             L = np.arange(self.Lmax_multipole+1)
@@ -959,7 +1027,8 @@ class BispectrumBase:
                     self.ELL1_multipole_diag, 
                     self.ELL1_multipole_diag, 
                     sc, 
-                    method=method_bispec, 
+                    method=method_bispec,
+                    puv_grid = puv_grid,
                     **args)
             # Compute multipoles
             L = np.arange(self.Lmax_multipole, self.Lmax_multipole_diag+1)
@@ -1243,9 +1312,9 @@ class BispectrumTATT(BispectrumBase):
         #    B_vals = [np.nan_to_num(B) for B in B_vals]
         #    B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = B_vals
         if remove_alignment:
-            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=True)
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE, B_ddB, B_dBd, B_Bdd, B_dEB, B_dBE, B_EBd, B_BEd, B_BdE, B_EdB, B_EEB, B_EBE, B_BEE = self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=True)
         else:
-            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE = self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=False)
+            B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE, B_ddB, B_dBd, B_Bdd, B_dEB, B_dBE, B_EBd, B_BEd, B_BdE, B_EdB, B_EEB, B_EBE, B_BEE = self.ia_bispectra_calculator.get_ia_bispectra(k1, k2, k3, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=False)
 
         return B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE
 

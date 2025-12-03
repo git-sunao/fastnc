@@ -559,7 +559,7 @@ class BispectraIA:
 
         if remove_alignment:
             return B_ddE - 1/2*cg1*tl_mat, B_dEd - 1/2*cg1*tl_mat, B_Edd - 1/2*cg1*tl_mat, B_dEE - 1/4*cg1**2*tl_mat, \
-                   B_EEd - 1/4*cg1**2*tl_mat, B_EdE - 1/4*cg1**2*tl_mat, B_EEE - 1/8*cg1**3*tl_mat
+                   B_EEd - 1/4*cg1**2*tl_mat, B_EdE - 1/4*cg1**2*tl_mat, B_EEE - 1/8*cg1**3*tl_mat, B_ddB, B_dBd, B_Bdd, B_dEB, B_dBE, B_EBd, B_BEd, B_BdE, B_EdB, B_EEB, B_EBE, B_BEE
 
         else:
             return B_ddE, B_dEd, B_Edd, B_dEE, B_EEd, B_EdE, B_EEE, B_ddB, B_dBd, B_Bdd, B_dEB, B_dBE, B_EBd, B_BEd, B_BdE, B_EdB, B_EEB, B_EBE, B_BEE
