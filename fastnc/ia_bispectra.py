@@ -164,7 +164,7 @@ class BispectraIA:
 
         return k1_vec, k2_vec, k3_vec
 
-    def get_F_00(self, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ssg'):
+    def get_F_00(self, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ssg'):
 
         k1_vec, k2_vec, k3_vec = self._construct_k_vectors(k1_mag, k2_mag, k3_mag)
 
@@ -186,7 +186,7 @@ class BispectraIA:
 
         return kernel
 
-    def get_F_20(self, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ssg'):
+    def get_F_20(self, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ssg'):
 
         k1_vec, k2_vec, k3_vec = self._construct_k_vectors(k1_mag, k2_mag, k3_mag)
 
@@ -197,21 +197,23 @@ class BispectraIA:
         term1 = cg1 * self.F2_tree(k1_mag, k2_mag, k3_mag)
         term2 = cg2_2 * (0.25 * (k1x ** 2 - k1y ** 2 + k2x ** 2 - k2y ** 2) + 0.5 * k1_dot_k2 * (k1x * k2x))
         term3 = cg2_3 * (0.25 * (2 * k1x ** 2 - k1y ** 2 + 2 * k2x ** 2 - k2y ** 2))
+        #term4 = cg2_1 * (5/7* (1-k1_dot_k2**2) + 0.25 * (k1x ** 2 - k1y ** 2 + k2x ** 2 - k2y ** 2) + 0.5 * k1_dot_k2 * (k1x * k2x))
+        term4 = cg2_1 * (5 / 7 * (1 - k1_dot_k2**2))
 
         if mode == 'ssg':
-            result = 2 * np.sqrt(2 / 3) * PL1 * PL2 * (term1 + term2 + term3)
+            result = 2 * np.sqrt(2 / 3) * PL1 * PL2 * (term1 + term2 + term3 + term4)
 
         elif mode == 'gsg':
-            result = cg1 * 2 * np.sqrt(2 / 3) * PL1 * PL2 * (term1 + term2 + term3)
+            result = cg1 * 2 * np.sqrt(2 / 3) * PL1 * PL2 * (term1 + term2 + term3 + term4)
 
         elif mode == 'ggs':
             result = 2 * np.sqrt(2 / 3) * cg1 * PL1 * PL2 * term1
 
         elif mode == 'sgg':
-            result = cg1 * 2 * np.sqrt(2 / 3) * PL1 * PL2 * (term1 + term2 + term3)
+            result = cg1 * 2 * np.sqrt(2 / 3) * PL1 * PL2 * (term1 + term2 + term3 + term4)
 
         elif mode == 'ggg':
-            result = cg1 ** 2 * 2 * np.sqrt(2 / 3) * PL1 * PL2 * (term1 + term2 + term3)
+            result = cg1 ** 2 * 2 * np.sqrt(2 / 3) * PL1 * PL2 * (term1 + term2 + term3 + term4)
 
         return result
 
@@ -223,7 +225,7 @@ class BispectraIA:
     #     sign[np.logical_not(clk)] = -1
     #     return sign
 
-    def get_F_21(self, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ssg'):
+    def get_F_21(self, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ssg'):
 
         k1_vec, k2_vec, k3_vec = self._construct_k_vectors(k1_mag, k2_mag, k3_mag)
 
@@ -233,6 +235,7 @@ class BispectraIA:
         # sign = self.clockwise_sign(k1_mag, k2_mag, k3_mag)
 
         partial = -1 * PL1 * PL2 * (cg2_2 + cg2_3) * (k1x * k1y + k2x * k2y)
+        #partial = -1 * PL1 * PL2 * (cg2_1 + cg2_2 + cg2_3) * (k1x * k1y + k2x * k2y)
         # partial = -1 * PL1 * PL2 * (cg2_2 + cg2_3) * np.abs(k1x*k1y + k2x*k2y) * sign
 
         # print('F_21 called, mode is', mode)
@@ -252,7 +255,7 @@ class BispectraIA:
         elif mode == 'ggg':
             return cg1 ** 2 * partial
 
-    def get_F_22(self, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ssg'):
+    def get_F_22(self, k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ssg'):
 
         k1_vec, k2_vec, k3_vec = self._construct_k_vectors(k1_mag, k2_mag, k3_mag)
 
@@ -262,6 +265,7 @@ class BispectraIA:
         k1x, k1y = k1_vec[0] / k1_mag, k1_vec[1] / k1_mag
         k2x, k2y = k2_vec[0] / k2_mag, k2_vec[1] / k2_mag
         k1_dot_k2 = (k1x * k2x + k1y * k2y)
+        #partial = 2 * PL1 * PL2 * ((cg2_1 + cg2_2) * (0.5 * k1_dot_k2 * (k1y * k2y)) + cg2_3 * (0.25 * (k1y ** 2 + k2y ** 2)))
         partial = 2 * PL1 * PL2 * (cg2_2 * (0.5 * k1_dot_k2 * (k1y * k2y)) + cg2_3 * (0.25 * (k1y ** 2 + k2y ** 2)))
 
         if mode == 'ssg':
@@ -292,51 +296,51 @@ class BispectraIA:
         F0_31 = self.get_F_00(k3_mag, k1_mag, k2_mag, PL3, PL1, 0, 0, 0, mode='sss')
         return F0_12 + F0_23 + F0_31
 
-    def get_B002(self, k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2,
+    def get_B002(self, k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2,
                  cg2_3, m_val):
         # Here our convention is to always use alpha, beta, gamma = ssg.
 
         if m_val == 0:
-            F_12_m = self.get_F_20(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ssg')
+            F_12_m = self.get_F_20(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ssg')
             delta_K_0m = np.sqrt(2 / 3)
-            F0_23 = self.get_F_00(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_2, cg2_3, mode='sgs')
-            F0_31 = self.get_F_00(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_2, cg2_3, mode='gss')
+            F0_23 = self.get_F_00(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, mode='sgs')
+            F0_31 = self.get_F_00(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, mode='gss')
             return F_12_m + delta_K_0m * F0_23 + delta_K_0m * F0_31
 
         if m_val == 1:
 
-            F_12_m = self.get_F_21(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ssg')
+            F_12_m = self.get_F_21(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ssg')
             return F_12_m
 
         elif m_val == 2:
-            F_12_m = self.get_F_22(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ssg')
+            F_12_m = self.get_F_22(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ssg')
             return F_12_m
 
         else:
             raise ValueError("m_val must be 0, 1, or 2 for get_B002")
 
-    def get_B022(self, k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, m2_val, m3_val):
+    def get_B022(self, k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, m2_val, m3_val):
 
         delta_K_0m2 = self.get_delta_K(m2_val)
         delta_K_0m3 = self.get_delta_K(m3_val)
 
         if m3_val == 0:
-            F_12_m3 = self.get_F_20(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='sgg')
+            F_12_m3 = self.get_F_20(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='sgg')
         elif m3_val == 1:
-            F_12_m3 = self.get_F_21(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='sgg')
+            F_12_m3 = self.get_F_21(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='sgg')
         elif m3_val == 2:
-            F_12_m3 = self.get_F_22(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='sgg')
+            F_12_m3 = self.get_F_22(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='sgg')
         else:
             raise ValueError("m3_val must be 0, 1, or 2 for get_B022")
 
-        F0_23 = self.get_F_00(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_2, cg2_3, mode='ggs')
+        F0_23 = self.get_F_00(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, mode='ggs')
 
         if m2_val == 0:
-            F_31_m2 = self.get_F_20(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_2, cg2_3, mode='gsg')
+            F_31_m2 = self.get_F_20(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, mode='gsg')
         elif m2_val == 1:
-            F_31_m2 = self.get_F_21(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_2, cg2_3, mode='gsg')
+            F_31_m2 = self.get_F_21(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, mode='gsg')
         elif m2_val == 2:
-            F_31_m2 = self.get_F_22(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_2, cg2_3, mode='gsg')
+            F_31_m2 = self.get_F_22(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, mode='gsg')
         else:
             raise ValueError("m2_val must be 0, 1, or 2 for get_B022")
 
@@ -346,7 +350,7 @@ class BispectraIA:
 
         return term1 + term2 + term3
 
-    def get_B222(self, k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3,
+    def get_B222(self, k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3,
                  m1_val, m2_val, m3_val):
 
         delta_K_0m1 = self.get_delta_K(m1_val)
@@ -354,33 +358,33 @@ class BispectraIA:
         delta_K_0m3 = self.get_delta_K(m3_val)
 
         if m3_val == 0:
-            F_12_m3 = self.get_F_20(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ggg')
+            F_12_m3 = self.get_F_20(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
         elif m3_val == 1:
-            F_12_m3 = self.get_F_21(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ggg')
+            F_12_m3 = self.get_F_21(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
         elif m3_val == 2:
-            F_12_m3 = self.get_F_22(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_2, cg2_3, mode='ggg')
+            F_12_m3 = self.get_F_22(k1_mag, k2_mag, k3_mag, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
         else:
             raise ValueError("m3_val must be 0, 1, or 2 for get_B222")
 
         if m1_val == 0:
-            F_23_m1 = self.get_F_20(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_2, cg2_3, mode='ggg')
+            F_23_m1 = self.get_F_20(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
         elif m1_val == 1:
 
-            F_23_m1 = self.get_F_21(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_2, cg2_3, mode='ggg')
+            F_23_m1 = self.get_F_21(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
 
         elif m1_val == 2:
-            F_23_m1 = self.get_F_22(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_2, cg2_3, mode='ggg')
+            F_23_m1 = self.get_F_22(k2_mag, k3_mag, k1_mag, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
         else:
             raise ValueError("m1_val must be 0, 1, or 2 for get_B222")
 
         if m2_val == 0:
-            F_31_m2 = self.get_F_20(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_2, cg2_3, mode='ggg')
+            F_31_m2 = self.get_F_20(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
         elif m2_val == 1:
 
-            F_31_m2 = self.get_F_21(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_2, cg2_3, mode='ggg')
+            F_31_m2 = self.get_F_21(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
 
         elif m2_val == 2:
-            F_31_m2 = self.get_F_22(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_2, cg2_3, mode='ggg')
+            F_31_m2 = self.get_F_22(k3_mag, k1_mag, k2_mag, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, mode='ggg')
         else:
             raise ValueError("m2_val must be 0, 1, or 2 for get_B222")
 
@@ -423,7 +427,7 @@ class BispectraIA:
 
         # Get terms of TATT IA bispectrum
 
-    def get_ia_bispectra(self, k1_mag, k2_mag, k3_mag, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, remove_alignment=False,
+    def get_ia_bispectra(self, k1_mag, k2_mag, k3_mag, z, z_piv, A1, alphaIA, A2, alphaIA_2, bias_ta, Ct=0, remove_alignment=False,
                          do_non_linear=True):
 
         # Get C1, C1delta and C2 params
@@ -432,13 +436,13 @@ class BispectraIA:
         C1delta = bias_ta * C1
         C2 = A2 * ((1 + z) / (1 + z_piv)) ** alphaIA_2 * 5 * c1rhocrit * self.cosmo['Om0'] / self.z2lgr(z) ** 2
 
-        # normalization to match the A1 of TATT, according to Eq. 66 of Bakx et al (1) (2025) and Eq. 30 of Bakx et. al. (2) (2025)
-        C1 *= 2
-
+        #Ct = -C2/5 #HARD CODED Ct FOR PAPER RUN
         # Get cg1, cg2_2 and cg2_3 params
-        cg1 = C1
-        cg2_2 = C2
-        cg2_3 = 0.5 * (3 * C1delta - C2)
+        cg1 = 2*C1 # normalization to match the A1 of TATT, according to Eq. 66 of Bakx et al (1) (2025) and Eq. 30 of Bakx et. al. (2) (2025)
+        cg2_1 = -2*Ct/5
+        cg2_2 = C2 #this is actually cg2_2+cg2_1, which we group together to avoid redundant calculations
+        #cg2_3 = 0.5 * (3 * C1delta - C2)
+        cg2_3 = C1delta - 2*C2/3
 
         # Get linear power spectra
         if do_non_linear:
@@ -451,50 +455,50 @@ class BispectraIA:
             PL3 = self.get_interpolated_pklin(k3_mag, z)
 
         # B_delta_delta_E (Eq. 12)
-        B_002_0 = self.get_B002(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0)
-        B_002_2 = self.get_B002(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 2)
+        B_002_0 = self.get_B002(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 0)
+        B_002_2 = self.get_B002(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 2)
         B_ddE = 0.5 * (np.sqrt(3 / 2) * B_002_0 - B_002_2)
 
         # B_E_delta_delta (permutation)
-        B_002_0 = self.get_B002(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 0)
-        B_002_2 = self.get_B002(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 2)
+        B_002_0 = self.get_B002(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 0)
+        B_002_2 = self.get_B002(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 2)
         B_Edd = 0.5 * (np.sqrt(3 / 2) * B_002_0 - B_002_2)
 
         # B_delta_E_delta (permutation)
-        B_002_0 = self.get_B002(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 0)
-        B_002_2 = self.get_B002(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 2)
+        B_002_0 = self.get_B002(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 0)
+        B_002_2 = self.get_B002(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 2)
         B_dEd = 0.5 * (np.sqrt(3 / 2) * B_002_0 - B_002_2)
 
         # B_delta_delta_B
-        B_002_1 = self.get_B002(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 1)
+        B_002_1 = self.get_B002(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 1)
         B_ddB = -B_002_1
 
         # B_B_delta_delta (permutation)
-        B_002_1 = self.get_B002(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 1)
+        B_002_1 = self.get_B002(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 1)
         B_Bdd = -B_002_1
 
         # B_delta_B_delta (permutation)
-        B_002_1 = self.get_B002(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 1)
+        B_002_1 = self.get_B002(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 1)
         B_dBd = -B_002_1
 
         # B_delta_EE (Eq. 13)
-        B_022_00 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0, 0)
-        B_022_02_perm1 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0, 2)
-        B_022_02_perm2 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 2, 0)
+        B_022_00 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 0, 0)
+        B_022_02_perm1 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 0, 2)
+        B_022_02_perm2 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 2, 0)
         #B_dEE = np.sqrt(3 / 2) / 4 * (np.sqrt(3 / 2) * B_022_00 + B_022_02_perm1 + B_022_02_perm2)
         B_dEE = np.sqrt(3 / 2) / 4 * (np.sqrt(3 / 2) * B_022_00 - B_022_02_perm1 - B_022_02_perm2)
 
         # B_E_delta_E (permutation)
-        B_022_00 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 0, 0)
-        B_022_02_perm1 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 0, 2)
-        B_022_02_perm2 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 2, 0)
+        B_022_00 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 0, 0)
+        B_022_02_perm1 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 0, 2)
+        B_022_02_perm2 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 2, 0)
         #B_EdE = np.sqrt(3 / 2) / 4 * (np.sqrt(3 / 2) * B_022_00 + B_022_02_perm1 + B_022_02_perm2)
         B_EdE = np.sqrt(3 / 2) / 4 * (np.sqrt(3 / 2) * B_022_00 - B_022_02_perm1 - B_022_02_perm2)
 
         # B_EE_delta (permutation)
-        B_022_00 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 0, 0)
-        B_022_02_perm1 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 0, 2)
-        B_022_02_perm2 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 2, 0)
+        B_022_00 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 0, 0)
+        B_022_02_perm1 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 0, 2)
+        B_022_02_perm2 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 2, 0)
         #B_EEd = np.sqrt(3 / 2) / 4 * (np.sqrt(3 / 2) * B_022_00 + B_022_02_perm1 + B_022_02_perm2)
         B_EEd = np.sqrt(3 / 2) / 4 * (np.sqrt(3 / 2) * B_022_00 - B_022_02_perm1 - B_022_02_perm2)
 
@@ -504,46 +508,46 @@ class BispectraIA:
         B_BBd = 0
 
         # B_delta_EB
-        B_022_01 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0, 1)
+        B_022_01 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 0, 1)
         B_dEB = -np.sqrt(3 / 8) * B_022_01
 
         # B_delta_BE (permutation)
-        B_022_01 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 1, 0)
+        B_022_01 = self.get_B022(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 1, 0)
         B_dBE = -np.sqrt(3 / 8) * B_022_01
 
         # B_B_delta_E (permutation)
-        B_022_01 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 0, 1)
+        B_022_01 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 0, 1)
         B_BdE = -np.sqrt(3 / 8) * B_022_01
 
         # B_E_delta_B (permutation)
-        B_022_01 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 1, 0)
+        B_022_01 = self.get_B022(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 1, 0)
         B_EdB = -np.sqrt(3 / 8) * B_022_01
 
         # B_EB_delta (permutation)
-        B_022_01 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 0, 1)
+        B_022_01 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 0, 1)
         B_EBd = -np.sqrt(3 / 8) * B_022_01
 
         # B_BE_delta (permutation)
-        B_022_01 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 1, 0)
+        B_022_01 = self.get_B022(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 1, 0)
         B_BEd = -np.sqrt(3 / 8) * B_022_01
 
         # B_EEE (Eq. 14)
-        B_222_000 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0, 0, 0)
-        B_222_002_perm1 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0, 0, 2)
-        B_222_002_perm2 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 2, 0, 0)
-        B_222_002_perm3 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0, 2, 0)
+        B_222_000 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 0, 0, 0)
+        B_222_002_perm1 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 0, 0, 2)
+        B_222_002_perm2 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 2, 0, 0)
+        B_222_002_perm3 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 0, 2, 0)
         B_EEE = 3 / 16 * (np.sqrt(3 / 2) * B_222_000 - B_222_002_perm1 - B_222_002_perm2 - B_222_002_perm3)
 
         # B_EEB (Eq. 19)
-        B_222_001 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_2, cg2_3, 0, 0, 1)
+        B_222_001 = self.get_B222(k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, cg1, cg2_1, cg2_2, cg2_3, 0, 0, 1)
         B_EEB = -3 / 8 * B_222_001
 
         # B_EBE
-        B_222_010 = self.get_B222(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_2, cg2_3, 0, 0, 1)
+        B_222_010 = self.get_B222(k3_mag, k1_mag, k2_mag, PL3, PL1, PL2, cg1, cg2_1, cg2_2, cg2_3, 0, 0, 1)
         B_EBE = -3 / 8 * B_222_010
 
         # B_BEE
-        B_222_100 = self.get_B222(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_2, cg2_3, 0, 0, 1)
+        B_222_100 = self.get_B222(k2_mag, k3_mag, k1_mag, PL2, PL3, PL1, cg1, cg2_1, cg2_2, cg2_3, 0, 0, 1)
         B_BEE = -3 / 8 * B_222_100
 
         # B_EBB + permutations
