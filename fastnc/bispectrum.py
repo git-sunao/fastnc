@@ -211,20 +211,20 @@ class BispectrumBase:
         elif self.config_interp['puv_grid']:
             p = np.logspace(np.log10(self.rmin), np.log10(3*self.rmax), \
                 self.config_interp['nrbin'])
-            #pu = np.linspace(0.000001,0.5,20)
-            #pv = np.linspace(0.000001,0.5,20)
-            #pu = np.unique(np.concatenate((np.logspace(-4, -1, 8), np.linspace(0.1, 0.5, 33))))
-            #pv = np.unique(np.concatenate((np.logspace(-4, -1, 8), np.linspace(0.1, 0.5, 33))))
-            #pu = np.unique(np.concatenate((np.logspace(-4, -1, 8), np.linspace(0.1, 0.453, 22),
-            #                               (0.5 * np.ones(8) - np.logspace(-4, np.log10(0.03), 8))[::-1],0.5* np.ones(1))))
-            #pv = np.unique(np.concatenate((np.logspace(-4, -1, 8), np.linspace(0.1, 0.453, 22),
-            #                               (0.5 * np.ones(8) - np.logspace(-4, np.log10(0.03), 8))[::-1],0.5* np.ones(1))))
             pu = np.unique(np.concatenate((1e-6 * np.ones(1), np.logspace(-4, np.log10(0.03), 8), np.linspace(0.047, 0.453, 22),
                                            (0.5 * np.ones(8) - np.logspace(-4, np.log10(0.03), 8))[::-1],
                                            0.5 * np.ones(1))))
             pv = np.unique(np.concatenate((1e-6 * np.ones(1), np.logspace(-4, np.log10(0.03), 8), np.linspace(0.047, 0.453, 22),
                                            (0.5 * np.ones(8) - np.logspace(-4, np.log10(0.03), 8))[::-1],
                                            0.5 * np.ones(1))))
+
+            #tentative --- change back to old ones to be faster
+            #pu = np.unique(np.concatenate((1e-6 * np.ones(1), np.logspace(-4, np.log10(0.03), 10), np.linspace(0.047, 0.453, 30),
+            #                               (0.5 * np.ones(10) - np.logspace(-4, np.log10(0.03), 10))[::-1],
+            #                               0.5 * np.ones(1))))
+            #pv = np.unique(np.concatenate((1e-6 * np.ones(1), np.logspace(-4, np.log10(0.03), 10), np.linspace(0.047, 0.453, 30),
+            #                               (0.5 * np.ones(10) - np.logspace(-4, np.log10(0.03), 10))[::-1],
+            #                               0.5 * np.ones(1))))
             P, PU, PV = np.meshgrid(p, pu, pv, indexing='ij')
             ELL1 = PU*P
             ELL2 = PV*P
@@ -1201,7 +1201,8 @@ class BispectrumHalofit(BispectrumBase):
             z (float)  : redshift
             lgr (float): linear growth rate
         """
-        self.z2lgr = ius(z, lgr, ext=1)
+        #self.z2lgr = ius(z, lgr, ext=1)
+        self.z2lgr = ius(z, lgr, ext=3) #extrapolate to boundary value so that IA wont break down
         self.halofit.set_lgr(z, lgr)
         self.has_changed = True
 
