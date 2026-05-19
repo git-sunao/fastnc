@@ -436,13 +436,12 @@ class BispectraIA:
 
         return result
 
-'''Alternative functions for debugging that use the direct eqs from Gomes et. al.'''
+    '''Alternative functions for debugging that use the direct eqs from Gomes et. al.'''
         # ------------------------------------------------------------------
         # BδEE  —  Eq. 52
         # ------------------------------------------------------------------
 
-    def get_B_dEE_gomes(self, k1_mag, k2_mag, k3_mag,
-                        PL1, PL2, PL3, C1, C1delta, C2, Ct=0):
+    def get_B_dEE_gomes(self, k1_mag, k2_mag, k3_mag, PL1, PL2, PL3, C1, C1delta, C2, Ct=0):
         """
         Eq. 52 of Gomes et al. (2026).
         BδEE(k1,k2,k3) =

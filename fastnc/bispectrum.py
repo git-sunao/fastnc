@@ -603,6 +603,7 @@ class BispectrumBase:
         """
         b = self.matter_bispectrum_no_baryon(k1,k2,k3,z)
         r = self.baryon_model(k1,k2,k3,z)
+
         return b*r
 
     def ia_bispectrum(self, k1, k2, k3, z, z_piv, a1, alpha1, a2, alpha2, bias_ta):

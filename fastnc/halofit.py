@@ -575,7 +575,7 @@ class Halofit:
             Bh3[sel]*= 1./(1.+c['en']*q1)/(1.+c['en']*q2)/(1.+c['en']*q3)
             Bh3[np.logical_not(sel)] = np.nan
             Btot += Bh3
-        
+
         return Btot
 
 def get_Rb_bihalofit(k1, k2, k3, z):
