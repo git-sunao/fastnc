@@ -78,6 +78,7 @@ class FastNaturalComponents:
     config_fftgrid   = {'auto':True, 'ell1min':None, 'ell1max':None, 'nfft':150}
         
     def __init__(self, config=None, verbose=True, **kwargs):
+        print(f"Init first: {config}")
         # general setup
         self.verbose = verbose
         # setup shear projection
@@ -114,6 +115,7 @@ class FastNaturalComponents:
             self.Lmax_diag = self.Lmax
         self.Mmax = self.config_multipole['Mmax']
         self.multipole_type = self.config_multipole['multipole_type']
+        print(f"Set Multipole in OLD: {self.Lmax} {self.Lmax_diag}")
         if self.multipole_type == 'legendre':
             self.GLM = MCF222LegendreFourier(self.Lmax_diag, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
         elif self.multipole_type == 'fourier':

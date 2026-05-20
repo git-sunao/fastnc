@@ -271,6 +271,7 @@ class MCF222LegendreFourier(ModeCouplingFunctionBase):
         has_changed = False
         # prepare todo list
         todo = []
+        print(f"{self.Lmax}")
         for L in range(self.Lmax+1):
             for M in range(self.Mmax+1):
                 todo.append([L, M])
@@ -393,7 +394,7 @@ class MCF222FourierFourier(ModeCouplingFunctionBase):
                 continue
             args = {'K':(K), 'psi':self.psi}
             o, c = aint(self._integrand, 0, np.pi, 2, tol=self.tol, **args)
-            self.data[K] = o
+            self.data[(K,)] = o
             has_changed = True
         # Correction?
         return has_changed
@@ -427,9 +428,9 @@ class MCF222FourierFourier(ModeCouplingFunctionBase):
             # G_{K}(psi) = G_{-K}(np.pi/2-psi)
             _K = _M - _L
             if _K>0:
-                o = np.interp(psi, self.psi, self.data[_K])
+                o = np.interp(psi, self.psi, self.data[(_K,)])
             else:
-                o = np.interp(np.pi/2-psi, self.psi, self.data[-_K])
+                o = np.interp(np.pi/2-psi, self.psi, self.data[(-_K,)])
             out.append(o)
         out = np.array(out).reshape(L.shape+M.shape+psi.shape)
 

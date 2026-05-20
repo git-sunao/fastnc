@@ -263,15 +263,18 @@ class BispectrumBase:
                 self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'fourier':
-            self.multipole_decomposer = MultipoleFourier(mu, \
+            x = -np.arccos(mu)
+            self.multipole_decomposer = MultipoleFourier(x, \
                 self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'cosine':
-            self.multipole_decomposer = MultipoleCosine(mu, \
+            x = -np.arccos(mu)
+            self.multipole_decomposer = MultipoleCosine(x, \
                 self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'sine':
-            self.multipole_decomposer = MultipoleSine(mu, \
+            x = -np.arccos(mu)
+            self.multipole_decomposer = MultipoleSine(x, \
                 self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         else:

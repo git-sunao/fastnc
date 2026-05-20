@@ -239,8 +239,8 @@ class MultipoleFourier(MultipoleBase):
             w0[L!=0,:] = np.exp(iL*self.x[None,:])/iL
             w1[L!=0,:] = (self.x[None,:]-1.0/iL)/iL * np.exp(iL*self.x[None,:])
             # diff
-            w0 = np.diff(w0, axis=1)
-            w1 = np.diff(w1, axis=1)
+            w0 = np.diff(w0, axis=1)/np.pi
+            w1 = np.diff(w1, axis=1)/np.pi
             basis = (w0, w1)
         elif self.method == 'rieamnn':
             basis = np.exp(1j*L[:,None]*self.x[None,:])
