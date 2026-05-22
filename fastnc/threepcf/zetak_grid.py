@@ -24,13 +24,26 @@ class ZetaKKey:
 
 @dataclass
 class ZetaKMode:
-    """One opening-angle coefficient ``zeta_k(theta1, theta2)``."""
+    """One opening-angle coefficient ``zeta_k(theta1, theta2)``.
+
+    ``value`` stores the full FFTLog real-space grid.  Use :meth:`get_value`
+    for the user-facing/downsampled grid and :meth:`get_value_fft` for the
+    full FFT grid explicitly.
+    """
 
     grid: FFTGrid
     key: ZetaKKey
     value: np.ndarray
     source_k: float
     source_sigma: tuple[int, int, int]
+
+    def __post_init__(self):
+        self.value = np.asarray(self.value)
+        if self.value.shape != self.grid.shape_theta_fft:
+            raise ValueError(
+                f"ZetaKMode.value must have shape {self.grid.shape_theta_fft}; "
+                f"got {self.value.shape}."
+            )
 
     @property
     def theta1(self) -> np.ndarray:
@@ -39,6 +52,34 @@ class ZetaKMode:
     @property
     def theta2(self) -> np.ndarray:
         return self.grid.theta
+
+    @property
+    def theta1_fft(self) -> np.ndarray:
+        return self.grid.theta_fft
+
+    @property
+    def theta2_fft(self) -> np.ndarray:
+        return self.grid.theta_fft
+
+    @property
+    def value_fft(self) -> np.ndarray:
+        return self.value
+
+    def get_value(self) -> np.ndarray:
+        """Return ``zeta_k`` on the user-facing theta grid."""
+        return self.grid.downsample_theta_array(self.value, axis1=0, axis2=1)
+
+    def get_value_fft(self) -> np.ndarray:
+        """Return ``zeta_k`` on the full FFTLog theta grid."""
+        return self.value
+
+    def get_zeta_k(self) -> np.ndarray:
+        """Return ``zeta_k`` on the user-facing theta grid."""
+        return self.get_value()
+
+    def get_zeta_k_fft(self) -> np.ndarray:
+        """Return ``zeta_k`` on the full FFTLog theta grid."""
+        return self.get_value_fft()
 
 
 @dataclass
@@ -85,10 +126,28 @@ class ZetaKGrid:
         return self.modes[key]
 
     def get_for_epsilon(self, epsilon: tuple[int, int, int], k: float) -> ZetaKMode:
+        """Return the stored ``ZetaKMode`` for ``(epsilon, k)``.
+
+        The returned mode stores the full FFTLog theta grid internally.  Use
+        ``mode.get_value()`` for the user-facing grid and
+        ``mode.get_value_fft()`` for the full FFT grid.
+        """
         key = self.aliases.get(self._alias_key(epsilon, k))
         if key is None:
             key = self.key_from_sigma_k(self.sigma_from_epsilon(epsilon), k)
         return self.modes[key]
+
+    def get_for_epsilon_fft(self, epsilon: tuple[int, int, int], k: float) -> np.ndarray:
+        """Return ``zeta_k`` for ``(epsilon, k)`` on the full FFTLog theta grid."""
+        return self.get_for_epsilon(epsilon, k).get_value_fft()
+
+    def get_value_for_epsilon(self, epsilon: tuple[int, int, int], k: float) -> np.ndarray:
+        """Return ``zeta_k`` for ``(epsilon, k)`` on the user-facing theta grid."""
+        return self.get_for_epsilon(epsilon, k).get_value()
+
+    def get_value_for_epsilon_fft(self, epsilon: tuple[int, int, int], k: float) -> np.ndarray:
+        """Return ``zeta_k`` for ``(epsilon, k)`` on the full FFTLog theta grid."""
+        return self.get_for_epsilon(epsilon, k).get_value_fft()
 
     def __contains__(self, key: ZetaKKey) -> bool:
         return key in self.modes
@@ -116,7 +175,6 @@ class ZetaKGrid:
             config=hankel_config,
             bin_width_logtheta=bin_width_logtheta,
         )
-        zeta = zeta[np.ix_(self.grid.down_sampler, self.grid.down_sampler)]
         return ZetaKMode(
             grid=self.grid,
             key=self.key_from_sigma_k(sigma, float(k)),
@@ -213,11 +271,36 @@ class ZetaKGrid:
         )
         stored_sigma = self.spin_spec.sigma_from_epsilon(stored_epsilon)
         stored_k = as_effective_spin_triple(stored_sigma).k_values(self.kmax)
-        zeta = [self.get_for_epsilon(stored_epsilon, float(k)).value for k in stored_k]
+        zeta = [self.get_for_epsilon(stored_epsilon, float(k)).get_value() for k in stored_k]
         zeta_arr = np.asarray(zeta)
         if conjugated:
             return -stored_k, np.conjugate(zeta_arr), requested_sigma, requested_epsilon, int(idx)
         return stored_k, zeta_arr, requested_sigma, requested_epsilon, int(idx)
+
+    def zeta_k_array_fft(self, *, epsilon=None, component=None) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int], tuple[int, int, int], int]:
+        """Return ``zeta_k`` modes on the full FFTLog theta grid.
+
+        The return signature matches :meth:`zeta_k_array`, but the second
+        element has shape ``(nk, ntheta_fft, ntheta_fft)``.
+        """
+        idx, requested_epsilon, requested_sigma, stored_epsilon, conjugated = self._resolve_component(
+            epsilon=epsilon, component=component
+        )
+        stored_sigma = self.spin_spec.sigma_from_epsilon(stored_epsilon)
+        stored_k = as_effective_spin_triple(stored_sigma).k_values(self.kmax)
+        zeta = [self.get_for_epsilon(stored_epsilon, float(k)).get_value_fft() for k in stored_k]
+        zeta_arr = np.asarray(zeta)
+        if conjugated:
+            return -stored_k, np.conjugate(zeta_arr), requested_sigma, requested_epsilon, int(idx)
+        return stored_k, zeta_arr, requested_sigma, requested_epsilon, int(idx)
+
+    def get_zeta_k_array(self, *, epsilon=None, component=None):
+        """Alias of :meth:`zeta_k_array` using explicit getter naming."""
+        return self.zeta_k_array(epsilon=epsilon, component=component)
+
+    def get_zeta_k_array_fft(self, *, epsilon=None, component=None):
+        """Alias of :meth:`zeta_k_array_fft` using explicit getter naming."""
+        return self.zeta_k_array_fft(epsilon=epsilon, component=component)
 
     def component_specs_for_resum(self):
         """Return component specs available for all-component resummation."""
@@ -255,10 +338,10 @@ class ZetaKGrid:
         components = []
 
         for comp in self.component_specs_for_resum():
-            k_values, zeta_k, sigma, eps, idx = self.zeta_k_array(component=comp.index)
+            k_values, zeta_k_fft, sigma, eps, idx = self.zeta_k_array_fft(component=comp.index)
             values.append(
                 resum_multipoles(
-                    zeta_k,
+                    zeta_k_fft,
                     k_values,
                     delta_phi_arr,
                     sigma,
@@ -274,7 +357,7 @@ class ZetaKGrid:
         return ZetaGrid(
             grid=self.grid,
             delta_phi=delta_phi_arr,
-            values=np.asarray(values),
+            values_fft=np.asarray(values),
             sigmas=tuple(sigmas),
             epsilons=tuple(epsilons),
             components=tuple(components),

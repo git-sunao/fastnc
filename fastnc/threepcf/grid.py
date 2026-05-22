@@ -32,13 +32,13 @@ class FFTGrid:
     psi_ell
         ``atan2(ELL2, ELL1)`` on the Fourier grid.
     theta
-        Selected real-space grid used in returned zeta arrays.
+        User-facing real-space grid selected by ``down_sampler``.
     theta_user
-        User-requested theta values.  This is equal to ``theta`` when a
-        target theta grid is specified in the configuration, and otherwise
-        equal to the full FFTLog theta grid.
+        Alias of ``theta`` kept for user-facing APIs.
     THETA1, THETA2
-        Broadcast selected real-space grids.
+        Broadcast user-facing real-space grids.
+    THETA1_fft, THETA2_fft
+        Broadcast full FFTLog real-space grids.
     """
 
     ell: np.ndarray
@@ -52,6 +52,8 @@ class FFTGrid:
     theta_user: np.ndarray
     THETA1: np.ndarray
     THETA2: np.ndarray
+    THETA1_fft: np.ndarray
+    THETA2_fft: np.ndarray
 
     @classmethod
     def from_tuned_grid(cls, tuned: TunedFFTGrid) -> "FFTGrid":
@@ -62,6 +64,7 @@ class FFTGrid:
         theta = theta_fft[down_sampler]
         theta_user = np.asarray(theta, dtype=float)
         THETA1, THETA2 = np.meshgrid(theta, theta, indexing="ij")
+        THETA1_fft, THETA2_fft = np.meshgrid(theta_fft, theta_fft, indexing="ij")
         return cls(
             ell=ell,
             theta_fft=theta_fft,
@@ -74,6 +77,8 @@ class FFTGrid:
             theta_user=theta_user,
             THETA1=THETA1,
             THETA2=THETA2,
+            THETA1_fft=THETA1_fft,
+            THETA2_fft=THETA2_fft,
         )
 
     @classmethod
@@ -96,12 +101,38 @@ class FFTGrid:
         return int(self.theta.size)
 
     @property
+    def n_theta_fft(self) -> int:
+        return int(self.theta_fft.size)
+
+    @property
     def shape_ell(self) -> tuple[int, int]:
         return self.ELL1.shape
 
     @property
     def shape_theta(self) -> tuple[int, int]:
         return self.THETA1.shape
+
+    @property
+    def shape_theta_fft(self) -> tuple[int, int]:
+        return self.THETA1_fft.shape
+
+    def downsample_theta_array(self, values: np.ndarray, *, axis1: int = -2, axis2: int = -1) -> np.ndarray:
+        """Select the user-facing theta grid from an array on the full FFT grid.
+
+        The two theta axes are selected with ``down_sampler``.  This helper is
+        used by grid-backed objects so that they can store full FFT-grid values
+        while exposing downsampled/user-grid values through explicit getters.
+        """
+        arr = np.asarray(values)
+        axis1 = axis1 % arr.ndim
+        axis2 = axis2 % arr.ndim
+        if axis1 == axis2:
+            raise ValueError("axis1 and axis2 must be distinct.")
+        arr = np.take(arr, self.down_sampler, axis=axis1)
+        if axis2 > axis1:
+            axis2 -= 0
+        arr = np.take(arr, self.down_sampler, axis=axis2)
+        return arr
 
     def validate_same(self, other: "FFTGrid") -> None:
         if self is other:
@@ -131,6 +162,10 @@ class GridBacked:
     @property
     def theta_user(self) -> np.ndarray:
         return self.grid.theta_user
+
+    @property
+    def theta_fft(self) -> np.ndarray:
+        return self.grid.theta_fft
 
     @property
     def down_sampler(self) -> np.ndarray:

@@ -1,7 +1,7 @@
 """Resummed real-space 3PCF grid object."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 
 from .config import ThreePCFConfig
@@ -25,20 +25,28 @@ class ZetaGrid:
 
     grid: FFTGrid
     delta_phi: np.ndarray
-    values: np.ndarray
-    sigmas: tuple[tuple[int, int, int], ...]
-    epsilons: tuple[tuple[int, int, int], ...]
-    components: tuple[int, ...]
+    values: np.ndarray | None = None
+    sigmas: tuple[tuple[int, int, int], ...] = field(default_factory=tuple)
+    epsilons: tuple[tuple[int, int, int], ...] = field(default_factory=tuple)
+    components: tuple[int, ...] = field(default_factory=tuple)
     projection: str = "x"
     phase: str = "nu"
     normalization: float = 1.0
     bin_width: float | None = None
     config: ThreePCFConfig | None = None
     spin: tuple[int, int, int] | None = None
+    values_fft: np.ndarray | None = None
 
     def __post_init__(self):
         self.delta_phi = np.asarray(self.delta_phi, dtype=float)
-        self.values = np.asarray(self.values)
+        if self.values_fft is not None:
+            self.values_fft = np.asarray(self.values_fft)
+        if self.values is None:
+            if self.values_fft is None:
+                raise ValueError("Either values or values_fft must be provided.")
+            self.values = self._downsample_values_fft(self.values_fft)
+        else:
+            self.values = np.asarray(self.values)
         self.sigmas = tuple(tuple(int(x) for x in sig) for sig in self.sigmas)
         self.epsilons = tuple(tuple(int(x) for x in eps) for eps in self.epsilons)
         self.components = tuple(int(c) for c in self.components)
@@ -50,12 +58,20 @@ class ZetaGrid:
         expected = (ncomp, self.grid.n_theta, self.grid.n_theta, self.delta_phi.size)
         if self.values.shape != expected:
             raise ValueError(f"values must have shape {expected}; got {self.values.shape}.")
+        if self.values_fft is not None:
+            expected_fft = (ncomp, self.grid.n_theta_fft, self.grid.n_theta_fft, self.delta_phi.size)
+            if self.values_fft.shape != expected_fft:
+                raise ValueError(f"values_fft must have shape {expected_fft}; got {self.values_fft.shape}.")
         if len(self.sigmas) != ncomp:
             raise ValueError("sigmas must have one entry per component.")
         if len(self.epsilons) != ncomp:
             raise ValueError("epsilons must have one entry per component.")
         if len(set(self.components)) != ncomp:
             raise ValueError("components must be unique.")
+
+    def _downsample_values_fft(self, values_fft: np.ndarray) -> np.ndarray:
+        """Select user-facing theta axes from full FFT-grid zeta values."""
+        return self.grid.downsample_theta_array(values_fft, axis1=1, axis2=2)
 
     @property
     def theta1(self) -> np.ndarray:
@@ -72,6 +88,10 @@ class ZetaGrid:
     @property
     def theta_user(self) -> np.ndarray:
         return self.grid.theta_user
+
+    @property
+    def theta_fft(self) -> np.ndarray:
+        return self.grid.theta_fft
 
     @property
     def down_sampler(self) -> np.ndarray:
@@ -100,6 +120,24 @@ class ZetaGrid:
     def __array__(self, dtype=None):
         return np.asarray(self.values, dtype=dtype)
 
+    def get_values(self) -> np.ndarray:
+        """Return zeta on the user-facing theta grid."""
+        return self.values
+
+    def get_values_fft(self) -> np.ndarray:
+        """Return zeta on the full FFTLog theta grid."""
+        if self.values_fft is None:
+            raise RuntimeError("This ZetaGrid does not store full FFT-grid values.")
+        return self.values_fft
+
+    def get_zeta(self) -> np.ndarray:
+        """Return zeta on the user-facing theta grid."""
+        return self.get_values()
+
+    def get_zeta_fft(self) -> np.ndarray:
+        """Return zeta on the full FFTLog theta grid."""
+        return self.get_values_fft()
+
     def component_axis_index(self, component: int) -> int:
         component = int(component)
         try:
@@ -107,9 +145,48 @@ class ZetaGrid:
         except ValueError as exc:
             raise KeyError(f"component={component} is not stored in this ZetaGrid.") from exc
 
+    def epsilon_axis_index(self, epsilon: tuple[int, int, int]) -> int:
+        """Return the stored component-axis index for an epsilon label.
+
+        If ``spin`` is available, this method accepts both representative and
+        conjugate epsilon labels and maps them to the stored natural component.
+        Otherwise it falls back to exact matching against ``self.epsilons``.
+        """
+        eps = tuple(int(e) for e in epsilon)
+        if self.spin is not None:
+            from .spin import SpinSpec
+
+            idx, _ = SpinSpec(self.spin).component_index_from_epsilon(eps)
+            component = SpinSpec(self.spin).component(idx).index
+            return self.component_axis_index(component)
+        try:
+            return self.epsilons.index(eps)
+        except ValueError as exc:
+            raise KeyError(f"epsilon={eps} is not stored in this ZetaGrid.") from exc
+
+    def get_for_epsilon(self, epsilon: tuple[int, int, int]) -> np.ndarray:
+        """Return one natural component on the user-facing theta grid."""
+        return self.values[self.epsilon_axis_index(epsilon)]
+
+    def get_for_epsilon_fft(self, epsilon: tuple[int, int, int]) -> np.ndarray:
+        """Return one natural component on the full FFTLog theta grid."""
+        return self.get_values_fft()[self.epsilon_axis_index(epsilon)]
+
     def component_values(self, component: int) -> np.ndarray:
         """Return values for one component with shape ``(ntheta1, ntheta2, nphi)``."""
         return self.values[self.component_axis_index(component)]
+
+    def component_values_fft(self, component: int) -> np.ndarray:
+        """Return one component on the full FFTLog theta grid."""
+        return self.get_values_fft()[self.component_axis_index(component)]
+
+    def component_zeta(self, component: int) -> np.ndarray:
+        """Return one component on the user-facing theta grid."""
+        return self.component_values(component)
+
+    def component_zeta_fft(self, component: int) -> np.ndarray:
+        """Return one component on the full FFTLog theta grid."""
+        return self.component_values_fft(component)
 
     def component_sigma(self, component: int) -> tuple[int, int, int]:
         return self.sigmas[self.component_axis_index(component)]
@@ -165,14 +242,32 @@ class ZetaGrid:
                     self.delta_phi,
                     from_projection=src,
                     to_projection=dst,
-                    component=int(component),
                     sigma=self.sigmas[axis],
                 )
             )
+
+        converted_fft = None
+        if self.values_fft is not None:
+            converted_fft = []
+            for axis, component in enumerate(self.components):
+                converted_fft.append(
+                    convert_projection(
+                        self.values_fft[axis],
+                        self.grid.theta_fft,
+                        self.grid.theta_fft,
+                        self.delta_phi,
+                        from_projection=src,
+                        to_projection=dst,
+                        sigma=self.sigmas[axis],
+                    )
+                )
+            converted_fft = np.asarray(converted_fft)
+
         return ZetaGrid(
             grid=self.grid,
             delta_phi=self.delta_phi,
             values=np.asarray(converted),
+            values_fft=converted_fft,
             sigmas=self.sigmas,
             epsilons=self.epsilons,
             components=self.components,

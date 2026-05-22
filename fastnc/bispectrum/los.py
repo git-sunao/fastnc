@@ -286,7 +286,7 @@ class LineOfSightProjector:
         """
         if isinstance(base, BaseLOSIntegrand):
             values = base.values
-            shape = base.shape
+            shape  = base.shape
             scalar = base.scalar
         else:
             values = np.asarray(base)
