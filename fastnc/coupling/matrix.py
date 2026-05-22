@@ -16,14 +16,14 @@ CouplingMatrix.__call__() when CouplingMatrix subclasses CouplingKernel.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import pi
 from pathlib import Path
 from typing import Iterable, Literal
 
 import numpy as np
 
-from .cache import CachePolicy, CouplingCache
-from .compute import _as_two_x, coupling_delta, two_delta_from_L_k
-from .evaluate import coupling_delta_from_cache
+from .cache import CachePolicy, CouplingCache, CouplingCacheSession
+from .compute import _as_two_x, coupling_delta, exact_zero_delta, two_delta_from_L_k
 
 Method = Literal["auto", "cache", "direct"]
 
@@ -60,6 +60,7 @@ class CouplingKernel:
         lazy: bool | None = None,
         fallback_direct: bool = True,
         atol: float = 1e-14,
+        cache_session: CouplingCacheSession | None = None,
     ) -> None:
         if lazy is not None:
             cache_policy = "lazy" if lazy else "read_only"
@@ -76,7 +77,12 @@ class CouplingKernel:
         if self.config.npsi < 3:
             raise ValueError("npsi must be >= 3.")
 
-        self._cache = CouplingCache(self.config.cache_file) if self.config.use_cache else None
+        if cache_session is not None and not self.config.use_cache:
+            raise ValueError("cache_session was provided but use_cache=False.")
+
+        self._cache_session = cache_session
+        if self.config.use_cache and self._cache_session is None:
+            self._cache_session = CouplingCacheSession(self.config.cache_file)
 
     @property
     def sigma3(self) -> int:
@@ -91,10 +97,14 @@ class CouplingKernel:
         return 0.5 * self.sigma3
 
     @property
+    def cache_session(self) -> CouplingCacheSession:
+        if self._cache_session is None:
+            self._cache_session = CouplingCacheSession(self.config.cache_file)
+        return self._cache_session
+
+    @property
     def cache(self) -> CouplingCache:
-        if self._cache is None:
-            self._cache = CouplingCache(self.config.cache_file)
-        return self._cache
+        return self.cache_session.cache
 
     def __repr__(self) -> str:
         mode = "cache" if self.config.use_cache else "direct"
@@ -157,20 +167,87 @@ class CouplingKernel:
             )
             return float(vals[0]) if scalar_input else vals.reshape(x.shape)
 
-        cfile = Path(cache_file) if cache_file is not None else self.config.cache_file
-        return coupling_delta_from_cache(
-            float(delta),
-            self.sigma3,
+        npsi_eff = self.config.npsi if npsi is None else int(npsi)
+        cache_policy_eff = self.config.cache_policy if cache_policy is None else cache_policy
+        if lazy is not None:
+            cache_policy_eff = "lazy" if lazy else "read_only"
+        fallback_eff = self.config.fallback_direct if fallback_direct is None else bool(fallback_direct)
+
+        if cache_file is None or Path(cache_file) == self.config.cache_file:
+            session = self.cache_session
+        else:
+            # Explicit cache_file override: use a temporary session. This preserves
+            # the public API while keeping the fast path tied to self.cache_session.
+            session = CouplingCacheSession(Path(cache_file))
+
+        return self._call_delta_with_session(
+            delta,
             psi,
-            cfile,
-            npsi=self.config.npsi if npsi is None else int(npsi),
-            cache_policy=self.config.cache_policy if cache_policy is None else cache_policy,
-            lazy=lazy,
-            fallback_direct=(
-                self.config.fallback_direct if fallback_direct is None else bool(fallback_direct)
-            ),
-            atol=self.config.atol,
+            session=session,
+            npsi=npsi_eff,
+            cache_policy=cache_policy_eff,
+            fallback_direct=fallback_eff,
         )
+
+
+    def _call_delta_with_session(
+        self,
+        delta: int | float,
+        psi: float | np.ndarray,
+        *,
+        session: CouplingCacheSession,
+        npsi: int,
+        cache_policy: CachePolicy,
+        fallback_direct: bool,
+    ) -> float | np.ndarray:
+        """Evaluate G_delta using a persistent CouplingCacheSession.
+
+        This is the fast cache path. It avoids coupling_delta_from_cache(), which
+        creates a new CouplingCache object and rereads the HDF5 block on each
+        call. The session keeps already-read b-cache blocks in memory.
+        """
+        two_delta = _as_two_x(delta, name="delta", atol=self.config.atol)
+        two_q = int(self.sigma3)
+        two_p = -two_delta
+
+        x = np.asarray(psi, dtype=float)
+        scalar_input = x.ndim == 0
+        xflat = x.reshape(-1)
+        out = np.zeros_like(xflat, dtype=float)
+
+        nonzero_mask = ~exact_zero_delta(two_delta, two_q, xflat, atol=self.config.atol)
+        if not np.any(nonzero_mask):
+            return float(0.0) if scalar_input else out.reshape(x.shape)
+
+        try:
+            psi_grid, two_p_grid, b_grid = session.read_b_for_two_p(
+                two_q,
+                two_p,
+                npsi=npsi,
+                policy=cache_policy,
+            )
+            col_idx = np.nonzero(two_p_grid == two_p)[0]
+            if col_idx.size == 0:
+                raise KeyError(f"two_p={two_p} not present in cached block")
+            col = int(col_idx[0])
+            vals = 2 * pi * np.interp(
+                xflat[nonzero_mask],
+                psi_grid,
+                b_grid[:, col],
+            )
+        except Exception:
+            if not fallback_direct:
+                raise
+            vals = np.array(
+                [
+                    coupling_delta(two_delta, two_q, float(xx), atol=self.config.atol)
+                    for xx in xflat[nonzero_mask]
+                ]
+            )
+
+        vals[np.abs(vals) < 10 * np.finfo(float).eps] = 0.0
+        out[nonzero_mask] = vals
+        return float(out[0]) if scalar_input else out.reshape(x.shape)
 
     def __call__(
         self,
@@ -333,6 +410,7 @@ class CouplingMatrix(CouplingKernel):
         lazy: bool | None = None,
         fallback_direct: bool = True,
         atol: float = 1e-14,
+        cache_session: CouplingCacheSession | None = None,
     ) -> None:
         self.sigma1 = int(sigma1)
         self.sigma2 = int(sigma2)
@@ -345,6 +423,7 @@ class CouplingMatrix(CouplingKernel):
             lazy=lazy,
             fallback_direct=fallback_direct,
             atol=atol,
+            cache_session=cache_session,
         )
 
     @property

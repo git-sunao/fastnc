@@ -1,35 +1,10 @@
-"""Projection-conversion utilities for shear natural components.
-
-The 3PCF engine computes the cross/x-projection by default.  This module
-provides phase factors to convert the shear natural components from the
-cross projection to orthocenter or centroid projections, following the
-legacy fastnc implementation.
-
-Conventions
------------
-``theta1`` and ``theta2`` are the two real-space side lengths used by the
-SAS parametrization, and ``phi`` is the opening angle between them.  The
-input 3PCF array is expected to have shape ``(ntheta1, ntheta2, nphi)``.
-
-The natural-component index is
-
-    mu=0: <gamma gamma gamma>
-    mu=1: <gamma* gamma gamma>
-    mu=2: <gamma gamma* gamma>
-    mu=3: <gamma gamma gamma*>
-
-Equivalently, for spin triples with |sigma_i|=2,
-
-    ( 2,  2,  2) -> mu=0
-    (-2,  2,  2) -> mu=1
-    ( 2, -2,  2) -> mu=2
-    ( 2,  2, -2) -> mu=3
-"""
+"""Projection-convention utilities for resummed 3PCF grids."""
 from __future__ import annotations
 
 from typing import Literal
-
 import numpy as np
+
+# conversion is only meaningful for an already resummed zeta(theta1,theta2,phi).
 
 Projection = Literal["x", "cross", "ortho", "orthocenter", "cent", "centroid"]
 
@@ -243,3 +218,4 @@ def convert_projection(
         sigma=sigma,
     )
     return z * fac
+

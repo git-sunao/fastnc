@@ -38,6 +38,10 @@ class ThreePCFConfig:
     ``theta``/``theta_bins`` are useful for point evaluation.  ``theta_bin_edges``
     is useful for bin-averaged double-Hankel transforms.
     """
+    # User-facing physical field spin.  Natural-component effective spins
+    # are generated internally as sigma_i = epsilon_i * spin_i.
+    spin: tuple[int, int, int] = (0, 0, 0)
+
 
     Lmax: int = 30
     kmax: float = 30.0
@@ -46,8 +50,6 @@ class ThreePCFConfig:
     n_ell: int = 200
 
     # Target theta centers for tuned FFTLog output grid.
-    # ``theta_bins`` is the preferred explicit name; ``theta`` is kept for
-    # backward compatibility with the earlier milestone implementation.
     theta: np.ndarray | None = None
     theta_bins: np.ndarray | None = None
     theta_bin_edges: np.ndarray | None = None
@@ -58,6 +60,9 @@ class ThreePCFConfig:
     verbose: bool = False
     timing: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
+
+    epsilons: tuple[tuple[int, int, int], ...] | None = None
+    coupling_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def target_theta(self) -> np.ndarray | None:
         """Return target theta centers, or ``None`` for the full FFTLog grid."""

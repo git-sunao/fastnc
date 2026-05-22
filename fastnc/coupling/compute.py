@@ -211,34 +211,50 @@ def spin_phase_coeff_from_two_q(two_q: int, p: int, psi: float, *, atol: float =
     return spin_phase_coeff_from_keys(two_q, 2 * int(p), psi, atol=atol)
 
 
-def exact_zero_delta(two_delta: int, sigma3: int, psi: float, *, atol: float = 1e-14) -> bool:
-    """Return True if Fourier support implies G_delta(sigma3;psi)=0 exactly."""
+def exact_zero_delta(two_delta: int, sigma3: int, psi, *, atol: float = 1e-14):
+    """Return True if Fourier support implies G_delta(sigma3;psi)=0 exactly.
+
+    Supports scalar or numpy-array psi.
+    """
     two_delta = int(two_delta)
     sigma3 = int(sigma3)
     two_p = -two_delta
 
-    if sigma3 == 0:
-        return two_delta != 0
+    x = np.asarray(psi, dtype=float)
+    scalar_input = x.ndim == 0
 
-    # The analytic support rules below require integer h_3 and integer p.
+    if sigma3 == 0:
+        out = np.full_like(x, two_delta != 0, dtype=bool)
+        return bool(out) if scalar_input else out
+
+    # Analytic support rules require integer h_3 and integer p.
     if sigma3 % 2 != 0 or two_p % 2 != 0:
-        return False
+        out = np.zeros_like(x, dtype=bool)
+        return bool(out) if scalar_input else out
 
     q = sigma3 // 2
     p = two_p // 2
     eta = 1 if sigma3 > 0 else -1
 
-    if _is_endpoint(psi, 0.0, atol):
-        return p != q
-    if _is_endpoint(psi, pi / 4, atol):
-        return p != 0
-    if _is_endpoint(psi, pi / 2, atol):
-        return p != -q
-    if 0.0 < psi < pi / 4:
-        return eta * p < 0
-    if pi / 4 < psi < pi / 2:
-        return eta * p > 0
-    return False
+    out = np.zeros_like(x, dtype=bool)
+
+    is_0 = np.isclose(x, 0.0, atol=atol, rtol=0.0)
+    is_mid = np.isclose(x, pi / 4, atol=atol, rtol=0.0)
+    is_pi2 = np.isclose(x, pi / 2, atol=atol, rtol=0.0)
+
+    out |= is_0 & (p != q)
+    out |= is_mid & (p != 0)
+    out |= is_pi2 & (p != -q)
+
+    interior = ~(is_0 | is_mid | is_pi2)
+
+    left = interior & (0.0 < x) & (x < pi / 4)
+    right = interior & (pi / 4 < x) & (x < pi / 2)
+
+    out |= left & (eta * p < 0)
+    out |= right & (eta * p > 0)
+
+    return bool(out) if scalar_input else out
 
 
 def coupling_delta(two_delta: int, sigma3: int, psi: float, *, atol: float = 1e-14) -> float:

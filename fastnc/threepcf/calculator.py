@@ -1,186 +1,243 @@
-"""Minimal 3PCF engine connecting bispectrum multipoles, coupling, and 2D FFTLog."""
+"""Low-level 3PCF calculator for the B_L -> H_k -> zeta_k -> zeta pipeline."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-import time
 import numpy as np
 
-from ..hankel.grid import make_fftlog_grid, TunedFFTGrid
-from ..hankel.wrapper import DoubleHankelConfig, double_hankel_transform
+from ..coupling import CouplingMatrix
+from ..coupling.cache import CouplingCacheSession
+from ..hankel.wrapper import DoubleHankelConfig
+from .bmultipole_grid import BMultipoleGrid
 from .config import ThreePCFConfig
-from .kernel import HKernelBuilder
-from .spin import SpinTriple, as_spin_triple
-from .resum import resum_multipoles
-from .projection import convert_projection
-
-
-@dataclass
-class ThreePCFMultipoles:
-    """Output container for radial 3PCF multipoles."""
-
-    theta1: np.ndarray
-    theta2: np.ndarray
-    k_values: np.ndarray
-    zeta_k: np.ndarray
-    sigma: tuple[int, int, int]
-    config: ThreePCFConfig
-
-    def resum(
-        self,
-        delta_phi,
-        *,
-        phase: str = "nu",
-        normalization: float = 1.0,
-        bin_width: float | None = None,
-        projection: str = "x",
-        component: int | None = None,
-    ):
-        zeta = resum_multipoles(
-            self.zeta_k,
-            self.k_values,
-            delta_phi,
-            self.sigma,
-            phase=phase,
-            normalization=normalization,
-            bin_width=bin_width,
-        )
-        if projection in ("x", "cross", "times"):
-            return zeta
-        return convert_projection(
-            zeta,
-            self.theta1,
-            self.theta2,
-            delta_phi,
-            from_projection="x",
-            to_projection=projection,
-            component=component,
-            sigma=self.sigma,
-        )
+from .grid import FFTGrid
+from .hkernel_grid import HKernelGrid
+from .spin import SpinSpec, as_effective_spin_triple
+from .zeta_grid import ZetaGrid
+from .zetak_grid import ZetaKGrid
 
 
 class ThreePCFCalculator:
-    """Compute 3PCF radial coefficients from a bispectrum multipole object.
+    """Compute 3PCF grids from a bispectrum-multipole object.
 
-    This class implements the first working milestone:
+    This is the low-level stage orchestrator.  It owns one common
+    :class:`FFTGrid` and the stage grids
 
-        BispectrumMultipole + CouplingMatrix -> H_k -> 2D FFTLog -> zeta_k
-        -> zeta(DeltaPhi).
+    - ``Bgrid`` for ``B_L(ell1, ell2)``,
+    - ``Hgrid`` for angularly mixed ``H_k(ell1, ell2)``, and
+    - ``ZKgrid`` for double-Hankel transformed ``zeta_k(theta1, theta2)``.
 
-    Projection conversion and aperture statistics are deliberately not included
-    here.
+    The final real-space 3PCF is returned as :class:`ZetaGrid` by
+    :meth:`compute_zeta`.
     """
 
-    def __init__(self, sigma, coupling, config: ThreePCFConfig | None = None):
-        self.spin = as_spin_triple(sigma)
-        self.sigma = self.spin.sigma
-        self.coupling = coupling
+    def __init__(
+        self,
+        bmultipole,
+        config: ThreePCFConfig | None = None,
+        *,
+        coupling_kwargs: dict | None = None,
+    ):
+        if bmultipole is None:
+            raise ValueError("bmultipole must be provided.")
+
+        self.bmultipole = bmultipole
         self.config = config or ThreePCFConfig()
-        self.grid: TunedFFTGrid | None = None
-        self.ell1_fft: np.ndarray | None = None
-        self.ell2_fft: np.ndarray | None = None
-        self.theta1_fft: np.ndarray | None = None
-        self.theta2_fft: np.ndarray | None = None
-        self.down_sampler: np.ndarray | None = None
-        self.ELL1: np.ndarray | None = None
-        self.ELL2: np.ndarray | None = None
-        self.result: ThreePCFMultipoles | None = None
 
-    def _timer(self, label: str, t0: float) -> float:
-        if self.config.timing or self.config.verbose:
-            print(f"{label}: {time.perf_counter() - t0:.3f} s")
-        return time.perf_counter()
+        self.coupling_kwargs = dict(self.config.coupling_kwargs)
+        if coupling_kwargs is not None:
+            self.coupling_kwargs.update(dict(coupling_kwargs))
 
-    def setup_fft_grid(self):
-        c = self.config
-        grid = make_fftlog_grid(c.ell_min, c.ell_max, c.n_ell, theta=c.target_theta(), xy=c.xy)
-        self.grid = grid
-        self.ell1_fft = grid.ell
-        self.ell2_fft = grid.ell
-        self.theta1_fft = grid.theta
-        self.theta2_fft = grid.theta
-        self.down_sampler = grid.down_sampler
-        self.ELL1, self.ELL2 = np.meshgrid(grid.ell, grid.ell, indexing="ij")
-        return grid
+        self.spin_spec = SpinSpec(self.config.spin)
+        self.spin = self.spin_spec.spin
+        self.grid = FFTGrid.from_config(self.config)
 
-    def k_values(self):
-        return self.spin.k_values(self.config.kmax)
+        basis = getattr(self.bmultipole, "basis", "fourier-even")
+        self.Bgrid = BMultipoleGrid(grid=self.grid, Lmax=self.config.Lmax, basis=basis)
+        self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
+        self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
+        # Backward-friendly attribute name for interactive inspection only.
+        self.Zgrid: ZetaGrid | None = None
 
-    def compute_multipoles(self, bmultipole) -> ThreePCFMultipoles:
-        t0 = time.perf_counter()
-        if self.grid is None:
-            self.setup_fft_grid()
-        t0 = self._timer("setup_fft_grid", t0)
+        self._coupling_cache_sessions: dict[str, CouplingCacheSession] = {}
+        self._couplings: dict[tuple[int, int, int], CouplingMatrix] = {}
 
-        assert self.ell1_fft is not None and self.ell2_fft is not None
-        assert self.theta1_fft is not None and self.theta2_fft is not None
-        assert self.down_sampler is not None and self.ELL1 is not None and self.ELL2 is not None
+    # ------------------------------------------------------------------
+    # Component bookkeeping
+    @property
+    def n_components(self) -> int:
+        return self.spin_spec.n_components
 
+    @property
+    def components(self):
+        return self.spin_spec.components()
+
+    def epsilon_from_component(self, component: int) -> tuple[int, int, int]:
+        return self.spin_spec.component(component).epsilon
+
+    def sigma_from_epsilon(self, epsilon: tuple[int, int, int]) -> tuple[int, int, int]:
+        return self.spin_spec.sigma_from_epsilon(epsilon)
+
+    def _epsilons(
+        self,
+        *,
+        epsilons=None,
+        epsilon: tuple[int, int, int] | None = None,
+        component: int | None = None,
+        all_components: bool = False,
+    ) -> tuple[tuple[int, int, int], ...]:
+        if epsilons is not None:
+            return tuple(tuple(int(e) for e in eps) for eps in epsilons)
+        if epsilon is not None and component is not None:
+            raise ValueError("Specify at most one of epsilon or component.")
+        if epsilon is not None:
+            idx, _ = self.spin_spec.component_index_from_epsilon(epsilon)
+            return (self.spin_spec.component(idx).epsilon,)
+        if component is not None:
+            return (self.spin_spec.component(component).epsilon,)
+        if all_components or self.config.epsilons is not None:
+            eps = self.config.epsilons or self.spin_spec.representative_epsilons()
+            return tuple(tuple(int(e) for e in ep) for ep in eps)
+        return (self.spin_spec.component(0).epsilon,)
+
+    def k_values(self, *, epsilon=None, component=None) -> np.ndarray:
+        if epsilon is not None and component is not None:
+            raise ValueError("Specify at most one of epsilon or component.")
+        if epsilon is not None:
+            sigma = self.spin_spec.sigma_from_epsilon(epsilon)
+        elif component is not None:
+            sigma = self.spin_spec.component(component).sigma
+        else:
+            sigma = self.spin_spec.component(0).sigma
+        return as_effective_spin_triple(sigma).k_values(self.config.kmax)
+
+    # ------------------------------------------------------------------
+    # Coupling/session management
+    def _cache_session_key(self) -> str:
+        return str(self.coupling_kwargs.get("cache_file", "coupling_b_cache.h5"))
+
+    def _get_cache_session(self) -> CouplingCacheSession | None:
+        if not bool(self.coupling_kwargs.get("use_cache", True)):
+            return None
+        key = self._cache_session_key()
+        if key not in self._coupling_cache_sessions:
+            self._coupling_cache_sessions[key] = CouplingCacheSession(key)
+        return self._coupling_cache_sessions[key]
+
+    def _make_coupling(self, sigma: tuple[int, int, int]) -> CouplingMatrix:
+        sig = tuple(int(x) for x in sigma)
+        if sig not in self._couplings:
+            kwargs = dict(self.coupling_kwargs)
+            session = self._get_cache_session()
+            if session is not None:
+                kwargs["cache_session"] = session
+            self._couplings[sig] = CouplingMatrix(sig[0], sig[1], sig[2], **kwargs)
+        return self._couplings[sig]
+
+    # ------------------------------------------------------------------
+    # Stage execution
+    def compute_bmultipoles(self, *, force: bool = False) -> BMultipoleGrid:
+        """Compute and store ``B_L(ell1, ell2)`` on the managed FFT grid."""
+        if force:
+            self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
+            self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
+            self.Zgrid = None
+        return self.Bgrid.compute(self.bmultipole, force=force)
+
+    def compute_hkernels(
+        self,
+        *,
+        epsilons=None,
+        epsilon: tuple[int, int, int] | None = None,
+        component: int | None = None,
+        all_components: bool = False,
+        force: bool = False,
+    ) -> HKernelGrid:
+        """Compute and store deduplicated ``H_k`` kernels."""
+        eps = self._epsilons(
+            epsilons=epsilons,
+            epsilon=epsilon,
+            component=component,
+            all_components=all_components,
+        )
+        Bgrid = self.compute_bmultipoles()
+        self.Hgrid.compute_all_epsilons(
+            Bgrid,
+            eps,
+            coupling_factory=self._make_coupling,
+            force=force,
+        )
+        return self.Hgrid
+
+    def _hankel_config(self) -> DoubleHankelConfig:
         cfg = self.config
-        # Ensure the Hankel xy matches any tuning performed by setup_fft_grid.
-        hankel_cfg = cfg.hankel
-        if self.grid is not None:
-            hankel_cfg = DoubleHankelConfig(
-                xy=self.grid.xy,
-                nu1=cfg.hankel.nu1,
-                nu2=cfg.hankel.nu2,
-                N_extrap_low=cfg.hankel.N_extrap_low,
-                N_extrap_high=cfg.hankel.N_extrap_high,
-                c_window_width=cfg.hankel.c_window_width,
-                N_pad=cfg.hankel.N_pad,
-                extra=dict(cfg.hankel.extra),
-            )
+        return DoubleHankelConfig(
+            xy=self.grid.xy,
+            nu1=cfg.hankel.nu1,
+            nu2=cfg.hankel.nu2,
+            N_extrap_low=cfg.hankel.N_extrap_low,
+            N_extrap_high=cfg.hankel.N_extrap_high,
+            c_window_width=cfg.hankel.c_window_width,
+            N_pad=cfg.hankel.N_pad,
+            extra=dict(cfg.hankel.extra),
+        )
 
-        builder = HKernelBuilder(self.spin, self.coupling, cfg.Lmax, bispectrum_basis=getattr(bmultipole, "basis", "fourier-even"))
-        k_values = self.k_values()
-        zeta_list = []
+    def compute_zetak(
+        self,
+        *,
+        epsilons=None,
+        epsilon: tuple[int, int, int] | None = None,
+        component: int | None = None,
+        all_components: bool = False,
+        force: bool = False,
+    ) -> ZetaKGrid:
+        """Compute and store deduplicated ``zeta_k(theta1, theta2)`` modes."""
+        eps = self._epsilons(
+            epsilons=epsilons,
+            epsilon=epsilon,
+            component=component,
+            all_components=all_components,
+        )
+        Hgrid = self.compute_hkernels(epsilons=eps)
+        self.ZKgrid.compute_all_epsilons(
+            Hgrid,
+            eps,
+            hankel_config=self._hankel_config(),
+            bin_width_logtheta=self.config.effective_bin_width_logtheta(),
+            force=force,
+        )
+        return self.ZKgrid
 
-        prefactor = ((-1j) ** self.spin.Sigma) / (2.0 * np.pi) ** 3
+    # Explicit alias with separator for readability in prose.
+    compute_zeta_k = compute_zetak
 
-        for k in k_values:
-            t_loop = time.perf_counter()
-            m, n = self.spin.bessel_orders(float(k))
-            Hk = builder.compute(float(k), bmultipole, self.ELL1, self.ELL2)
-            # Eq. radial integral has ell1^2 ell2^2 H_k dlnell1 dlnell2.
-            kernel = Hk * self.ELL1**2 * self.ELL2**2
-            theta1, theta2, zeta = double_hankel_transform(
-                self.ell1_fft,
-                self.ell2_fft,
-                prefactor * kernel,
-                m,
-                n,
-                config=hankel_cfg,
-                bin_width_logtheta=cfg.effective_bin_width_logtheta(),
-            )
-            zeta = zeta[np.ix_(self.down_sampler, self.down_sampler)]
-            zeta_list.append(zeta)
-            if cfg.verbose:
-                print(f"k={k:g}, m={m}, n={n}, elapsed={time.perf_counter()-t_loop:.3f} s")
-
-        zeta_k = np.asarray(zeta_list)
-        theta1 = theta1[self.down_sampler]
-        theta2 = theta2[self.down_sampler]
-        result = ThreePCFMultipoles(theta1=theta1, theta2=theta2, k_values=k_values, zeta_k=zeta_k, sigma=self.sigma, config=cfg)
-        self.result = result
-        self._timer("compute_multipoles", t0)
-        return result
-
-    def resum(
+    def compute_zeta(
         self,
         delta_phi,
         *,
         phase: str = "nu",
         normalization: float = 1.0,
         bin_width: float | None = None,
-        projection: str = "x",
-        component: int | None = None,
-    ):
-        if self.result is None:
-            raise RuntimeError("compute_multipoles() must be called before resum().")
-        return self.result.resum(
+        force: bool = False,
+    ) -> ZetaGrid:
+        """Compute the final all-component x-projection 3PCF grid.
+
+        This is the preferred user-facing calculation method.  Internally it
+        computes all representative ``ZetaKGrid`` components and then calls
+        ``ZetaKGrid.resum(delta_phi)``.  Projection conversion is not performed
+        here; call ``ZetaGrid.to_projection(...)`` on the returned object.
+        """
+        ZKgrid = self.compute_zetak(
+            all_components=True,
+            force=force,
+        )
+        self.Zgrid = ZKgrid.resum(
             delta_phi,
             phase=phase,
             normalization=normalization,
             bin_width=bin_width,
-            projection=projection,
-            component=component,
+            config=self.config,
         )
+        return self.Zgrid
+
+    def compute(self, delta_phi, **kwargs) -> ZetaGrid:
+        """Alias for :meth:`compute_zeta`."""
+        return self.compute_zeta(delta_phi, **kwargs)

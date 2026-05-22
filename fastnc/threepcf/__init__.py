@@ -1,21 +1,46 @@
+"""Three-point correlation function pipeline.
+
+Public API
+----------
+Use :class:`ThreePCF` for ordinary calculations and
+:class:`ThreePCFCalculator` for low-level stage-by-stage debugging.
+"""
+
+from .api import ThreePCF
+from .calculator import ThreePCFCalculator
 from .config import ThreePCFConfig
-from .spin import SpinTriple, as_spin_triple
-from .kernel import HKernelBuilder
-from .calculator import ThreePCFCalculator, ThreePCFMultipoles
-from .resum import opening_angle_phase_values, resummation_matrix, resum_multipoles
-from .projection import (
-    natural_component_index_from_sigma,
-    x2ortho_factor,
-    ortho2cent_factor,
-    x2cent_factor,
-    projection_factor,
-    convert_projection,
+from .grid import FFTGrid, GridBacked
+from .bmultipole_grid import BMultipoleGrid
+from .hkernel_grid import HKernel, HKernelGrid, HKernelKey
+from .zetak_grid import ZetaKMode, ZetaKGrid, ZetaKKey
+from .spin import (
+    EffectiveSpinTriple,
+    SpinSpec,
+    ComponentSpec,
+    as_effective_spin_triple,
+    independent_epsilons,
+    component_specs,
 )
+from .zeta_grid import ZetaGrid
 
 __all__ = [
-    "ThreePCFConfig", "SpinTriple", "as_spin_triple", "HKernelBuilder",
-    "ThreePCFCalculator", "ThreePCFMultipoles",
-    "opening_angle_phase_values", "resummation_matrix", "resum_multipoles",
-    "natural_component_index_from_sigma", "x2ortho_factor", "ortho2cent_factor",
-    "x2cent_factor", "projection_factor", "convert_projection",
+    "ThreePCF",
+    "ThreePCFCalculator",
+    "ThreePCFConfig",
+    "FFTGrid",
+    "GridBacked",
+    "BMultipoleGrid",
+    "HKernel",
+    "HKernelKey",
+    "HKernelGrid",
+    "ZetaKMode",
+    "ZetaKKey",
+    "ZetaKGrid",
+    "EffectiveSpinTriple",
+    "SpinSpec",
+    "ComponentSpec",
+    "as_effective_spin_triple",
+    "independent_epsilons",
+    "component_specs",
+    "ZetaGrid",
 ]

@@ -139,3 +139,123 @@ class CouplingCache:
                     for k, v in obj.attrs.items():
                         print(f"{indent}  @{k} = {v}")
             h5.visititems(visit)
+class CouplingCacheSession:
+    """Read-through memory cache for b_p^(q)(psi) HDF5 blocks.
+
+    CouplingCache handles persistent HDF5 storage. This class adds an
+    in-memory layer so repeated evaluations do not reopen and reread the same
+    HDF5 block.
+
+    The session caches exactly the requested HDF5 block.  No block padding is
+    applied: ``read_b_for_two_p(two_q, two_p, ...)`` reads the block
+    ``[two_p, two_p]``.
+    """
+
+    def __init__(self, filename: str | Path) -> None:
+        self.cache = CouplingCache(filename)
+        self.memory: dict[BCacheKey, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+    def _key(
+        self,
+        two_q: int,
+        two_p_min: int,
+        two_p_max: int,
+        *,
+        npsi: int,
+    ) -> BCacheKey:
+        return self.cache.key(
+            int(two_q),
+            int(two_p_min),
+            int(two_p_max),
+            int(npsi),
+        )
+
+    def get_b(
+        self,
+        two_q: int,
+        two_p_min: int,
+        two_p_max: int,
+        *,
+        npsi: int = 1025,
+        policy: CachePolicy = "lazy",
+    ) -> BCacheKey:
+        """Return the persistent HDF5 cache key.
+
+        This delegates persistent-cache creation/checking to CouplingCache.
+        """
+        return self.cache.get_b(
+            int(two_q),
+            int(two_p_min),
+            int(two_p_max),
+            npsi=int(npsi),
+            policy=policy,
+        )
+
+    def read_b(
+        self,
+        key: BCacheKey,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Read a b-cache block, using memory after the first read."""
+        if key not in self.memory:
+            self.memory[key] = self.cache.read_b(key)
+        return self.memory[key]
+
+    def get_and_read_b(
+        self,
+        two_q: int,
+        two_p_min: int,
+        two_p_max: int,
+        *,
+        npsi: int = 1025,
+        policy: CachePolicy = "lazy",
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Get or create a persistent block, then read it through memory.
+
+        If the exact key is already in memory, no HDF5 existence check is
+        performed.
+        """
+        key = self._key(
+            two_q,
+            two_p_min,
+            two_p_max,
+            npsi=int(npsi),
+        )
+        if key in self.memory:
+            return self.memory[key]
+
+        key = self.get_b(
+            two_q,
+            two_p_min,
+            two_p_max,
+            npsi=npsi,
+            policy=policy,
+        )
+        return self.read_b(key)
+
+    def read_b_for_two_p(
+        self,
+        two_q: int,
+        two_p: int,
+        *,
+        npsi: int = 1025,
+        policy: CachePolicy = "lazy",
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Read the exact one-column block containing ``two_p``."""
+        two_p = int(two_p)
+        return self.get_and_read_b(
+            int(two_q),
+            two_p,
+            two_p,
+            npsi=npsi,
+            policy=policy,
+        )
+
+    def clear_memory(self) -> None:
+        """Drop all in-memory block copies."""
+        self.memory.clear()
+
+    @property
+    def n_memory_blocks(self) -> int:
+        """Number of HDF5 blocks currently stored in memory."""
+        return len(self.memory)
+
