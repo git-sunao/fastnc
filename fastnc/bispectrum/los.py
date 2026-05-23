@@ -1,4 +1,4 @@
-"""Line-of-sight projection from 3D to angular bispectrum.
+"""Line-of-sight projection from 3D to 2D bispectrum.
 
 The 3D bispectrum part of the projection is independent of source/sample
 combination. ``LineOfSightProjector`` therefore separates the computation into
@@ -7,8 +7,8 @@ combination. ``LineOfSightProjector`` therefore separates the computation into
     Babc = projector.integrate_base(base, sample_combination=("a", "b", "c"))
 
 For multiple sample combinations, use the same ``project`` method with a list of
-sample-combination tuples.  It returns a list of angular-bispectrum views sharing
-one internal group/cache, so evaluating those views on the same angular grid can
+sample-combination tuples.  It returns a list of 2D-bispectrum views sharing
+one internal group/cache, so evaluating those views on the same 2D grid can
 reuse the same 3D bispectrum LOS-grid evaluation.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Callable, Mapping, Optional, Sequence
 import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline
 
-from .base import AngularBispectrum2D, Bispectrum3D
+from .base import Bispectrum2D, Bispectrum3D
 from .support import Support2D
 
 
@@ -28,8 +28,50 @@ class Kernel1D:
     chi: np.ndarray
     weight: np.ndarray
 
+    def __post_init__(self):
+        self.z = np.asarray(self.z, dtype=float)
+        self.chi = np.asarray(self.chi, dtype=float)
+        self.weight = np.asarray(self.weight, dtype=float)
+        if self.z.shape != self.chi.shape or self.chi.shape != self.weight.shape:
+            raise ValueError("z, chi, and weight must have the same shape")
+        if self.chi.ndim != 1:
+            raise ValueError("Kernel1D arrays must be one-dimensional")
+        if self.chi.size < 2:
+            raise ValueError("Kernel1D needs at least two chi samples for spline/trapezoid integration")
+
     def interp_chi(self):
-        return InterpolatedUnivariateSpline(self.chi, self.weight, ext=1)
+        return InterpolatedUnivariateSpline(self.chi, self.weight, k=min(3, self.chi.size - 1), ext=1)
+
+    @classmethod
+    def delta_like(cls, z: float, chi: float, width: float | None = None, power: int = 3):
+        """Return a narrow top-hat kernel representing a fixed-chi delta.
+
+        The returned kernel is normalized so that, if the same kernel is used
+        ``power`` times in a :class:`KernelSet.product`, then
+
+            int dchi W(chi)**power = 1
+
+        under trapezoidal integration.  For bispectra, ``power=3`` is the
+        natural choice because the projected integrand contains a product of
+        three line-of-sight kernels.
+        """
+        z = float(z)
+        chi = float(chi)
+        if chi <= 0.0:
+            raise ValueError("chi must be positive")
+        if power <= 0:
+            raise ValueError("power must be positive")
+        if width is None:
+            width = max(abs(chi) * 1.0e-6, 1.0e-8)
+        width = float(width)
+        if width <= 0.0:
+            raise ValueError("width must be positive")
+        chi_grid = np.array([chi - 0.5 * width, chi + 0.5 * width], dtype=float)
+        if np.any(chi_grid <= 0.0):
+            chi_grid = np.array([chi, chi + width], dtype=float)
+        z_grid = np.array([z, z], dtype=float)
+        weight = np.full(2, width ** (-1.0 / float(power)), dtype=float)
+        return cls(z=z_grid, chi=chi_grid, weight=weight)
 
 
 class KernelSet:
@@ -38,6 +80,11 @@ class KernelSet:
     def __init__(self, kernels: Mapping[str, Kernel1D]):
         self.kernels = dict(kernels)
         self._splines = {name: ker.interp_chi() for name, ker in self.kernels.items()}
+
+    @classmethod
+    def delta_like(cls, name: str = "delta", *, z: float, chi: float, width: float | None = None, power: int = 3):
+        """Return a KernelSet containing one fixed-chi delta-like kernel."""
+        return cls({name: Kernel1D.delta_like(z=z, chi=chi, width=width, power=power)})
 
     def names(self):
         return tuple(self.kernels.keys())
@@ -51,7 +98,7 @@ class KernelSet:
 
 @dataclass(frozen=True)
 class BaseLOSIntegrand:
-    """Sample-independent LOS integrand for angular bispectrum projection.
+    """Sample-independent LOS integrand for 2D bispectrum projection.
 
     Attributes
     ----------
@@ -59,7 +106,7 @@ class BaseLOSIntegrand:
         Array with shape ``(n_eval, n_chi)`` containing
         ``prefactor(z, chi) * B_3D(k1, k2, k3; z)``.
     shape:
-        Original angular-input shape before flattening.
+        Original 2D-input shape before flattening.
     scalar:
         Whether the original angular input was scalar.
     """
@@ -94,8 +141,72 @@ def _normalize_combo(combo):
     return tuple(combo)
 
 
-class LineOfSightProjector:
-    """Project a 3D bispectrum to an angular bispectrum.
+def _normalize_prefactor(prefactor):
+    """Return a callable LOS prefactor.
+
+    ``None`` means the default cosmological/geometrical prefactor.  A scalar
+    is accepted for debug projections, e.g. ``prefactor=1.0`` with a
+    delta-like kernel.
+    """
+    if prefactor is None:
+        return lambda z, chi: (1.0 + z) ** 3 / chi
+    if callable(prefactor):
+        return prefactor
+    value = float(prefactor)
+    return lambda z, chi, value=value: np.full_like(chi, value, dtype=float)
+
+
+class LOSProjectorBase:
+    """Shared line-of-sight integration machinery.
+
+    This base class manages the redshift/chi grid, kernel products, projection
+    prefactor, and the final ``dchi`` integration.  Subclasses define how the
+    3D object is evaluated on that LOS grid.
+    """
+
+    def __init__(
+        self,
+        z,
+        chi,
+        kernels: Optional[KernelSet] = None,
+        prefactor: Optional[Callable] = None,
+        l_shift: float = 0.0,
+        support_policy: str = "zero",
+    ):
+        self.z = np.asarray(z, dtype=float)
+        self.chi = np.asarray(chi, dtype=float)
+        if self.z.shape != self.chi.shape:
+            raise ValueError("z and chi must have the same shape")
+        self.kernels = kernels
+        self.prefactor = _normalize_prefactor(prefactor)
+        self.l_shift = float(l_shift)
+        self.support_policy = support_policy
+
+    def kernel_product(self, sample_combination=None):
+        if self.kernels is not None and sample_combination is not None:
+            return self.kernels.product(sample_combination, self.chi)
+        return np.ones_like(self.chi, dtype=float)
+
+    def los_weight(self, sample_combination=None):
+        return self.prefactor(self.z, self.chi) * self.kernel_product(sample_combination)
+
+    def integrate_base(self, base: BaseLOSIntegrand | np.ndarray, sample_combination=None, shape=None, scalar=False):
+        if isinstance(base, BaseLOSIntegrand):
+            values = base.values
+            shape = base.shape
+            scalar = base.scalar
+        else:
+            values = np.asarray(base)
+            if shape is None:
+                raise ValueError("shape is required when base is passed as an array")
+        kernel = self.kernel_product(sample_combination)
+        integrand = values * kernel[None, :]
+        out = np.trapezoid(integrand, self.chi, axis=1).reshape(shape)
+        return out.item() if scalar else out
+
+
+class LineOfSightProjector(LOSProjectorBase):
+    """Project a 3D bispectrum to an 2D bispectrum.
 
     The default projection is
 
@@ -117,44 +228,41 @@ class LineOfSightProjector:
         l_shift: float = 0.0,
         support_policy: str = "zero",
     ):
-        self.z = np.asarray(z, dtype=float)
-        self.chi = np.asarray(chi, dtype=float)
-        if self.z.shape != self.chi.shape:
-            raise ValueError("z and chi must have the same shape")
-        self.kernels = kernels
-        self.prefactor = prefactor or (lambda z, chi: (1.0 + z) ** 3 / chi)
-        self.l_shift = float(l_shift)
-        self.support_policy = support_policy
+        super().__init__(
+            z=z,
+            chi=chi,
+            kernels=kernels,
+            prefactor=prefactor,
+            l_shift=l_shift,
+            support_policy=support_policy,
+        )
+
+    def as_multipole_projector(self):
+        """Return a projector with identical LOS settings for 3D multipoles."""
+        return MultipoleLineOfSightProjector(
+            self.z,
+            self.chi,
+            kernels=self.kernels,
+            prefactor=self.prefactor,
+            l_shift=self.l_shift,
+            support_policy=self.support_policy,
+        )
 
     def project(self, bispectrum3d: Bispectrum3D, sample_combination=None, window=None):
-        """Create projected angular bispectrum object(s).
+        """Create a single projected 2D bispectrum.
 
-        Parameters
-        ----------
-        bispectrum3d:
-            3D bispectrum model.
-        sample_combination:
-            If this is a single tuple, e.g. ``("src0", "src0", "src1")``, a
-            single :class:`ProjectedAngularBispectrum2D` is returned.
-
-            If this is a list/tuple of tuples, e.g. ``[(...), (...)]``, a list
-            of :class:`ProjectedAngularBispectrum2DView` objects is returned.
-            The returned views share an internal group/cache, so sequential
-            evaluation on the same angular grid reuses the same 3D bispectrum
-            LOS-grid evaluation.
-        window:
-            Optional multiplicative angular window.
+        ``project`` is intentionally single-combination only.  Use
+        :meth:`project_many` when several tomographic/sample combinations should
+        share the same LOS-grid cache.
         """
         if _is_sequence_of_sample_combinations(sample_combination):
-            group = ProjectedAngularBispectrum2DGroup(
-                bispectrum3d,
-                self,
-                sample_combinations=sample_combination,
-                window=window,
+            raise TypeError(
+                "LineOfSightProjector.project expects one sample combination. "
+                "Use project_many(bispectrum3d, sample_combinations, ...) for "
+                "multiple combinations."
             )
-            return group.as_list()
 
-        return ProjectedAngularBispectrum2D(
+        return ProjectedBispectrum2D(
             bispectrum3d,
             self,
             sample_combination=_normalize_combo(sample_combination),
@@ -162,13 +270,13 @@ class LineOfSightProjector:
         )
 
     def project_many(self, bispectrum3d: Bispectrum3D, sample_combinations, window=None):
-        """Backward-compatible alias returning a group object.
+        """Create a collection of projected 2D bispectra.
 
-        New code can use ``project(b3d, [combo0, combo1, ...])``.  This method
-        is retained for callers that prefer an explicitly grouped object whose
-        ``__call__`` returns a dictionary.
+        The collection evaluates the 3D bispectrum on the LOS grid only once for
+        a given ``(ell1, ell2, ell3, params)`` input and reuses that cache for
+        all requested sample combinations.
         """
-        return ProjectedAngularBispectrum2DGroup(
+        return ProjectedBispectrum2DCollection(
             bispectrum3d,
             self,
             sample_combinations=sample_combinations,
@@ -280,7 +388,7 @@ class LineOfSightProjector:
         sample_combination:
             Tuple/list of kernel names, e.g. ``("src0", "src1", "src1")``.
         shape:
-            Original angular-input shape.  Required if ``base`` is an array.
+            Original 2D-input shape.  Required if ``base`` is an array.
         scalar:
             Whether to return a scalar.  Used only when ``base`` is an array.
         """
@@ -334,7 +442,59 @@ class LineOfSightProjector:
         return {combo: self.integrate_base(base, sample_combination=combo) for combo in combos}
 
 
-class ProjectedAngularBispectrum2D(AngularBispectrum2D):
+class MultipoleLineOfSightProjector(LOSProjectorBase):
+    """Project ``B_L^3D(k1,k2,z)`` to ``B_L^2D(ell1,ell2)``."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.l_shift != 0.0:
+            raise NotImplementedError(
+                "Multipole LOS projection currently supports only l_shift=0. "
+                "Use the ordinary B3D -> B2D -> multipole route for l_shift != 0."
+            )
+
+    def project(self, multipole3d, sample_combination=None, modes=None, mode_max=None):
+        from .multipole import ProjectedBispectrumMultipole2D
+        if modes is None and mode_max is not None:
+            modes = np.arange(0, int(mode_max) + 1)
+        return ProjectedBispectrumMultipole2D(
+            multipole3d,
+            self,
+            sample_combination=_normalize_combo(sample_combination),
+            modes=modes,
+        )
+
+    def _prepare_ell_inputs(self, ell1, ell2):
+        scalar = np.isscalar(ell1)
+        ell1 = np.asarray(ell1, dtype=float)
+        ell2 = np.asarray(ell2, dtype=float)
+        ell1, ell2 = np.broadcast_arrays(ell1, ell2)
+        shape = ell1.shape
+        e1 = ell1.ravel()[:, None]
+        e2 = ell2.ravel()[:, None]
+        return scalar, shape, e1, e2
+
+    def evaluate_3d_grid(self, multipole3d, mode, ell1, ell2, **params):
+        scalar, shape, e1, e2 = self._prepare_ell_inputs(ell1, ell2)
+        chi = self.chi[None, :]
+        z = self.z[None, :]
+        k1 = e1 / chi
+        k2 = e2 / chi
+        z_eval = np.broadcast_to(z, k1.shape)
+        values = multipole3d(mode, k1, k2, z_eval, **params)
+        return values, shape, scalar
+
+    def evaluate_base_integrand(self, multipole3d, mode, ell1, ell2, **params):
+        values, shape, scalar = self.evaluate_3d_grid(multipole3d, mode, ell1, ell2, **params)
+        base = values * self.prefactor(self.z, self.chi)[None, :]
+        return BaseLOSIntegrand(values=base, shape=shape, scalar=scalar)
+
+    def evaluate(self, multipole3d, mode, ell1, ell2, sample_combination=None, **params):
+        base = self.evaluate_base_integrand(multipole3d, mode, ell1, ell2, **params)
+        return self.integrate_base(base, sample_combination=sample_combination)
+
+
+class ProjectedBispectrum2D(Bispectrum2D):
     def __init__(
         self,
         bispectrum3d: Bispectrum3D,
@@ -365,8 +525,8 @@ class ProjectedAngularBispectrum2D(AngularBispectrum2D):
         return out
 
 
-class ProjectedAngularBispectrum2DGroup:
-    """Group of projected angular bispectra sharing a LOS-base cache."""
+class ProjectedBispectrum2DCollection:
+    """Collection of projected 2D bispectra sharing a LOS-base cache."""
 
     def __init__(
         self,
@@ -446,21 +606,36 @@ class ProjectedAngularBispectrum2DGroup:
     def __call__(self, ell1, ell2, ell3, **params):
         return self.evaluate(ell1, ell2, ell3, **params)
 
+    def __getitem__(self, sample_combination):
+        combo = _normalize_combo(sample_combination)
+        if combo not in self.sample_combinations:
+            raise KeyError(f"sample combination {combo!r} is not in this collection")
+        return ProjectedBispectrum2DView(self, combo)
+
+    def keys(self):
+        return tuple(self.sample_combinations)
+
+    def values(self):
+        return tuple(self[combo] for combo in self.sample_combinations)
+
+    def items(self):
+        return tuple((combo, self[combo]) for combo in self.sample_combinations)
+
     def as_list(self):
-        return [ProjectedAngularBispectrum2DView(self, combo) for combo in self.sample_combinations]
+        return [self[combo] for combo in self.sample_combinations]
 
 
-class ProjectedAngularBispectrum2DView(AngularBispectrum2D):
-    """Single-combination view backed by a shared group/cache."""
+class ProjectedBispectrum2DView(Bispectrum2D):
+    """Single-combination view backed by a shared collection/cache."""
 
-    def __init__(self, group: ProjectedAngularBispectrum2DGroup, sample_combination):
-        self.group = group
+    def __init__(self, collection: ProjectedBispectrum2DCollection, sample_combination):
+        self.collection = collection
         self.sample_combination = _normalize_combo(sample_combination)
-        self.support = group.support
-        self.window = group.window
+        self.support = collection.support
+        self.window = collection.window
 
     def evaluate(self, ell1, ell2, ell3, **params):
-        return self.group.evaluate_one(
+        return self.collection.evaluate_one(
             self.sample_combination,
             ell1,
             ell2,
@@ -469,5 +644,13 @@ class ProjectedAngularBispectrum2DView(AngularBispectrum2D):
         )
 
 
-# Backward-compatible name used by the previous revision.
-ProjectedAngularBispectra2D = ProjectedAngularBispectrum2DGroup
+# Backward-compatible names used by previous revisions.
+ProjectedBispectra2D = ProjectedBispectrum2DCollection
+ProjectedBispectrum2DGroup = ProjectedBispectrum2DCollection
+
+# Backward-compatible aliases.  New code should use names without ``Angular``.
+ProjectedAngularBispectrum2D = ProjectedBispectrum2D
+ProjectedAngularBispectrum2DCollection = ProjectedBispectrum2DCollection
+ProjectedAngularBispectrum2DGroup = ProjectedBispectrum2DCollection
+ProjectedAngularBispectrum2DView = ProjectedBispectrum2DView
+ProjectedAngularBispectra2D = ProjectedBispectra2D

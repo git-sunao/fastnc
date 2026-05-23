@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-from .base import AngularBispectrum2D
+from .base import Bispectrum2D
 from .support import Support2D
 from .grids import sides_to_ellpsialpha
 
@@ -24,8 +24,8 @@ def sides_to_ruv(ell1, ell2, ell3):
     return r, u, v
 
 
-class RuvInterpolatedAngularBispectrum2D(AngularBispectrum2D):
-    def __init__(self, base: AngularBispectrum2D, r_grid, u_grid, v_grid, log_values,
+class RuvInterpolatedBispectrum2D(Bispectrum2D):
+    def __init__(self, base: Bispectrum2D, r_grid, u_grid, v_grid, log_values,
                  method="linear", window=None):
         self.base = base
         self.r_grid = np.asarray(r_grid)
@@ -43,7 +43,7 @@ class RuvInterpolatedAngularBispectrum2D(AngularBispectrum2D):
         self.window = window
 
     @classmethod
-    def from_bispectrum(cls, base: AngularBispectrum2D, r_grid, u_grid, v_grid, method="linear", floor=1.0e-300, **params):
+    def from_bispectrum(cls, base: Bispectrum2D, r_grid, u_grid, v_grid, method="linear", floor=1.0e-300, **params):
         R, U, V = np.meshgrid(r_grid, u_grid, v_grid, indexing="ij")
         # Inverse of the convention above: d2=r, d3=u*r, d1=r+v*d3.
         d2 = R
@@ -59,3 +59,7 @@ class RuvInterpolatedAngularBispectrum2D(AngularBispectrum2D):
         if self.window is not None:
             val = val * self.window(ell1, ell2, ell3)
         return val
+
+
+# Backward-compatible alias.  New code should use RuvInterpolatedBispectrum2D.
+RuvInterpolatedAngularBispectrum2D = RuvInterpolatedBispectrum2D

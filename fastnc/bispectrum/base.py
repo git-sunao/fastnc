@@ -19,17 +19,12 @@ class Bispectrum3D:
         raise NotImplementedError
 
 
-class FunctionBispectrum3D(Bispectrum3D):
-    def __init__(self, func: Callable, support: Optional[Support3D] = None):
-        self.func = func
-        self.support = support or Support3D()
+class Bispectrum2D:
+    """Base object for a 2D bispectrum ``B(ell1,ell2,ell3)``.
 
-    def evaluate(self, k1, k2, k3, z, **params):
-        return self.func(k1, k2, k3, z, **params)
-
-
-class AngularBispectrum2D:
-    """Base object for an angular bispectrum ``B(ell1,ell2,ell3)``."""
+    In this package, 2D bispectra are angular bispectra by default, so the
+    public class name intentionally omits ``Angular``.
+    """
     support = Support2D()
 
     def __call__(self, ell1, ell2, ell3, **params):
@@ -39,22 +34,9 @@ class AngularBispectrum2D:
         raise NotImplementedError
 
     def multipole(self, config=None, basis="fourier-even", regulator=None, **params):
-        from .multipole import BispectrumMultipoleCalculator
-        return BispectrumMultipoleCalculator(config=config, basis=basis).compute(
+        from .multipole import BispectrumMultipole2DCalculator
+        return BispectrumMultipole2DCalculator(config=config, basis=basis).compute(
             self,
             regulator=regulator,
             **params,
         )
-
-
-class FunctionAngularBispectrum2D(AngularBispectrum2D):
-    def __init__(self, func: Callable, support: Optional[Support2D] = None, window: Optional[Callable] = None):
-        self.func = func
-        self.support = support or Support2D()
-        self.window = window
-
-    def evaluate(self, ell1, ell2, ell3, **params):
-        val = self.func(ell1, ell2, ell3, **params)
-        if self.window is not None:
-            val = val * self.window(ell1, ell2, ell3)
-        return val

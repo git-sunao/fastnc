@@ -29,7 +29,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from scipy.special import eval_legendre
 
-from .base import AngularBispectrum2D
+from .base import Bispectrum2D
 from .decompose import MultipoleLegendre, MultipoleFourier, MultipoleCosine, MultipoleSine
 from .grids import (
     MultipoleGridConfig,
@@ -67,7 +67,7 @@ class BispectrumMultipoleConfig:
     decomposer_method: str = "gauss-legendre"
 
 
-class BispectrumMultipole:
+class BispectrumMultipole2D:
     basis: str
 
     def __call__(self, mode, ell1, ell2):
@@ -88,7 +88,7 @@ class BispectrumMultipole:
         return self.resum(ell1, ell2, np.pi - np.asarray(alpha), mode_max=mode_max)
 
 
-class AnalyticBispectrumMultipole(BispectrumMultipole):
+class AnalyticBispectrumMultipole2D(BispectrumMultipole2D):
     def __init__(self, func: Callable, basis: str = "fourier-even", modes=None):
         self.func = func
         self.basis = basis
@@ -118,7 +118,63 @@ class AnalyticBispectrumMultipole(BispectrumMultipole):
         return np.sum(coeff * np.exp(1j * modes[:, None] * delta_beta), axis=0)
 
 
-class InterpolatedBispectrumMultipole(BispectrumMultipole):
+class BispectrumMultipole3D:
+    """Base object for a 3D bispectrum multipole ``B_L(k1,k2,z)``.
+
+    This class represents the result of a multipole expansion performed before
+    line-of-sight projection.  A projected angular multipole is obtained by
+    integrating this object over the same LOS kernels used for ordinary 3D
+    bispectrum projection.
+    """
+
+    basis: str = "fourier-even"
+    support = None
+
+    def __call__(self, mode, k1, k2, z, **params):
+        return self.evaluate(mode, k1, k2, z, **params)
+
+    def evaluate(self, mode, k1, k2, z, **params):
+        raise NotImplementedError
+
+    def project_los(self, projector, sample_combination=None, modes=None, mode_max=None):
+        """Project this 3D multipole with a line-of-sight projector.
+
+        ``projector`` may be either a ``LineOfSightProjector`` or a
+        ``MultipoleLineOfSightProjector``.  The conversion is delayed to avoid
+        an import cycle between ``multipole.py`` and ``los.py``.
+        """
+        from .los import LineOfSightProjector
+
+        if isinstance(projector, LineOfSightProjector):
+            projector = projector.as_multipole_projector()
+        out = projector.project(self, sample_combination=sample_combination)
+        if modes is None and mode_max is not None:
+            modes = np.arange(0, int(mode_max) + 1)
+        if modes is not None:
+            out.modes = np.asarray(modes, dtype=int)
+        return out
+
+
+class ProjectedBispectrumMultipole2D(AnalyticBispectrumMultipole2D):
+    """LOS-projected angular multipole built from a 3D multipole object."""
+
+    def __init__(self, multipole3d, projector, sample_combination=None, modes=None):
+        self.multipole3d = multipole3d
+        self.projector = projector
+        self.sample_combination = tuple(sample_combination) if sample_combination is not None else None
+        super().__init__(self._evaluate_mode, basis=multipole3d.basis, modes=modes)
+
+    def _evaluate_mode(self, mode, ell1, ell2):
+        return self.projector.evaluate(
+            self.multipole3d,
+            mode,
+            ell1,
+            ell2,
+            sample_combination=self.sample_combination,
+        )
+
+
+class InterpolatedBispectrumMultipole2D(BispectrumMultipole2D):
     def __init__(self, modes, ell_grid, psi_grid, values, basis: str, method="linear", angle="delta_beta"):
         self.modes = np.asarray(modes, dtype=int)
         self.ell_grid = np.asarray(ell_grid, dtype=float)
@@ -195,7 +251,7 @@ class InterpolatedBispectrumMultipole(BispectrumMultipole):
         return np.sum(coeff * np.exp(1j * modes[:, None] * delta_beta), axis=0)
 
 
-class BispectrumMultipoleCalculator:
+class BispectrumMultipole2DCalculator:
     def __init__(self, config: Optional[BispectrumMultipoleConfig] = None, basis: str = "fourier-even"):
         self.config = config or BispectrumMultipoleConfig()
         self.basis = basis
@@ -229,7 +285,7 @@ class BispectrumMultipoleCalculator:
             return MultipoleFourier(x, c.mode_max, method=c.decomposer_method)
         raise ValueError(f"unsupported basis: {self.basis}")
 
-    def compute(self, bispectrum: AngularBispectrum2D, regulator=None, **params):
+    def compute(self, bispectrum: Bispectrum2D, regulator=None, **params):
         c = self.config
         ell, psi, delta_beta, e1, e2, e3 = make_ell_psi_delta_beta_grid(self._grid_config())
         values = bispectrum(e1, e2, e3, **params)
@@ -319,7 +375,7 @@ class BispectrumMultipoleCalculator:
         else:
             raise ValueError(f"unsupported basis: {self.basis}")
 
-        return InterpolatedBispectrumMultipole(
+        return InterpolatedBispectrumMultipole2D(
             modes=modes,
             ell_grid=ell,
             psi_grid=psi,

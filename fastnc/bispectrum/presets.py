@@ -12,6 +12,8 @@ from typing import Callable, Mapping
 import numpy as np
 
 from .base import Bispectrum3D
+from .multipole import BispectrumMultipole3D
+from .los import LineOfSightProjector
 from .models import ExternalBispectrum3D
 from .support import Support3D
 from .halofit import Halofit
@@ -207,6 +209,128 @@ class BiHalofitBispectrum3D(ExternalBispectrum3D):
                 "BiHalofitBispectrum3D.from_cosmology(...)."
             )
         return super().evaluate(k1, k2, k3, z, **params)
+
+    def analytic_multipole(
+        self,
+        *,
+        which=("Bh3",),
+        **params,
+    ):
+        """Return the semi-analytic 3D BiHalofit multipole object.
+
+        The returned object evaluates ``B_L^3D(k1,k2,z)``.  LOS projection is
+        applied later through ``LineOfSightProjector.as_multipole_projector()``
+        or ``projected_analytic_multipole``.
+        """
+        return BiHalofitBispectrumMultipole3D(
+            self.halofit,
+            which=which,
+            **params,
+        )
+
+    def projected_analytic_multipole(
+        self,
+        projector,
+        *,
+        sample_combination=None,
+        which=("Bh3",),
+        modes=None,
+        mode_max=None,
+        **params,
+    ):
+        """Return the LOS-projected semi-analytic angular multipole object."""
+        m3d = self.analytic_multipole(which=which, **params)
+        return m3d.project_los(
+            projector,
+            sample_combination=sample_combination,
+            modes=modes,
+            mode_max=mode_max,
+        )
+
+
+class BiHalofitBispectrumMultipole3D(BispectrumMultipole3D):
+    """Semi-analytic 3D multipole for BiHalofit.
+
+    The public name intentionally omits ``3h``.  Currently the implemented
+    semi-analytic term is the BiHalofit 3-halo contribution, so ``which`` must
+    be equivalent to ``["Bh3"]``.  The ``which`` interface is kept for future
+    extension to ``["Bh1", "Bh3"]``.
+    """
+
+    basis = "fourier-even"
+
+    def __init__(
+        self,
+        halofit,
+        *,
+        which=("Bh3",),
+        n_fftlog=128,
+        k_fft_min=None,
+        k_fft_max=None,
+        fftlog_pad=4.0,
+        bias_D=0.0,
+        bias_H=0.0,
+        kernel_method="auto",
+        n_kernel_phi=128,
+        cyclic_r_quad=0.97,
+        cyclic_quad_n_phi=256,
+    ):
+        self.halofit = halofit
+        self.which = tuple(which) if isinstance(which, (list, tuple)) else (which,)
+        if set(self.which) != {"Bh3"}:
+            raise NotImplementedError(
+                "BiHalofitBispectrumMultipole3D currently implements only which=['Bh3']. "
+                "The which argument is reserved for future Bh1+Bh3 support."
+            )
+        self.n_fftlog = int(n_fftlog)
+        self.k_fft_min = k_fft_min
+        self.k_fft_max = k_fft_max
+        self.fftlog_pad = float(fftlog_pad)
+        self.bias_D = bias_D
+        self.bias_H = bias_H
+        self.kernel_method = kernel_method
+        self.n_kernel_phi = int(n_kernel_phi)
+        self.cyclic_r_quad = float(cyclic_r_quad)
+        self.cyclic_quad_n_phi = int(cyclic_quad_n_phi)
+
+    def evaluate(self, mode, k1, k2, z, **params):
+        scalar_mode = np.isscalar(mode)
+        modes = np.atleast_1d(np.asarray(mode, dtype=int)).ravel()
+        k1 = np.asarray(k1, dtype=float)
+        k2 = np.asarray(k2, dtype=float)
+        z = np.asarray(z, dtype=float)
+        k1, k2, z = np.broadcast_arrays(k1, k2, z)
+
+        vals = []
+        z_flat = z.ravel()
+        unique_z = np.unique(z_flat)
+        for L in modes:
+            out_L = np.empty_like(k1, dtype=complex)
+            for z0 in unique_z:
+                mask = (z == z0)
+                out_L[mask] = self.halofit.get_bihalofit_3h_multipole_semianalytic(
+                    k1[mask],
+                    k2[mask],
+                    L=int(L),
+                    z=float(z0),
+                    n_fftlog=self.n_fftlog,
+                    k_fft_min=self.k_fft_min,
+                    k_fft_max=self.k_fft_max,
+                    fftlog_pad=self.fftlog_pad,
+                    bias_D=self.bias_D,
+                    bias_H=self.bias_H,
+                    kernel_method=self.kernel_method,
+                    n_kernel_phi=self.n_kernel_phi,
+                    cyclic_r_quad=self.cyclic_r_quad,
+                    cyclic_quad_n_phi=self.cyclic_quad_n_phi,
+                    return_parts=False,
+                )
+            vals.append(out_L)
+        out = np.asarray(vals)
+        out = np.real_if_close(out, tol=1000)
+        return out[0] if scalar_mode else out
+
+
 
 
 class OneHaloProductBispectrum3D(Bispectrum3D):
