@@ -87,15 +87,43 @@ class Bispectrum3DInterpolationConfig:
 
 @dataclass(frozen=True)
 class Bispectrum2DInterpolationConfig:
-    """Grid configuration for interpolating ``B(ell1,ell2,ell3)``."""
+    """Grid configuration for interpolating ``B(ell1,ell2,ell3)``.
 
-    ell_min: float
-    ell_max: float
-    n_ell: int
+    ``coordinate`` selects the tabulation coordinates.
+
+    - ``"ell123"``: tabulate on a direct-product ``(ell1, ell2, ell3)`` grid.
+    - ``"ruv"``: tabulate on TreeCorr-like triangle coordinates
+      ``(r, u, v)`` after sorting the three sides.  This coordinate removes
+      side-permutation information and should therefore only be used for
+      side-symmetric bispectra.
+
+    The value transform is shared by all coordinate systems.
+    """
+
+    # Direct side-length interpolation, coordinate="ell123".
+    ell_min: float | None = None
+    ell_max: float | None = None
+    n_ell: int | None = None
+
     method: str = "linear"
     log_ell: bool = True
     value_transform: str = "identity"  # identity, log, signed-log
     floor: float = 1.0e-300
+    coordinate: str = "ell123"  # ell123, ruv
+
+    # TreeCorr-like triangle interpolation, coordinate="ruv".
+    r_min: float | None = None
+    r_max: float | None = None
+    n_r: int | None = None
+    u_min: float = 1.0e-3
+    u_max: float = 1.0
+    n_u: int = 64
+    v_min: float = 0.0
+    v_max: float = 1.0
+    n_v: int = 64
+    log_r: bool = True
+    log_u: bool = True
+    assume_symmetric: bool = False
 
     @classmethod
     def from_support(
@@ -107,24 +135,110 @@ class Bispectrum2DInterpolationConfig:
         log_ell: bool = True,
         value_transform: str = "identity",
         floor: float = 1.0e-300,
+        coordinate: str = "ell123",
+        n_r: int | None = None,
+        u_min: float = 1.0e-3,
+        u_max: float = 1.0,
+        n_u: int = 64,
+        v_min: float = 0.0,
+        v_max: float = 1.0,
+        n_v: int = 64,
+        log_r: bool = True,
+        log_u: bool = True,
+        assume_symmetric: bool = False,
     ) -> "Bispectrum2DInterpolationConfig":
         if not np.isfinite(support.ell_min) or not np.isfinite(support.ell_max):
             raise ValueError("finite support.ell_min and support.ell_max are required")
         ell_min = max(float(support.ell_min), np.finfo(float).tiny)
+        ell_max = float(support.ell_max)
+        coordinate = _normalize_2d_coordinate(coordinate)
+        if coordinate == "ell123":
+            return cls(
+                ell_min=ell_min,
+                ell_max=ell_max,
+                n_ell=int(n_ell),
+                method=method,
+                log_ell=log_ell,
+                value_transform=value_transform,
+                floor=floor,
+                coordinate="ell123",
+            )
         return cls(
-            ell_min=ell_min,
-            ell_max=float(support.ell_max),
-            n_ell=int(n_ell),
             method=method,
-            log_ell=log_ell,
             value_transform=value_transform,
             floor=floor,
+            coordinate="ruv",
+            r_min=ell_min,
+            r_max=ell_max,
+            n_r=int(n_r if n_r is not None else n_ell),
+            u_min=u_min,
+            u_max=u_max,
+            n_u=int(n_u),
+            v_min=v_min,
+            v_max=v_max,
+            n_v=int(n_v),
+            log_r=log_r,
+            log_u=log_u,
+            assume_symmetric=assume_symmetric,
+        )
+
+    @classmethod
+    def from_ruv_grids(
+        cls,
+        *,
+        r_grid,
+        u_grid,
+        v_grid,
+        method: str = "linear",
+        value_transform: str = "identity",
+        floor: float = 1.0e-300,
+        log_r: bool = True,
+        log_u: bool = True,
+        assume_symmetric: bool = True,
+    ) -> "Bispectrum2DInterpolationConfig":
+        r_grid = np.asarray(r_grid, dtype=float)
+        u_grid = np.asarray(u_grid, dtype=float)
+        v_grid = np.asarray(v_grid, dtype=float)
+        return cls(
+            method=method,
+            value_transform=value_transform,
+            floor=floor,
+            coordinate="ruv",
+            r_min=float(r_grid.min()),
+            r_max=float(r_grid.max()),
+            n_r=int(r_grid.size),
+            u_min=float(u_grid.min()),
+            u_max=float(u_grid.max()),
+            n_u=int(u_grid.size),
+            v_min=float(v_grid.min()),
+            v_max=float(v_grid.max()),
+            n_v=int(v_grid.size),
+            log_r=log_r,
+            log_u=log_u,
+            assume_symmetric=assume_symmetric,
         )
 
     def ell_grid(self):
+        if self.ell_min is None or self.ell_max is None or self.n_ell is None:
+            raise ValueError("ell_min, ell_max, and n_ell are required for coordinate='ell123'")
         if self.log_ell:
             return np.geomspace(self.ell_min, self.ell_max, self.n_ell)
         return np.linspace(self.ell_min, self.ell_max, self.n_ell)
+
+    def r_grid(self):
+        if self.r_min is None or self.r_max is None or self.n_r is None:
+            raise ValueError("r_min, r_max, and n_r are required for coordinate='ruv'")
+        if self.log_r:
+            return np.geomspace(self.r_min, self.r_max, self.n_r)
+        return np.linspace(self.r_min, self.r_max, self.n_r)
+
+    def u_grid(self):
+        if self.log_u:
+            return np.geomspace(self.u_min, self.u_max, self.n_u)
+        return np.linspace(self.u_min, self.u_max, self.n_u)
+
+    def v_grid(self):
+        return np.linspace(self.v_min, self.v_max, self.n_v)
 
 
 @dataclass(frozen=True)
@@ -183,6 +297,35 @@ class BispectrumMultipole3DInterpolationConfig:
     def z_grid(self):
         return np.linspace(self.z_min, self.z_max, self.n_z)
 
+
+
+def _normalize_2d_coordinate(coordinate: str) -> str:
+    coordinate = str(coordinate).lower().replace("-", "_")
+    aliases = {
+        "ell123": "ell123",
+        "ell_123": "ell123",
+        "sides": "ell123",
+        "side_lengths": "ell123",
+        "ruv": "ruv",
+    }
+    try:
+        return aliases[coordinate]
+    except KeyError as exc:
+        raise ValueError("coordinate must be 'ell123' or 'ruv'") from exc
+
+
+def ruv_to_sides(r, u, v):
+    """Convert TreeCorr-like ``(r,u,v)`` coordinates to sorted sides.
+
+    The returned sides are ``(d1, d2, d3)`` with ``d1 >= d2 >= d3``.
+    """
+    r = np.asarray(r, dtype=float)
+    u = np.asarray(u, dtype=float)
+    v = np.asarray(v, dtype=float)
+    d2 = r
+    d3 = u * r
+    d1 = r + v * d3
+    return d1, d2, d3
 
 def _axis_from_grid(grid, *, log_axis: bool):
     grid = np.asarray(grid, dtype=float)
@@ -284,23 +427,28 @@ class InterpolatedBispectrum3D(Bispectrum3D):
 
 
 class InterpolatedBispectrum2D(Bispectrum2D):
-    """Interpolated wrapper with the same signature as ``Bispectrum2D``."""
+    """Interpolated wrapper with the same signature as ``Bispectrum2D``.
+
+    The tabulation coordinate is selected by
+    ``Bispectrum2DInterpolationConfig.coordinate``.  Supported values are
+    ``"ell123"`` and ``"ruv"``.
+    """
 
     def __init__(self, base: Bispectrum2D, config: Bispectrum2DInterpolationConfig, values=None, **params):
         self.base = base
         self.config = config
-        self.ell_grid = config.ell_grid()
-        self.support = Support2D(
-            ell_min=float(self.ell_grid.min()),
-            ell_max=float(self.ell_grid.max()),
-            policy=base.support.policy,
-        )
-        if values is None:
-            E1, E2, E3 = np.meshgrid(self.ell_grid, self.ell_grid, self.ell_grid, indexing="ij")
-            values = base(E1, E2, E3, **params)
-        self.values = np.asarray(values)
+        self.coordinate = _normalize_2d_coordinate(config.coordinate)
+        self.support = base.support
+
+        if self.coordinate == "ell123":
+            axes, table_values = self._build_ell123_table(base, config, values, **params)
+        elif self.coordinate == "ruv":
+            axes, table_values = self._build_ruv_table(base, config, values, **params)
+        else:  # pragma: no cover; guarded by _normalize_2d_coordinate
+            raise ValueError("coordinate must be 'ell123' or 'ruv'")
+
+        self.values = np.asarray(table_values)
         packed = _pack_values(self.values, config.value_transform, config.floor)
-        axes = tuple(_axis_from_grid(self.ell_grid, log_axis=config.log_ell) for _ in range(3))
         self.interpolator = RegularGridInterpolator(
             axes,
             packed,
@@ -309,9 +457,70 @@ class InterpolatedBispectrum2D(Bispectrum2D):
             fill_value=None,
         )
 
+    def _build_ell123_table(self, base, config, values, **params):
+        self.ell_grid = config.ell_grid()
+        self.r_grid = None
+        self.u_grid = None
+        self.v_grid = None
+        self.support = Support2D(
+            ell_min=float(self.ell_grid.min()),
+            ell_max=float(self.ell_grid.max()),
+            policy=base.support.policy,
+        )
+        if values is None:
+            E1, E2, E3 = np.meshgrid(
+                self.ell_grid, self.ell_grid, self.ell_grid, indexing="ij"
+            )
+            values = base(E1, E2, E3, **params)
+        axes = tuple(_axis_from_grid(self.ell_grid, log_axis=config.log_ell) for _ in range(3))
+        return axes, values
+
+    def _build_ruv_table(self, base, config, values, **params):
+        if not config.assume_symmetric:
+            raise ValueError(
+                "coordinate='ruv' sorts the side lengths and is only valid for "
+                "side-symmetric bispectra.  Set assume_symmetric=True explicitly."
+            )
+        self.ell_grid = None
+        self.r_grid = config.r_grid()
+        self.u_grid = config.u_grid()
+        self.v_grid = config.v_grid()
+        ell_min = float(min(self.r_grid.min(), (self.u_grid * self.r_grid.min()).min()))
+        ell_max = float((self.r_grid.max() * (1.0 + self.u_grid.max() * self.v_grid.max())))
+        self.support = Support2D(
+            ell_min=ell_min,
+            ell_max=ell_max,
+            policy=base.support.policy,
+        )
+        if values is None:
+            R, U, V = np.meshgrid(self.r_grid, self.u_grid, self.v_grid, indexing="ij")
+            d1, d2, d3 = ruv_to_sides(R, U, V)
+            values = base(d1, d2, d3, **params)
+        axes = (
+            _axis_from_grid(self.r_grid, log_axis=config.log_r),
+            _axis_from_grid(self.u_grid, log_axis=config.log_u),
+            self.v_grid,
+        )
+        return axes, values
+
     @classmethod
     def from_bispectrum(cls, base: Bispectrum2D, config: Bispectrum2DInterpolationConfig, **params):
         return cls(base, config, **params)
+
+    def _query_points_ell123(self, ell1, ell2, ell3):
+        return np.column_stack([
+            _coords_from_values(ell1.ravel(), log_axis=self.config.log_ell),
+            _coords_from_values(ell2.ravel(), log_axis=self.config.log_ell),
+            _coords_from_values(ell3.ravel(), log_axis=self.config.log_ell),
+        ])
+
+    def _query_points_ruv(self, ell1, ell2, ell3):
+        r, u, v = sides_to_ruv(ell1, ell2, ell3)
+        return np.column_stack([
+            _coords_from_values(r.ravel(), log_axis=self.config.log_r),
+            _coords_from_values(u.ravel(), log_axis=self.config.log_u),
+            v.ravel(),
+        ])
 
     def evaluate(self, ell1, ell2, ell3, **params):
         if params:
@@ -321,11 +530,12 @@ class InterpolatedBispectrum2D(Bispectrum2D):
         ell3 = np.asarray(ell3, dtype=float)
         ell1, ell2, ell3 = np.broadcast_arrays(ell1, ell2, ell3)
         shape = ell1.shape
-        pts = np.column_stack([
-            _coords_from_values(ell1.ravel(), log_axis=self.config.log_ell),
-            _coords_from_values(ell2.ravel(), log_axis=self.config.log_ell),
-            _coords_from_values(ell3.ravel(), log_axis=self.config.log_ell),
-        ])
+        if self.coordinate == "ell123":
+            pts = self._query_points_ell123(ell1, ell2, ell3)
+        elif self.coordinate == "ruv":
+            pts = self._query_points_ruv(ell1, ell2, ell3)
+        else:  # pragma: no cover; guarded by construction
+            raise ValueError("coordinate must be 'ell123' or 'ruv'")
         out = self.interpolator(pts).reshape(shape)
         out = _unpack_values(out, self.config.value_transform, self.config.floor)
         return out.item() if out.shape == () else out
@@ -518,46 +728,3 @@ def sides_to_ruv(ell1, ell2, ell3):
     u = np.divide(d3, d2, out=np.zeros_like(d2, dtype=float), where=d2 != 0)
     v = np.divide(d1 - d2, d3, out=np.zeros_like(d3, dtype=float), where=d3 != 0)
     return r, u, v
-
-
-class RuvInterpolatedBispectrum2D(Bispectrum2D):
-    def __init__(self, base: Bispectrum2D, r_grid, u_grid, v_grid, log_values,
-                 method="linear", window=None):
-        self.base = base
-        self.r_grid = np.asarray(r_grid)
-        self.u_grid = np.asarray(u_grid)
-        self.v_grid = np.asarray(v_grid)
-        self.log_values = np.asarray(log_values)
-        self.interpolator = RegularGridInterpolator(
-            (np.log(self.r_grid), np.log(self.u_grid), self.v_grid),
-            self.log_values,
-            method=method,
-            bounds_error=False,
-            fill_value=None,
-        )
-        self.support = base.support
-        self.window = window
-
-    @classmethod
-    def from_bispectrum(cls, base: Bispectrum2D, r_grid, u_grid, v_grid, method="linear", floor=1.0e-300, **params):
-        R, U, V = np.meshgrid(r_grid, u_grid, v_grid, indexing="ij")
-        # Inverse of the convention above: d2=r, d3=u*r, d1=r+v*d3.
-        d2 = R
-        d3 = U * R
-        d1 = R + V * d3
-        vals = np.maximum(base(d1, d2, d3, **params), floor)
-        return cls(base, r_grid, u_grid, v_grid, np.log(vals), method=method)
-
-    def evaluate(self, ell1, ell2, ell3, **params):
-        if params:
-            raise ValueError("RuvInterpolatedBispectrum2D does not accept runtime model parameters")
-        r, u, v = sides_to_ruv(ell1, ell2, ell3)
-        pts = (np.log(r), np.log(u), v)
-        val = np.exp(self.interpolator(pts))
-        if self.window is not None:
-            val = val * self.window(ell1, ell2, ell3)
-        return val
-
-
-# Backward-compatible alias.  New code should use RuvInterpolatedBispectrum2D.
-RuvInterpolatedAngularBispectrum2D = RuvInterpolatedBispectrum2D

@@ -18,7 +18,6 @@ from .interpolate import (
     BispectrumMultipole3DInterpolationConfig,
     InterpolatedBispectrum3D, InterpolatedBispectrum2D,
     InterpolatedBispectrumMultipole2D, InterpolatedBispectrumMultipole3D,
-    RuvInterpolatedBispectrum2D, RuvInterpolatedAngularBispectrum2D,
 )
 from .models import ExternalBispectrum3D
 from .regulator import Ell3HighPassRegulator
@@ -48,7 +47,7 @@ __all__ = [
     "BispectrumMultipole3DInterpolationConfig",
     "InterpolatedBispectrum3D", "InterpolatedBispectrum2D",
     "InterpolatedBispectrumMultipole3D",
-    "RuvInterpolatedBispectrum2D", "RuvInterpolatedAngularBispectrum2D", "ExternalBispectrum3D",
+    "ExternalBispectrum3D",
     "Ell3HighPassRegulator",
     "Halofit", "BiHalofitBispectrum3D", "BiHalofitBispectrumMultipole3D",
     "OneHaloProductBispectrum3D", "NFWOneHaloBispectrum3D",
