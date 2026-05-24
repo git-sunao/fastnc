@@ -55,7 +55,7 @@ class fftlog(object):
     def get_c_m(self):
         """
         return m and c_m
-        c_m: the smoothed FFT coefficients of "biased" input function f(x): f_b = f(x) / x^\nu
+        c_m: the smoothed FFT coefficients of "biased" input function f(x): f_b = f(x) / x^\\nu
         number of x values should be even
         c_window_width: the fraction of c_m elements that are smoothed,
         e.g. c_window_width=0.25 means smoothing the last 1/4 of c_m elements using "c_window".
@@ -69,8 +69,8 @@ class fftlog(object):
 
     def fftlog(self, ell):
         """
-        Calculate F(y) = \int_0^\infty dx / x * f(x) * j_\ell(xy),
-        where j_\ell is the spherical Bessel func of order ell.
+        Calculate F(y) = \\int_0^\\infty dx / x * f(x) * j_\\ell(xy),
+        where j_\\ell is the spherical Bessel func of order ell.
         array y is set as y[:] = (ell+1)/x[::-1]
         """
         x0 = self.x[0]
@@ -84,8 +84,8 @@ class fftlog(object):
 
     def fftlog_dj(self, ell):
         """
-        Calculate F(y) = \int_0^\infty dx / x * f(x) * j'_\ell(xy),
-        where j_\ell is the spherical Bessel func of order ell.
+        Calculate F(y) = \\int_0^\\infty dx / x * f(x) * j'_\\ell(xy),
+        where j_\\ell is the spherical Bessel func of order ell.
         array y is set as y[:] = (ell+1)/x[::-1]
         """
         x0 = self.x[0]
@@ -98,8 +98,8 @@ class fftlog(object):
 
     def fftlog_ddj(self, ell):
         """
-        Calculate F(y) = \int_0^\infty dx / x * f(x) * j''_\ell(xy),
-        where j_\ell is the spherical Bessel func of order ell.
+        Calculate F(y) = \\int_0^\\infty dx / x * f(x) * j''_\\ell(xy),
+        where j_\\ell is the spherical Bessel func of order ell.
         array y is set as y[:] = (ell+1)/x[::-1]
         """
         x0 = self.x[0]
@@ -112,8 +112,8 @@ class fftlog(object):
 
     def fftlog_jsqr(self, ell):
         """
-        Calculate F(y) = \int_0^\infty dx / x * f(x) * (j_\ell(xy))^2,
-        where j_\ell is the spherical Bessel func of order ell.
+        Calculate F(y) = \\int_0^\\infty dx / x * f(x) * (j_\\ell(xy))^2,
+        where j_\\ell is the spherical Bessel func of order ell.
         array y is set as y[:] = (ell+1)/x[::-1]
         """
         x0 = self.x[0]
