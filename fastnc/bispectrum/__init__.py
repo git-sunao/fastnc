@@ -6,17 +6,20 @@ from .base import (
 from .los import (
     Kernel1D, KernelSet, BaseLOSIntegrand, LOSProjectorBase, LineOfSightProjector,
     MultipoleLineOfSightProjector,
-    ProjectedBispectrum2D, ProjectedBispectrum2DCollection,
-    ProjectedBispectrum2DGroup, ProjectedBispectrum2DView, ProjectedBispectra2D,
 )
 from .multipole import (
-    BispectrumMultipoleConfig,
-    BispectrumMultipole2D, AnalyticBispectrumMultipole2D,
-    InterpolatedBispectrumMultipole2D,
-    BispectrumMultipole3D, ProjectedBispectrumMultipole2D,
+    BispectrumMultipole2DConfig, BispectrumMultipoleConfig,
+    BispectrumMultipole2D, BispectrumMultipole2DGrid,
+    BispectrumMultipole3D,
     BispectrumMultipole2DCalculator,
 )
-from .interpolate import RuvInterpolatedBispectrum2D, RuvInterpolatedAngularBispectrum2D
+from .interpolate import (
+    Bispectrum3DInterpolationConfig, Bispectrum2DInterpolationConfig,
+    BispectrumMultipole3DInterpolationConfig,
+    InterpolatedBispectrum3D, InterpolatedBispectrum2D,
+    InterpolatedBispectrumMultipole2D, InterpolatedBispectrumMultipole3D,
+    RuvInterpolatedBispectrum2D, RuvInterpolatedAngularBispectrum2D,
+)
 from .models import ExternalBispectrum3D
 from .regulator import Ell3HighPassRegulator
 
@@ -35,12 +38,16 @@ __all__ = [
     "Bispectrum2D",
     "Kernel1D", "KernelSet", "BaseLOSIntegrand", "LOSProjectorBase", "LineOfSightProjector",
     "MultipoleLineOfSightProjector",
-    "ProjectedBispectrum2D", "ProjectedBispectrum2DCollection", "ProjectedBispectrum2DGroup", "ProjectedBispectrum2DView", "ProjectedBispectra2D",
-    "BispectrumMultipoleConfig",
-    "BispectrumMultipole2D", "AnalyticBispectrumMultipole2D",
+    "BispectrumMultipole2DConfig", "BispectrumMultipoleConfig",
+    "BispectrumMultipole2D",
+    "BispectrumMultipole2DGrid",
     "InterpolatedBispectrumMultipole2D",
-    "BispectrumMultipole3D", "ProjectedBispectrumMultipole2D",
+    "BispectrumMultipole3D",
     "BispectrumMultipole2DCalculator",
+    "Bispectrum3DInterpolationConfig", "Bispectrum2DInterpolationConfig",
+    "BispectrumMultipole3DInterpolationConfig",
+    "InterpolatedBispectrum3D", "InterpolatedBispectrum2D",
+    "InterpolatedBispectrumMultipole3D",
     "RuvInterpolatedBispectrum2D", "RuvInterpolatedAngularBispectrum2D", "ExternalBispectrum3D",
     "Ell3HighPassRegulator",
     "Halofit", "BiHalofitBispectrum3D", "BiHalofitBispectrumMultipole3D",

@@ -1,7 +1,7 @@
 """Public high-level 3PCF API."""
 from __future__ import annotations
 
-from ..bispectrum import BispectrumMultipoleConfig
+from ..bispectrum import BispectrumMultipole2DConfig
 from .bmultipole_grid import BMultipoleGrid
 from .calculator import ThreePCFCalculator
 from .config import ThreePCFConfig
@@ -28,7 +28,7 @@ class ThreePCF:
         config: ThreePCFConfig | None = None,
         *,
         coupling_kwargs: dict | None = None,
-        multipole_config: BispectrumMultipoleConfig | None = None,
+        multipole_config: BispectrumMultipole2DConfig | None = None,
         multipole_basis: str = "fourier-even",
         regulator=None,
         multipole_kwargs: dict | None = None,
@@ -69,8 +69,8 @@ class ThreePCF:
             raise RuntimeError("A compute method must be called before accessing stage grids.")
         return self.calculator
 
-    def _default_multipole_config(self) -> BispectrumMultipoleConfig:
-        return BispectrumMultipoleConfig(
+    def _default_multipole_config(self) -> BispectrumMultipole2DConfig:
+        return BispectrumMultipole2DConfig(
             mode_max=int(self.config.Lmax),
             ell_min=float(self.config.ell_min),
             ell_max=float(self.config.ell_max),
