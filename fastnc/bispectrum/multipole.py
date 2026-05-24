@@ -397,6 +397,13 @@ class BispectrumMultipole2DCalculator:
         db = delta_beta.reshape((1,) * ell1.ndim + (-1,))
         e3 = ell1ell2delta_beta_to_ell3(e1, e2, db)
 
+        # Some Bispectrum2D implementations accept broadcastable inputs, but
+        # LOS-projected bispectra require ell1, ell2, and ell3 to have exactly
+        # the same shape before they are flattened onto the LOS grid.  Broadcast
+        # explicitly here so point-wise multipole evaluation works uniformly for
+        # direct, projected, and interpolated bispectra.
+        e1, e2, e3 = np.broadcast_arrays(e1, e2, e3)
+
         values = bispectrum(e1, e2, e3, **params)
         if regulator is not None:
             values = values * regulator(e1, e2, e3)
