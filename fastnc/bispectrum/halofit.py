@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2026/05/23 20:05:13
+Last edit  : 2026/05/25 16:36:30
 
 Description:
 halofit.py contains the Halofit class. 
@@ -20,6 +20,11 @@ try:
 except Exception:  # pragma: no cover - fallback for standalone copies
     PowerLawFFTLogConfig = None
     power_law_fftlog_coefficients = None
+
+try:
+    from fastnc.hankel.radial import RadialFFTLogExpansion
+except Exception:  # pragma: no cover - fallback for standalone copies
+    RadialFFTLogExpansion = None
 
 class Halofit:
     """
@@ -729,6 +734,136 @@ class Halofit:
         return Btot
 
 
+
+    def to_multipole(self, **kwargs):
+        """Return a semi-analytic BiHalofit multipole evaluator."""
+        return HalofitMultipole.from_halofit(self, **kwargs)
+
+
+class HalofitMultipole(Halofit):
+    """Semi-analytic BiHalofit multipole evaluator."""
+
+    def __init__(
+        self,
+        k=None,
+        pklin=None,
+        z=None,
+        lgr=None,
+        cosmo=None,
+        *,
+        n_fftlog=128,
+        k_fft_min=None,
+        k_fft_max=None,
+        fftlog_pad=4.0,
+        bias_D=0.0,
+        bias_H=0.0,
+        n_kernel_phi=128,
+        r_decimals=14,
+        c_window_width=0.0,
+    ):
+        super().__init__(k=k, pklin=pklin, z=z, lgr=lgr, cosmo=cosmo)
+        self._init_multipole_state(
+            n_fftlog=n_fftlog,
+            k_fft_min=k_fft_min,
+            k_fft_max=k_fft_max,
+            fftlog_pad=fftlog_pad,
+            bias_D=bias_D,
+            bias_H=bias_H,
+            n_kernel_phi=n_kernel_phi,
+            r_decimals=r_decimals,
+            c_window_width=c_window_width,
+        )
+
+    @classmethod
+    def from_halofit(cls, halofit, **kwargs):
+        """Create a multipole evaluator sharing an existing Halofit state."""
+        obj = cls.__new__(cls)
+        obj.__dict__ = halofit.__dict__.copy()
+        obj._init_multipole_state(**kwargs)
+        return obj
+
+    def set_lgr(self, z, lgr):
+        super().set_lgr(z, lgr)
+        self._clear_radial_fftlog_cache()
+
+    def set_pklin(self, k, pklin):
+        super().set_pklin(k, pklin)
+        self._clear_radial_fftlog_cache()
+
+    def set_cosmology(self, cosmo):
+        super().set_cosmology(cosmo)
+        self._clear_radial_fftlog_cache()
+
+    def _clear_radial_fftlog_cache(self):
+        cache = getattr(self, "_radial_fftlog_cache", None)
+        if cache is not None:
+            cache.clear()
+
+    def _init_multipole_state(
+        self,
+        *,
+        n_fftlog=128,
+        k_fft_min=None,
+        k_fft_max=None,
+        fftlog_pad=4.0,
+        bias_D=0.0,
+        bias_H=0.0,
+        n_kernel_phi=128,
+        r_decimals=14,
+        c_window_width=0.0,
+    ):
+        self.n_fftlog = int(n_fftlog)
+        self.k_fft_min = k_fft_min
+        self.k_fft_max = k_fft_max
+        self.fftlog_pad = float(fftlog_pad)
+        self.bias_D = float(bias_D)
+        self.bias_H = float(bias_H)
+        self.n_kernel_phi = int(n_kernel_phi)
+        self.r_decimals = int(r_decimals)
+        self.c_window_width = float(c_window_width)
+        self._radial_fftlog_cache = {}
+
+    def _radial_cache_key(self, z, k_fft, bias_D, bias_H, n_kernel_phi):
+        return (
+            float(z),
+            int(k_fft.size),
+            float(k_fft[0]),
+            float(k_fft[-1]),
+            float(bias_D),
+            float(bias_H),
+            int(n_kernel_phi),
+            self.r_decimals,
+            self.c_window_width,
+        )
+
+    def _get_radial_fftlog_pair(self, z, k_fft, bias_D, bias_H, n_kernel_phi):
+        key = self._radial_cache_key(z, k_fft, bias_D, bias_H, n_kernel_phi)
+        cached = self._radial_fftlog_cache.get(key)
+        if cached is not None:
+            return cached
+
+        c = self.get_bihalofit_coeffs(np.asarray([z], dtype=float))[0]
+        D_fft, _, H_fft = self._bihalofit_3h_radial_functions(k_fft, z, c=c)
+        radial_D = self._make_radial_fftlog_expansion(
+            k_fft, D_fft, bias=bias_D, n_kernel_phi=n_kernel_phi,
+            r_decimals=self.r_decimals, c_window_width=self.c_window_width,
+        )
+        radial_H = self._make_radial_fftlog_expansion(
+            k_fft, H_fft, bias=bias_H, n_kernel_phi=n_kernel_phi,
+            r_decimals=self.r_decimals, c_window_width=self.c_window_width,
+        )
+
+        if radial_D is None or radial_H is None:
+            coeff_D, nu_D = self._fftlog_power_law_coefficients(k_fft, D_fft, bias=bias_D)
+            coeff_H, nu_H = self._fftlog_power_law_coefficients(k_fft, H_fft, bias=bias_H)
+        else:
+            coeff_D, nu_D = radial_D.c_m, radial_D.z_m
+            coeff_H, nu_H = radial_H.c_m, radial_H.z_m
+
+        cached = (radial_D, radial_H, coeff_D, nu_D, coeff_H, nu_H)
+        self._radial_fftlog_cache[key] = cached
+        return cached
+
     def _bihalofit_3h_radial_functions(self, k, z, c=None):
         """Return D(k), P_E(k), and H(k)=D(k)P_E(k) for BiHalofit 3h."""
         k = np.asarray(k, dtype=float)
@@ -782,6 +917,35 @@ class Halofit:
         x0 = np.log(kmin)
         x1 = np.log(kmax)
         return np.exp(x0 + (x1 - x0) * np.arange(n_fftlog) / n_fftlog)
+
+
+    def _make_radial_fftlog_expansion(
+        self,
+        k_fft,
+        f_fft,
+        bias=0.0,
+        n_kernel_phi=128,
+        r_decimals=14,
+        c_window_width=0.0,
+    ):
+        """Return reusable radial FFTLog expansion on a fixed k-grid."""
+        if RadialFFTLogExpansion is None:
+            return None
+
+        return RadialFFTLogExpansion(
+            x_fft=k_fft,
+            fx=f_fft,
+            nu=float(bias),
+            N_extrap_low=0,
+            N_extrap_high=0,
+            c_window_width=float(c_window_width),
+            N_pad=0,
+            n_r=max(512, int(k_fft.size) * 4),
+            n_phi=int(n_kernel_phi),
+            mode_block=16,
+            r_decimals=r_decimals,
+            bounds_error=False,
+        )
 
     def _powerlaw_cosine_kernel_quad(self, L, nu, k1, k2, n_phi=128):
         """Compute K_L^nu(k1,k2) by Gauss-Legendre quadrature.
@@ -981,14 +1145,14 @@ class Halofit:
         k2,
         L,
         z,
-        n_fftlog=128,
+        n_fftlog=None,
         k_fft_min=None,
         k_fft_max=None,
-        fftlog_pad=4.0,
-        bias_D=0.0,
-        bias_H=0.0,
+        fftlog_pad=None,
+        bias_D=None,
+        bias_H=None,
         kernel_method="auto",
-        n_kernel_phi=128,
+        n_kernel_phi=None,
         cyclic_r_quad=0.97,
         cyclic_quad_n_phi=256,
         return_parts=False,
@@ -1013,6 +1177,21 @@ class Halofit:
         if L < 0:
             raise ValueError("L must be non-negative")
 
+        if n_fftlog is None:
+            n_fftlog = self.n_fftlog
+        if k_fft_min is None:
+            k_fft_min = self.k_fft_min
+        if k_fft_max is None:
+            k_fft_max = self.k_fft_max
+        if fftlog_pad is None:
+            fftlog_pad = self.fftlog_pad
+        if bias_D is None:
+            bias_D = self.bias_D
+        if bias_H is None:
+            bias_H = self.bias_H
+        if n_kernel_phi is None:
+            n_kernel_phi = self.n_kernel_phi
+
         k1 = np.asarray(k1, dtype=float)
         k2 = np.asarray(k2, dtype=float)
         k1, k2 = np.broadcast_arrays(k1, k2)
@@ -1036,25 +1215,52 @@ class Halofit:
             k_fft_max = k3_max.max() * fftlog_pad
         k_fft = self._make_fftlog_grid(k_fft_min, k_fft_max, int(n_fftlog))
 
-        D_fft, _, H_fft = self._bihalofit_3h_radial_functions(k_fft, z, c=c)
-        coeff_D, nu_D = self._fftlog_power_law_coefficients(k_fft, D_fft, bias=bias_D)
-        coeff_H, nu_H = self._fftlog_power_law_coefficients(k_fft, H_fft, bias=bias_H)
+        radial_D, radial_H, coeff_D, nu_D, coeff_H, nu_H = self._get_radial_fftlog_pair(
+            z=z,
+            k_fft=k_fft,
+            bias_D=bias_D,
+            bias_H=bias_H,
+            n_kernel_phi=n_kernel_phi,
+        )
+
 
         # T12: variable dependence comes from D(k3) and k3 D(k3).
         C0, C2, C4 = self._bihalofit_T12_coefficients(k1, k2)
-        KD0 = self._kernel_sum(L, coeff_D, nu_D, 0.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
-        KD1 = self._kernel_sum(L, coeff_D, nu_D, 1.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
-        KD2 = self._kernel_sum(L, coeff_D, nu_D, 2.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
-        KD4 = self._kernel_sum(L, coeff_D, nu_D, 4.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+        if radial_D is None:
+            KD0 = self._kernel_sum(L, coeff_D, nu_D, 0.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+            KD1 = self._kernel_sum(L, coeff_D, nu_D, 1.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+            KD2 = self._kernel_sum(L, coeff_D, nu_D, 2.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+            KD4 = self._kernel_sum(L, coeff_D, nu_D, 4.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+        else:
+            KD = radial_D.kernel_sum_many_shifts(
+                L=L,
+                shifts=(0, 1, 2, 4),
+                k1=k1,
+                k2=k2,
+                use_unique_r=True,
+                r_decimals=14,
+            )
+            KD0, KD1, KD2, KD4 = KD[..., 0], KD[..., 1], KD[..., 2], KD[..., 3]
         T12 = 2.0 * D1 * D2 * PE1 * PE2 * (
             C0 * KD0 + C2 * KD2 + C4 * KD4 + c['dn'] * c['r_sigma'] * KD1
         )
 
         # Tcyc: pair-combined cyclic contribution.
         Em2, E0, E2 = self._bihalofit_Tcyc_coefficients(k1, k2, PE1, PE2, c['dn'] * c['r_sigma'])
-        KHm2 = self._kernel_sum(L, coeff_H, nu_H, -2.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
-        KH0 = self._kernel_sum(L, coeff_H, nu_H, 0.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
-        KH2 = self._kernel_sum(L, coeff_H, nu_H, 2.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+        if radial_H is None:
+            KHm2 = self._kernel_sum(L, coeff_H, nu_H, -2.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+            KH0 = self._kernel_sum(L, coeff_H, nu_H, 0.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+            KH2 = self._kernel_sum(L, coeff_H, nu_H, 2.0, k1, k2, n_phi=n_kernel_phi, method=kernel_method)
+        else:
+            KH = radial_H.kernel_sum_many_shifts(
+                L=L,
+                shifts=(-2, 0, 2),
+                k1=k1,
+                k2=k2,
+                use_unique_r=True,
+                r_decimals=7,
+            )
+            KHm2, KH0, KH2 = KH[..., 0], KH[..., 1], KH[..., 2]
         Tcyc = 2.0 * D1 * D2 * (Em2 * KHm2 + E0 * KH0 + E2 * KH2)
 
         r = np.minimum(k1, k2) / np.maximum(k1, k2)

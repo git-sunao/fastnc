@@ -19,10 +19,9 @@ from .interpolate import (
     InterpolatedBispectrum3D, InterpolatedBispectrum2D,
     InterpolatedBispectrumMultipole2D, InterpolatedBispectrumMultipole3D,
 )
-from .models import ExternalBispectrum3D
 from .regulator import Ell3HighPassRegulator
 
-from .halofit import Halofit
+from .halofit import Halofit, HalofitMultipole
 
 from .presets import (
     BiHalofitBispectrum3D, BiHalofitBispectrumMultipole3D,
@@ -47,9 +46,8 @@ __all__ = [
     "BispectrumMultipole3DInterpolationConfig",
     "InterpolatedBispectrum3D", "InterpolatedBispectrum2D",
     "InterpolatedBispectrumMultipole3D",
-    "ExternalBispectrum3D",
     "Ell3HighPassRegulator",
-    "Halofit", "BiHalofitBispectrum3D", "BiHalofitBispectrumMultipole3D",
+    "Halofit", "HalofitMultipole", "BiHalofitBispectrum3D", "BiHalofitBispectrumMultipole3D",
     "OneHaloProductBispectrum3D", "NFWOneHaloBispectrum3D",
     "default_wmap_like_cosmology", "simple_linear_growth",
     "simple_debug_pklin", "eisenstein_hu_like_pklin",

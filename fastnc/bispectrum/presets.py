@@ -14,9 +14,8 @@ import numpy as np
 from .base import Bispectrum3D
 from .multipole import BispectrumMultipole3D
 from .los import LineOfSightProjector
-from .models import ExternalBispectrum3D
 from .support import Support3D
-from .halofit import Halofit
+from .halofit import Halofit, HalofitMultipole
 
 
 _DEFAULT_COSMO_WMAP_LIKE = {
@@ -40,7 +39,7 @@ def default_wmap_like_cosmology() -> dict[str, float]:
     return dict(_DEFAULT_COSMO_WMAP_LIKE)
 
 
-class BiHalofitBispectrum3D(ExternalBispectrum3D):
+class BiHalofitBispectrum3D(Bispectrum3D):
     """Wrapper for the bundled :class:`Halofit` / Bihalofit model.
 
     This class does not self-initialize by default.  A scientific run should
@@ -55,16 +54,11 @@ class BiHalofitBispectrum3D(ExternalBispectrum3D):
         halofit: Halofit | None = None,
         support: Support3D | None = None,
         support_policy: str = "zero",
-        method_name: str = "get_bihalofit",
     ):
         self.halofit = halofit or Halofit()
         self._support_policy = support_policy
         self._user_support = support is not None
-        super().__init__(
-            self.halofit,
-            support=support or Support3D(policy=support_policy),
-            method_name=method_name,
-        )
+        self.support = support or Support3D(policy=support_policy)
 
     @property
     def ready(self) -> bool:
@@ -208,7 +202,7 @@ class BiHalofitBispectrum3D(ExternalBispectrum3D):
                 "Call set_cosmology(), set_pklin(), and set_growth(), or use "
                 "BiHalofitBispectrum3D.from_cosmology(...)."
             )
-        return super().evaluate(k1, k2, k3, z, **params)
+        return self.halofit.get_bihalofit(k1, k2, k3, z, **params)
 
     def analytic_multipole(
         self,
@@ -275,21 +269,34 @@ class BiHalofitBispectrumMultipole3D(BispectrumMultipole3D):
         cyclic_r_quad=0.97,
         cyclic_quad_n_phi=256,
     ):
-        self.halofit = halofit
         self.which = tuple(which) if isinstance(which, (list, tuple)) else (which,)
         if set(self.which) != {"Bh3"}:
             raise NotImplementedError(
                 "BiHalofitBispectrumMultipole3D currently implements only which=['Bh3']. "
                 "The which argument is reserved for future Bh1+Bh3 support."
             )
-        self.n_fftlog = int(n_fftlog)
-        self.k_fft_min = k_fft_min
-        self.k_fft_max = k_fft_max
-        self.fftlog_pad = float(fftlog_pad)
-        self.bias_D = bias_D
-        self.bias_H = bias_H
+
+        self.halofit = halofit.to_multipole(
+            n_fftlog=n_fftlog,
+            k_fft_min=k_fft_min,
+            k_fft_max=k_fft_max,
+            fftlog_pad=fftlog_pad,
+            bias_D=bias_D,
+            bias_H=bias_H,
+            n_kernel_phi=n_kernel_phi,
+        ) if not isinstance(halofit, HalofitMultipole) else halofit
+
+        if isinstance(halofit, HalofitMultipole):
+            self.halofit.n_fftlog = int(n_fftlog)
+            self.halofit.k_fft_min = k_fft_min
+            self.halofit.k_fft_max = k_fft_max
+            self.halofit.fftlog_pad = float(fftlog_pad)
+            self.halofit.bias_D = float(bias_D)
+            self.halofit.bias_H = float(bias_H)
+            self.halofit.n_kernel_phi = int(n_kernel_phi)
+            self.halofit._clear_radial_fftlog_cache()
+
         self.kernel_method = kernel_method
-        self.n_kernel_phi = int(n_kernel_phi)
         self.cyclic_r_quad = float(cyclic_r_quad)
         self.cyclic_quad_n_phi = int(cyclic_quad_n_phi)
 
@@ -300,6 +307,13 @@ class BiHalofitBispectrumMultipole3D(BispectrumMultipole3D):
         k2 = np.asarray(k2, dtype=float)
         z = np.asarray(z, dtype=float)
         k1, k2, z = np.broadcast_arrays(k1, k2, z)
+
+        kernel_method = params.pop("kernel_method", self.kernel_method)
+        cyclic_r_quad = params.pop("cyclic_r_quad", self.cyclic_r_quad)
+        cyclic_quad_n_phi = params.pop("cyclic_quad_n_phi", self.cyclic_quad_n_phi)
+        if params:
+            unknown = ", ".join(sorted(params))
+            raise TypeError(f"Unexpected BiHalofit multipole parameter(s): {unknown}")
 
         vals = []
         z_flat = z.ravel()
@@ -313,16 +327,9 @@ class BiHalofitBispectrumMultipole3D(BispectrumMultipole3D):
                     k2[mask],
                     L=int(L),
                     z=float(z0),
-                    n_fftlog=self.n_fftlog,
-                    k_fft_min=self.k_fft_min,
-                    k_fft_max=self.k_fft_max,
-                    fftlog_pad=self.fftlog_pad,
-                    bias_D=self.bias_D,
-                    bias_H=self.bias_H,
-                    kernel_method=self.kernel_method,
-                    n_kernel_phi=self.n_kernel_phi,
-                    cyclic_r_quad=self.cyclic_r_quad,
-                    cyclic_quad_n_phi=self.cyclic_quad_n_phi,
+                    kernel_method=kernel_method,
+                    cyclic_r_quad=cyclic_r_quad,
+                    cyclic_quad_n_phi=cyclic_quad_n_phi,
                     return_parts=False,
                 )
             vals.append(out_L)
