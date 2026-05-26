@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2026/05/25 16:36:30
+Last edit  : 2026/05/26 00:16:32
 
 Description:
 halofit.py contains the Halofit class. 
@@ -631,6 +631,7 @@ class Halofit:
         self.update()
         
         # N
+        z = np.broadcast_to(z, k1.shape)
         N = z.shape
 
         # physical triangle test, ratio of modes

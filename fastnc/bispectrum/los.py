@@ -27,6 +27,7 @@ class Kernel1D:
     z: np.ndarray
     chi: np.ndarray
     weight: np.ndarray
+    name: str | None = None
 
     def __post_init__(self):
         self.z = np.asarray(self.z, dtype=float)
@@ -38,23 +39,275 @@ class Kernel1D:
             raise ValueError("Kernel1D arrays must be one-dimensional")
         if self.chi.size < 2:
             raise ValueError("Kernel1D needs at least two chi samples for spline/trapezoid integration")
+        if np.any(~np.isfinite(self.z)) or np.any(~np.isfinite(self.chi)) or np.any(~np.isfinite(self.weight)):
+            raise ValueError("z, chi, and weight must be finite")
+        if np.any(np.diff(self.chi) <= 0.0):
+            order = np.argsort(self.chi)
+            self.z = self.z[order]
+            self.chi = self.chi[order]
+            self.weight = self.weight[order]
+            if np.any(np.diff(self.chi) <= 0.0):
+                raise ValueError("chi samples must be strictly increasing")
+
+    def copy(self, *, weight=None, name=None):
+        return type(self)(
+            z=self.z.copy(),
+            chi=self.chi.copy(),
+            weight=self.weight.copy() if weight is None else np.asarray(weight, dtype=float),
+            name=self.name if name is None else name,
+        )
 
     def interp_chi(self):
         return InterpolatedUnivariateSpline(self.chi, self.weight, k=min(3, self.chi.size - 1), ext=1)
 
+    def evaluate(self, chi):
+        return self.interp_chi()(chi)
+
+    def resample(self, z, chi, *, name=None):
+        chi = np.asarray(chi, dtype=float)
+        z = np.asarray(z, dtype=float)
+        if z.shape != chi.shape:
+            raise ValueError("z and chi must have the same shape")
+        return type(self)(z=z, chi=chi, weight=self.evaluate(chi), name=self.name if name is None else name)
+
+    def resample_like(self, other: "Kernel1D", *, name=None):
+        return self.resample(other.z, other.chi, name=name)
+
+    def integral(self):
+        return np.trapezoid(self.weight, self.chi)
+
+    def normalized(self, *, integral: float = 1.0, name=None):
+        current = self.integral()
+        if current == 0.0:
+            raise ValueError("cannot normalize a kernel with zero integral")
+        return self.copy(weight=self.weight * (float(integral) / current), name=self.name if name is None else name)
+
+    def _binary_kernel_op(self, other, op, symbol: str):
+        if np.isscalar(other):
+            return self.copy(weight=op(self.weight, float(other)), name=self.name)
+        if not isinstance(other, Kernel1D):
+            return NotImplemented
+        other_weight = other.weight if np.array_equal(self.chi, other.chi) else other.evaluate(self.chi)
+        name = None
+        if self.name is not None or other.name is not None:
+            name = f"({self.name or 'kernel'}{symbol}{other.name or 'kernel'})"
+        return type(self)(z=self.z, chi=self.chi, weight=op(self.weight, other_weight), name=name)
+
+    def __add__(self, other):
+        return self._binary_kernel_op(other, np.add, "+")
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __sub__(self, other):
+        return self._binary_kernel_op(other, np.subtract, "-")
+
+    def __rsub__(self, other):
+        if np.isscalar(other):
+            return self.copy(weight=float(other) - self.weight, name=self.name)
+        if isinstance(other, Kernel1D):
+            return other.__sub__(self)
+        return NotImplemented
+
+    def __mul__(self, other):
+        return self._binary_kernel_op(other, np.multiply, "*")
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        return self._binary_kernel_op(other, np.divide, "/")
+
+    def __neg__(self):
+        return self.copy(weight=-self.weight, name=None if self.name is None else f"(-{self.name})")
+
+    @staticmethod
+    def _validate_z_grid(z, name: str = "z"):
+        z = np.asarray(z, dtype=float)
+        if z.ndim != 1 or z.size < 2:
+            raise ValueError(f"{name} must be a one-dimensional array with at least two samples")
+        if np.any(~np.isfinite(z)):
+            raise ValueError(f"{name} must be finite")
+        if np.any(np.diff(z) <= 0.0):
+            raise ValueError(f"{name} samples must be strictly increasing")
+        return z
+
+    @staticmethod
+    def _normalized_nz(z_nz, nz):
+        z_nz = Kernel1D._validate_z_grid(z_nz, "z_nz")
+        nz = np.asarray(nz, dtype=float)
+        if z_nz.shape != nz.shape:
+            raise ValueError("z_nz and nz must have the same shape")
+        if np.any(~np.isfinite(nz)):
+            raise ValueError("nz must be finite")
+        norm = np.trapezoid(nz, z_nz)
+        if norm <= 0.0:
+            raise ValueError("nz must have a positive integral over z_nz")
+        return nz / norm
+
+    @staticmethod
+    def _parse_nz_args(z_kernel, args, z_nz, method_name: str):
+        if len(args) == 1:
+            nz = args[0]
+            if z_nz is None:
+                z_nz = z_kernel
+        elif len(args) == 2:
+            if z_nz is not None:
+                raise TypeError(f"{method_name} received both positional z_nz and keyword z_nz")
+            z_nz, nz = args
+        else:
+            raise TypeError(
+                f"{method_name} expects either (z_kernel, chi_kernel, nz) "
+                f"or (z_kernel, chi_kernel, z_nz, nz)"
+            )
+        return np.asarray(z_nz, dtype=float), np.asarray(nz, dtype=float)
+
+    @staticmethod
+    def _dz_dchi(z, chi):
+        return np.gradient(np.asarray(z, dtype=float), np.asarray(chi, dtype=float), edge_order=1)
+
+    @staticmethod
+    def _interp_nz_to_kernel_z(z_kernel, z_nz, nz):
+        z_kernel = np.asarray(z_kernel, dtype=float)
+        z_nz = Kernel1D._validate_z_grid(z_nz, "z_nz")
+        nz = np.asarray(nz, dtype=float)
+        if z_nz.shape != nz.shape:
+            raise ValueError("z_nz and nz must have the same shape")
+        spline = InterpolatedUnivariateSpline(z_nz, nz, k=min(3, z_nz.size - 1), ext=1)
+        return spline(z_kernel)
+
+    @staticmethod
+    def _chi_at_source_z(z_kernel, chi_kernel, z_nz):
+        z_kernel = Kernel1D._validate_z_grid(z_kernel, "z_kernel")
+        chi_kernel = np.asarray(chi_kernel, dtype=float)
+        z_nz = Kernel1D._validate_z_grid(z_nz, "z_nz")
+        if z_kernel.shape != chi_kernel.shape:
+            raise ValueError("z_kernel and chi_kernel must have the same shape")
+        spline = InterpolatedUnivariateSpline(z_kernel, chi_kernel, k=min(3, z_kernel.size - 1), ext=1)
+        return spline(z_nz)
+
     @classmethod
-    def delta_like(cls, z: float, chi: float, width: float | None = None, power: int = 3):
-        """Return a narrow top-hat kernel representing a fixed-chi delta.
+    def from_nz(
+        cls,
+        z,
+        chi,
+        *args,
+        z_nz=None,
+        normalize: bool = True,
+        name: str | None = None,
+    ):
+        """Return n(chi) on the kernel grid.
 
-        The returned kernel is normalized so that, if the same kernel is used
-        ``power`` times in a :class:`KernelSet.product`, then
-
-            int dchi W(chi)**power = 1
-
-        under trapezoidal integration.  For bispectra, ``power=3`` is the
-        natural choice because the projected integrand contains a product of
-        three line-of-sight kernels.
+        Accepted forms are ``from_nz(z, chi, nz)`` and
+        ``from_nz(z_kernel, chi_kernel, z_nz, nz)``.  The keyword form
+        ``from_nz(z_kernel, chi_kernel, nz, z_nz=z_nz)`` is also accepted.
         """
+        z = cls._validate_z_grid(z, "z_kernel")
+        chi = np.asarray(chi, dtype=float)
+        z_nz, nz = cls._parse_nz_args(z, args, z_nz, "from_nz")
+        nz = cls._normalized_nz(z_nz, nz) if normalize else np.asarray(nz, dtype=float)
+        nz_on_kernel = cls._interp_nz_to_kernel_z(z, z_nz, nz)
+        n_chi = nz_on_kernel * cls._dz_dchi(z, chi)
+        return cls(z=z, chi=chi, weight=n_chi, name=name)
+
+    @classmethod
+    def lensing_from_nz(
+        cls,
+        z,
+        chi,
+        *args,
+        z_nz=None,
+        omega_m: float = 0.3,
+        h0_over_c: float = 100.0 / 299792.458,
+        normalize_nz: bool = True,
+        name: str | None = None,
+    ):
+        """Return the weak-lensing efficiency kernel on the kernel grid."""
+        z = cls._validate_z_grid(z, "z_kernel")
+        chi = np.asarray(chi, dtype=float)
+        z_nz, nz = cls._parse_nz_args(z, args, z_nz, "lensing_from_nz")
+        nz = cls._normalized_nz(z_nz, nz) if normalize_nz else np.asarray(nz, dtype=float)
+        if z.shape != chi.shape:
+            raise ValueError("z_kernel and chi_kernel must have the same shape")
+        if np.any(chi <= 0.0):
+            raise ValueError("chi_kernel must be positive")
+
+        chi_s = cls._chi_at_source_z(z, chi, z_nz)
+        valid = chi_s > 0.0
+        if not np.all(valid):
+            # ``ext=1`` gives zero outside the interpolation range.  Those
+            # points should not contribute to the source integral.
+            chi_s = chi_s[valid]
+            z_src = z_nz[valid]
+            nz_src = nz[valid]
+        else:
+            z_src = z_nz
+            nz_src = nz
+
+        if chi_s.size < 2:
+            raise ValueError("source z_nz grid has too few points inside the kernel z range")
+
+        geom = np.maximum(chi_s[None, :] - chi[:, None], 0.0) / chi_s[None, :]
+        source_integral = np.trapezoid(nz_src[None, :] * geom, z_src, axis=1)
+        pref = 1.5 * float(omega_m) * float(h0_over_c) ** 2
+        weight = pref * chi * (1.0 + z) * source_integral
+        return cls(z=z, chi=chi, weight=weight, name=name)
+
+    @classmethod
+    def nla_from_nz(
+        cls,
+        z,
+        chi,
+        *args,
+        z_nz=None,
+        amplitude: float = 1.0,
+        omega_m: float = 0.3,
+        c1rho_crit: float = 0.0134,
+        growth=None,
+        eta: float = 0.0,
+        z0: float = 0.62,
+        normalize_nz: bool = True,
+        name: str | None = None,
+    ):
+        """Return an NLA intrinsic-alignment kernel on the kernel grid."""
+        z = cls._validate_z_grid(z, "z_kernel")
+        chi = np.asarray(chi, dtype=float)
+        z_nz, nz = cls._parse_nz_args(z, args, z_nz, "nla_from_nz")
+        nz = cls._normalized_nz(z_nz, nz) if normalize_nz else np.asarray(nz, dtype=float)
+        if z.shape != chi.shape:
+            raise ValueError("z_kernel and chi_kernel must have the same shape")
+
+        nz_on_kernel = cls._interp_nz_to_kernel_z(z, z_nz, nz)
+        n_chi = nz_on_kernel * cls._dz_dchi(z, chi)
+        if growth is None:
+            Dz = np.ones_like(z)
+        elif callable(growth):
+            Dz = np.asarray(growth(z), dtype=float)
+        else:
+            Dz = np.asarray(growth, dtype=float)
+        if Dz.shape != z.shape:
+            raise ValueError("growth must be callable on z_kernel or have the same shape as z_kernel")
+        if np.any(Dz == 0.0):
+            raise ValueError("growth must be non-zero")
+        redshift_scaling = ((1.0 + z) / (1.0 + float(z0))) ** float(eta)
+        weight = -float(amplitude) * float(c1rho_crit) * float(omega_m) * redshift_scaling * n_chi / Dz
+        return cls(z=z, chi=chi, weight=weight, name=name)
+
+    @classmethod
+    def lensing_plus_nla(cls, z, chi, *args, z_nz=None, name: str | None = None, **kwargs):
+        """Return W_G + W_IA on the kernel grid."""
+        lensing_kwargs = dict(kwargs.pop("lensing", {}))
+        nla_kwargs = dict(kwargs.pop("nla", {}))
+        if kwargs:
+            raise TypeError(f"unexpected keyword(s): {', '.join(kwargs)}")
+        z_nz, nz = cls._parse_nz_args(np.asarray(z, dtype=float), args, z_nz, "lensing_plus_nla")
+        wg = cls.lensing_from_nz(z, chi, z_nz, nz, **lensing_kwargs)
+        wi = cls.nla_from_nz(z, chi, z_nz, nz, **nla_kwargs)
+        return (wg + wi).copy(name=name)
+
+    @classmethod
+    def delta_like(cls, z: float, chi: float, width: float | None = None, power: int = 3, name: str | None = None):
+        """Return a narrow top-hat kernel representing a fixed-chi delta."""
         z = float(z)
         chi = float(chi)
         if chi <= 0.0:
@@ -71,7 +324,7 @@ class Kernel1D:
             chi_grid = np.array([chi, chi + width], dtype=float)
         z_grid = np.array([z, z], dtype=float)
         weight = np.full(2, width ** (-1.0 / float(power)), dtype=float)
-        return cls(z=z_grid, chi=chi_grid, weight=weight)
+        return cls(z=z_grid, chi=chi_grid, weight=weight, name=name)
 
 
 class KernelSet:
@@ -459,7 +712,11 @@ class MultipoleLineOfSightProjector(LOSProjectorBase):
     def project(self, multipole3d, sample_combination=None, modes=None, mode_max=None):
         from .multipole import BispectrumMultipole2D
         if modes is None and mode_max is not None:
-            modes = np.arange(0, int(mode_max) + 1)
+            mode_max = int(mode_max)
+            if getattr(multipole3d, "basis", "fourier-even") == "fourier":
+                modes = np.arange(-mode_max, mode_max + 1)
+            else:
+                modes = np.arange(0, mode_max + 1)
         return BispectrumMultipole2D.from_multipole3d(
             multipole3d,
             self,

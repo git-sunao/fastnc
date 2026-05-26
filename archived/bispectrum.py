@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/11/27 18:02:25
+Last edit  : 2026/05/26 10:18:45
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -386,7 +386,7 @@ class BispectrumBase:
             I = np.divide(CHIL, CHIS, out=I, where=CHIS > CHIL)
             I = (pzs*(1-I))
 
-            g = prefactor*np.trapz(I, zs, axis=1)/np.trapz(pzs, zs)
+            g = prefactor*np.trapezoid(I, zs, axis=1)/np.trapezoid(pzs, zs)
         return zl, chil, g
 
     def _compute_NLA_kernel_per_sample(self, name, nzlbin=101):
@@ -421,7 +421,7 @@ class BispectrumBase:
         chil = self.z2chi(zl)
         fIA = - AIA * ((1+zl)/(1+z0))**alphaIA * c1rhocrit * self.cosmo.Om0 / self.z2lgr(zl)
         pchis = np.interp(zl, zs, pzs, left=0, right=0) * self.z2dzdchi(zl)
-        norm = np.trapz(pchis, chil)
+        norm = np.trapezoid(pchis, chil)
         g = fIA * pchis / norm / chil
         return zl, chil, g
 
@@ -623,7 +623,7 @@ class BispectrumBase:
 
         # integrate
         if i.shape[1] > 1:
-            bk = np.trapz(i, chi, axis=1)
+            bk = np.trapezoid(i, chi, axis=1)
         else:
             bk = i
 

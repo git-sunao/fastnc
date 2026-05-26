@@ -18,6 +18,13 @@ with
     c0 = (1/pi) int_0^pi dDelta beta B,
     cq = (2/pi) int_0^pi dDelta beta B cos(q Delta beta).
 
+The ``basis='fourier'`` convention stores full complex Fourier coefficients
+
+    B_L = (1/2pi) int_{-pi}^{pi} dDelta beta B exp(-i L Delta beta),
+
+for ``L=-Lmax,...,+Lmax``.  For the present side-only bispectra this reduces
+to ``B_0=c_0`` and ``B_{+L}=B_{-L}=c_L/2`` for ``L>0``.
+
 In practice both exact endpoints are excluded.  The grid is controlled
 directly by ``delta_beta_min`` and ``delta_beta_max``.
 """
@@ -132,7 +139,10 @@ class BispectrumMultipole2D:
         if self.modes is None:
             if mode_max is None:
                 raise ValueError("mode_max is required when modes are not stored")
-            return np.arange(0, int(mode_max) + 1)
+            mode_max = int(mode_max)
+            if self.basis == "fourier":
+                return np.arange(-mode_max, mode_max + 1)
+            return np.arange(0, mode_max + 1)
         modes = np.asarray(self.modes, dtype=int)
         if mode_max is None:
             return modes
@@ -239,7 +249,11 @@ class BispectrumMultipole3D:
             projector = projector.as_multipole_projector()
         out = projector.project(self, sample_combination=sample_combination)
         if modes is None and mode_max is not None:
-            modes = np.arange(0, int(mode_max) + 1)
+            mode_max = int(mode_max)
+            if getattr(self, "basis", "fourier-even") == "fourier":
+                modes = np.arange(-mode_max, mode_max + 1)
+            else:
+                modes = np.arange(0, mode_max + 1)
         if modes is not None:
             out.modes = np.asarray(modes, dtype=int)
         return out
@@ -456,16 +470,38 @@ class BispectrumMultipole2DCalculator:
                 raise ValueError("decomposition_angle must be 'outer' or 'inner'")
 
         elif self.basis == "fourier":
-            if c.decomposition_angle == "inner":
-                raise NotImplementedError(
-                    "inner-angle decomposition for complex Fourier basis is not implemented yet"
-                )
-            delta_signed = np.concatenate([-delta_beta[::-1], delta_beta])
-            values_signed = np.concatenate([values[..., ::-1], values], axis=-1)
-            raw = MultipoleFourier(delta_signed, c.mode_max, method=c.decomposer_method).decompose(
-                values_signed, -modes, axis=-1
-            )
-            coeff = raw / (2.0 * np.pi)
+            # Full complex Fourier coefficients in the OUTER angle,
+            #
+            #   B_L = (1/2pi) int_{-pi}^{pi} B(delta) exp(-i L delta) ddelta.
+            #
+            # Current Bispectrum2D objects are side-only and therefore even in
+            # delta, so this is equivalent to
+            #
+            #   B_L = (1/pi) int_0^pi B(delta) cos(L delta) ddelta.
+            #
+            # This avoids endpoint duplication and also supports the preferred
+            # inner-angle sampling through cos[L(pi-alpha)] = (-1)^L cos(L alpha).
+            modes_abs = np.abs(modes)
+            norm = np.full_like(modes, 1.0 / np.pi, dtype=float)
+            if c.decomposition_angle == "outer":
+                raw = MultipoleCosine(
+                    delta_beta,
+                    c.mode_max,
+                    method=c.decomposer_method,
+                ).decompose(values, modes_abs, axis=-1)
+                coeff = raw * norm.reshape((-1,) + (1,) * len(shape))
+            elif c.decomposition_angle == "inner":
+                alpha_inc = (np.pi - delta_beta)[::-1]
+                values_inc = values[..., ::-1]
+                raw_inner = MultipoleCosine(
+                    alpha_inc,
+                    c.mode_max,
+                    method=c.decomposer_method,
+                ).decompose(values_inc, modes_abs, axis=-1)
+                sign = (-1.0) ** modes
+                coeff = raw_inner * norm.reshape((-1,) + (1,) * len(shape)) * sign.reshape((-1,) + (1,) * len(shape))
+            else:
+                raise ValueError("decomposition_angle must be 'outer' or 'inner'")
         else:
             raise ValueError(f"unsupported basis: {self.basis}")
 
@@ -542,21 +578,39 @@ class BispectrumMultipole2DCalculator:
                 raise ValueError("decomposition_angle must be 'outer' or 'inner'")
 
         elif self.basis == "fourier":
-            if c.decomposition_angle == "inner":
-                raise NotImplementedError(
-                    "inner-angle decomposition for complex Fourier basis is not implemented yet"
-                )
-            # Complex convention in Delta beta:
-            # B_q = (1/2pi) int_{-pi}^{pi} B(delta) exp(-i q delta) d delta.
-            # A side-only bispectrum is even in Delta beta, but this basis is
-            # kept for API completeness and future asymmetric extensions.
-            delta_signed = np.concatenate([-delta_beta[::-1], delta_beta])
-            values_signed = np.concatenate([values[..., ::-1], values], axis=2)
+            # Full complex Fourier coefficients in the outer-angle convention:
+            #
+            #   B_L = (1/2pi) int_{-pi}^{pi} B(delta) exp(-i L delta) ddelta.
+            #
+            # For side-only bispectra B(delta)=B(-delta), so
+            #
+            #   B_L = (1/pi) int_0^pi B(delta) cos(L delta) ddelta,
+            #
+            # and B_{+L}=B_{-L}.  This is the full-Fourier representation used
+            # by the spin-3PCF H-kernel pipeline.
             modes = np.arange(-c.mode_max, c.mode_max + 1)
-            raw = MultipoleFourier(delta_signed, c.mode_max, method=c.decomposer_method).decompose(
-                values_signed, -modes, axis=2
-            )
-            coeff = raw / (2.0 * np.pi)
+            modes_abs = np.abs(modes)
+            norm = np.full_like(modes, 1.0 / np.pi, dtype=float)
+
+            if c.decomposition_angle == "outer":
+                raw = MultipoleCosine(
+                    delta_beta,
+                    c.mode_max,
+                    method=c.decomposer_method,
+                ).decompose(values, modes_abs, axis=2)
+                coeff = raw * norm[:, None, None]
+            elif c.decomposition_angle == "inner":
+                alpha_inc = (np.pi - delta_beta)[::-1]
+                values_inc = values[..., ::-1]
+                raw_inner = MultipoleCosine(
+                    alpha_inc,
+                    c.mode_max,
+                    method=c.decomposer_method,
+                ).decompose(values_inc, modes_abs, axis=2)
+                sign = (-1.0) ** modes
+                coeff = raw_inner * norm[:, None, None] * sign[:, None, None]
+            else:
+                raise ValueError("decomposition_angle must be 'outer' or 'inner'")
 
         else:
             raise ValueError(f"unsupported basis: {self.basis}")
