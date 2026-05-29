@@ -140,8 +140,8 @@ class MultipoleGridConfig:
     # Direct endpoint control in the Fourier variable Delta beta.
     # Both exact endpoints are excluded by default because they correspond to
     # degenerate or flattened triangle boundaries for many bispectrum models.
-    delta_beta_min: float = 5.0e-4
-    delta_beta_max: float = np.pi - 5.0e-4
+    delta_beta_min: float = 0.0
+    delta_beta_max: float = np.pi
 
     n_delta_beta_lin: int = 50
     n_delta_beta_log: int = 30
