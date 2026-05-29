@@ -104,9 +104,8 @@ class MultipoleLegendre(MultipoleBase):
 
     def _get_basis_function(self, modes):
         modes = np.atleast_1d(np.asarray(modes, dtype=int))
-        norm = (2 * modes[:, None] + 1) / 2
-        w0 = norm * np.diff(self._int_P(modes), axis=1)
-        w1 = norm * np.diff(self._int_xP(modes), axis=1)
+        w0 = 0.5*np.diff(self._int_P(modes), axis=1)
+        w1 = 0.5*np.diff(self._int_xP(modes), axis=1)
         return w0, w1
 
     def _basis_values(self, modes):
