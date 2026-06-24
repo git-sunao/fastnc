@@ -34,14 +34,16 @@ class BMultipoleGrid:
 
     grid: FFTGrid
     Lmax: int
+    Lmin: int = None
     basis: str = "fourier-even"
     values: np.ndarray | None = None
     L_values: np.ndarray = field(init=False)
 
     def __post_init__(self):
         self.Lmax = int(self.Lmax)
+        self.Lmin = self._make_L_min(self.basis, self.Lmin)
         self.basis = self._canonical_basis(self.basis)
-        self.L_values = self._make_L_values(self.basis)
+        self.L_values = np.arange(self.Lmin, self.Lmax + 1, dtype=int)
         if self.values is not None:
             self.values = np.asarray(self.values)
             self._validate_values()
@@ -60,14 +62,16 @@ class BMultipoleGrid:
             f"Unsupported multipole basis {basis!r}. "
             "Supported bases are 'fourier' and 'fourier-even'."
         )
-
-    def _make_L_values(self, basis: str) -> np.ndarray:
+    
+    def _make_L_min(self, basis: str, Lmin: int | None) -> int:
+        if Lmin is not None:
+            return int(Lmin)
         if basis == "fourier-even":
-            return np.arange(0, self.Lmax + 1, dtype=int)
+            return 0
         if basis == "fourier":
-            return np.arange(-self.Lmax, self.Lmax + 1, dtype=int)
+            return -self.Lmax
         raise ValueError(
-            f"Unsupported multipole basis {self.basis!r}. "
+            f"Unsupported multipole basis {basis!r}. "
             "Supported bases are 'fourier' and 'fourier-even'."
         )
 
