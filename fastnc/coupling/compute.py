@@ -323,8 +323,10 @@ def b_array_from_two_q(two_q: int, two_p_values: Iterable[int], psi_values: Iter
     return out
 
 
-# Legacy helpers kept for import compatibility. They are no longer used by the
-# Fourier-basis coupling formula, because the Legendre convolution is gone.
+# Finite Laurent expansion of P_L((z+z^{-1})/2).  The 3PCF pipeline uses
+# these coefficients to map inner-angle Legendre bispectrum multipoles onto
+# the existing outer-angle Fourier coupling kernel.  They remain independent
+# of spin and therefore contain no coupling-specific approximation.
 @lru_cache(maxsize=None)
 def legendre_laurent_coeffs(L: int) -> Dict[int, float]:
     if L < 0:

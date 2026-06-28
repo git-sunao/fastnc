@@ -15,18 +15,34 @@ class BMultipoleGrid:
     The stored L range depends on the multipole basis.
 
     ``basis='fourier'``
-        Store full complex Fourier coefficients ``B_L`` for
+        Store full complex outer-angle Fourier coefficients ``B_L`` for
         ``L = -Lmax, ..., Lmax``.
 
     ``basis='fourier-even'``
-        Store cosine coefficients ``c_L`` for ``L = 0, ..., Lmax`` in the
-        convention
+        Store outer-angle cosine coefficients ``c_L`` for ``L = 0, ..., Lmax``
+        in the convention
 
-        ``B(delta) = c_0 + sum_{L>0} c_L cos(L delta)``.
+        ``B(Delta beta) = c_0 + sum_{L>0} c_L cos(L Delta beta)``.
 
         These are *not* duplicated into negative-L storage.  Downstream
-        H-kernel construction must interpret them as
+        H-kernel construction interprets them as
         ``B_0 = c_0`` and ``B_{+L} = B_{-L} = c_L/2`` for ``L > 0``.
+
+    ``basis='legendre'``
+        Store *inner-angle* Legendre coefficients ``B_ell^P`` for
+        ``ell = 0, ..., Lmax`` in
+
+        ``B(alpha) = sum_ell B_ell^P P_ell(cos(alpha))``,
+        ``alpha = pi - Delta beta``.
+
+        The H-kernel always uses the existing outer-angle Fourier coupling.
+        Before coupling, each Legendre coefficient is expanded exactly into
+        its finite Fourier superposition,
+
+        ``P_ell(cos(alpha)) = (-1)^ell sum_m a_{ell m} exp(i m Delta beta)``.
+
+        Consequently the coupling kernel itself, including its exact-zero
+        support rules, is reused unchanged.
 
     The object is independent of spin, epsilon, and opening-angle mode k, and
     can therefore be shared by all downstream stages.
@@ -38,6 +54,11 @@ class BMultipoleGrid:
     basis: str = "fourier-even"
     values: np.ndarray | None = None
     L_values: np.ndarray = field(init=False)
+    _legendre_fourier_cache: dict[int, np.ndarray] | None = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
 
     def __post_init__(self):
         self.Lmax = int(self.Lmax)
@@ -51,28 +72,28 @@ class BMultipoleGrid:
     @staticmethod
     def _canonical_basis(basis: str) -> str:
         basis = str(basis)
-        if basis in {"fourier", "fourier-even"}:
+        if basis in {"fourier", "fourier-even", "legendre"}:
             return basis
-        if basis in {"cosine", "sine", "legendre"}:
+        if basis in {"cosine", "sine"}:
             raise ValueError(
                 f"basis={basis!r} is not supported by the spin-3PCF H_k pipeline. "
-                "Use basis='fourier-even' or basis='fourier'."
+                "Use basis='fourier-even', 'fourier', or 'legendre'."
             )
         raise ValueError(
             f"Unsupported multipole basis {basis!r}. "
-            "Supported bases are 'fourier' and 'fourier-even'."
+            "Supported bases are 'fourier', 'fourier-even', and 'legendre'."
         )
     
     def _make_L_min(self, basis: str, Lmin: int | None) -> int:
         if Lmin is not None:
             return int(Lmin)
-        if basis == "fourier-even":
+        if basis in {"fourier-even", "legendre"}:
             return 0
         if basis == "fourier":
             return -self.Lmax
         raise ValueError(
             f"Unsupported multipole basis {basis!r}. "
-            "Supported bases are 'fourier' and 'fourier-even'."
+            "Supported bases are 'fourier', 'fourier-even', and 'legendre'."
         )
 
     def _set_basis(self, basis: str) -> None:
@@ -124,6 +145,7 @@ class BMultipoleGrid:
             return self
         if force:
             self.values = None
+        self._legendre_fourier_cache = None
 
         self._set_basis(getattr(bmultipole, "basis", self.basis))
 
@@ -166,16 +188,58 @@ class BMultipoleGrid:
         for i, L in enumerate(self.L_values):
             yield int(L), values[i]
 
+    def _legendre_to_full_fourier(self) -> dict[int, np.ndarray]:
+        """Return outer-angle Fourier coefficients from inner-angle Legendre data.
+
+        The public Legendre convention is fixed by
+
+        ``B(alpha) = sum_ell B_ell^P P_ell(cos(alpha))``,
+        ``alpha = pi - Delta beta``.
+
+        With ``P_ell(cos Delta beta) = sum_m a_{ell m} exp(i m Delta beta)``,
+        this gives
+
+        ``B_m = sum_ell (-1)^ell a_{ell m} B_ell^P``.
+
+        The finite Laurent coefficients are evaluated once per requested
+        Fourier mode; no angular quadrature is introduced in this conversion.
+        """
+        if self.basis != "legendre":
+            raise RuntimeError("Legendre-to-Fourier conversion requires basis='legendre'.")
+
+        from ..coupling.compute import legendre_laurent_coeffs
+
+        if self._legendre_fourier_cache is not None:
+            return self._legendre_fourier_cache
+
+        values = self.require_computed()
+        out: dict[int, np.ndarray] = {}
+        for m in range(-self.Lmax, self.Lmax + 1):
+            coeff_m = np.zeros(
+                self.grid.shape_ell,
+                dtype=np.result_type(values.dtype, np.float64),
+            )
+            for ell in range(abs(m), self.Lmax + 1, 2):
+                a_ell_m = legendre_laurent_coeffs(int(ell)).get(int(m), 0.0)
+                if a_ell_m == 0.0:
+                    continue
+                coeff_m = coeff_m + ((-1.0) ** ell) * a_ell_m * self.get_stored_mode(ell)
+            out[int(m)] = coeff_m
+        self._legendre_fourier_cache = out
+        return out
+
     def iter_hkernel_terms(self) -> Iterator[tuple[complex, int, np.ndarray]]:
-        """Iterate over full-Fourier H-kernel terms.
+        """Iterate over the full-Fourier terms used by the H-kernel.
 
-        Yields ``(weight, L, coeff)`` such that the H-kernel may be built as
+        Yields ``(weight, L, coeff)`` such that
 
-        ``sum weight * coeff * G_{Lk}``.
+        ``H_k = sum_L weight * coeff * G_{Lk}``.
 
-        For ``fourier-even`` storage, positive cosine modes are expanded as
-        two full-Fourier contributions with weights ``1/2`` at ``+L`` and
-        ``-L``.
+        ``fourier-even`` storage is expanded as the two terms
+        ``c_L/2`` at ``L=+L`` and ``L=-L`` for every ``L>0``.  ``legendre``
+        storage is first converted from the package's inner-angle convention
+        to a full outer-angle Fourier superposition.  In all cases the
+        coupling is evaluated only through the existing Fourier kernel.
         """
         if self.basis == "fourier-even":
             c0 = self.get_stored_mode(0)
@@ -186,18 +250,25 @@ class BMultipoleGrid:
                 yield 0.5, int(-L), cL
             return
 
+        if self.basis == "legendre":
+            for L, coeff in self._legendre_to_full_fourier().items():
+                yield 1.0, int(L), coeff
+            return
+
         # Full complex Fourier storage.
         for L, coeff in self.iter_stored_modes():
             yield 1.0, int(L), coeff
 
     def get_full_fourier_coefficient(self, L: int) -> np.ndarray:
-        """Return the equivalent complex Fourier coefficient ``B_L``."""
+        """Return the equivalent outer-angle complex Fourier coefficient ``B_L``."""
         L = int(L)
         if abs(L) > self.Lmax:
             raise KeyError(f"L={L} is outside Lmax={self.Lmax}.")
         if self.basis == "fourier-even":
             coeff = self.get_stored_mode(abs(L))
             return coeff if L == 0 else 0.5 * coeff
+        if self.basis == "legendre":
+            return self._legendre_to_full_fourier()[L]
         return self.get_stored_mode(L)
 
     def as_stored_cache(self) -> dict[int, np.ndarray]:
@@ -209,7 +280,9 @@ class BMultipoleGrid:
 
         The returned dictionary contains keys ``-Lmax, ..., Lmax``.  For
         ``fourier-even`` input, the values are reconstructed as
-        ``B_0=c_0`` and ``B_±L=c_L/2``.
+        ``B_0=c_0`` and ``B_±L=c_L/2``.  For ``legendre`` input, the returned
+        coefficients use the outer-angle convention after the exact finite
+        Legendre-to-Fourier conversion.
         """
         return {
             int(L): self.get_full_fourier_coefficient(int(L))

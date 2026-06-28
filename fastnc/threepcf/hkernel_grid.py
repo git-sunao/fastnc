@@ -111,7 +111,9 @@ class HKernelGrid:
             c_0 G_{0k} + sum_{L>0} c_L/2 * (G_{+L,k} + G_{-L,k}),
 
         which is equivalent to the full complex Fourier sum but avoids
-        storing/evaluating duplicate B multipoles.
+        storing/evaluating duplicate B multipoles.  For ``basis='legendre'``,
+        ``Bgrid`` supplies the equivalent outer-angle Fourier coefficients
+        obtained from the finite Legendre superposition before this loop.
         """
         Bgrid.require_computed()
         psi_uni, inv = np.unique(self.grid.psi_ell, return_inverse=True)
