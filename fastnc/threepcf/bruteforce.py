@@ -1,4 +1,4 @@
-"""Appendix-B-style brute-force reference solver for projected spin 3PCFs.
+"""Direct brute-force reference solver for projected spin 3PCFs.
 
 This module evaluates the X-projection three-point correlation function directly
 from a scalar-source angular bispectrum ``B(ell1, ell2, ell3)``.  It is an
@@ -19,8 +19,15 @@ The angular quadrature can run in two modes:
 ``adaptive``
     Compute on successively refined global Fourier-angle grids until the
     real-space result changes by less than the requested absolute/relative
-    tolerance.  This is an angular-convergence controller; it deliberately
-    makes no parity or exchange-symmetry assumptions about the bispectrum.
+    tolerance.
+
+By default the solver integrates the full Fourier-angle domain
+``psi in (0, pi/2)``, ``Delta beta in [0, 2 pi)``.  An opt-in
+symmetry-reduced integration mode is also available.  It is valid only when
+the scalar-source bispectrum is mirror symmetric (automatic for this
+length-only ``Bispectrum2D`` interface) *and* invariant under exchange of
+legs 2 and 3.  The latter is checked numerically by default before the
+reduced quadrature is used.
 
 The expensive radial FFTLog tasks and, optionally, the real-space
 ``(theta1, theta2)`` tasks can be distributed with Python's standard
@@ -52,11 +59,27 @@ class BruteForce3PCFConfig:
         Common-scale FFTLog grid.  The radial transform is tabulated on the
         corresponding ``A`` grid, approximately ``[1 / ell_max, 1 / ell_min]``.
     n_psi
-        Gauss--Legendre nodes for ``psi in (0, pi/2)``.
+        Gauss--Legendre nodes per active ``psi`` interval.  This is
+        ``psi in (0, pi/2)`` by default and ``psi in (0, pi/4)`` when
+        ``reduce_domain=True``.
     n_delta_beta
-        Midpoint trapezoidal nodes for the periodic integral
-        ``Delta beta in [0, 2 pi)``.  This deliberately performs no parity or
-        exchange reduction.
+        Angular nodes per active ``Delta beta`` integration interval.  In the
+        default full-domain calculation this is ``[0, 2 pi)``; with
+        ``reduce_domain=True`` it is the reduced integration interval ``[0, pi)``.
+    reduce_domain
+        Enable the four-image symmetry-reduced quadrature using four symmetry-related images.  The
+        radial FFTLog table is then constructed only for
+        ``psi in (0, pi/4)`` and ``Delta beta in [0, pi)``.  The other three
+        sectors are reconstructed by the mirror and 2<->3 exchange symmetries.
+        This option is off by default because the required exchange symmetry
+        does not hold for a generic ordered cross bispectrum.
+    reduce_domain_validate_exchange
+        Numerically test ``B(ell1, ell2, ell3) = B(ell1, ell3, ell2)`` before
+        the reduced domain is used.  Leave this enabled for validation and for
+        general cross-field work.
+    reduce_domain_n_symmetry_tests, reduce_domain_rtol,
+    reduce_domain_atol
+        Size and tolerance of that exchange-symmetry check.
     angular_mode
         ``"fixed"`` evaluates the configured angular grid once.  ``"adaptive"``
         repeatedly refines the global grid in the selected angular directions,
@@ -95,6 +118,14 @@ class BruteForce3PCFConfig:
     n_psi: int = 32
     n_delta_beta: int = 96
 
+    # Optional four-image symmetry reduction.  This is only valid for a
+    # mirror-even source bispectrum with 2<->3 exchange symmetry.
+    reduce_domain: bool = False
+    reduce_domain_validate_exchange: bool = True
+    reduce_domain_n_symmetry_tests: int = 4
+    reduce_domain_rtol: float = 1.0e-10
+    reduce_domain_atol: float = 0.0
+
     fftlog_nu: float = 1.01
     c_window_width: float = 0.25
     N_extrap_low: int = 0
@@ -129,6 +160,21 @@ class BruteForce3PCFConfig:
             raise ValueError("n_psi must be >= 2.")
         if int(self.n_delta_beta) < 4:
             raise ValueError("n_delta_beta must be >= 4.")
+        if int(self.reduce_domain_n_symmetry_tests) < 1:
+            raise ValueError("reduce_domain_n_symmetry_tests must be >= 1.")
+        if self.reduce_domain_rtol < 0.0 or self.reduce_domain_atol < 0.0:
+            raise ValueError(
+                "reduce_domain_rtol and reduce_domain_atol must be non-negative."
+            )
+        if (
+            self.reduce_domain
+            and self.reduce_domain_rtol == 0.0
+            and self.reduce_domain_atol == 0.0
+        ):
+            raise ValueError(
+                "At least one of reduce_domain_rtol or reduce_domain_atol "
+                "must be positive when reduce_domain=True."
+            )
         if self.interpolation_bounds not in {"raise", "clip"}:
             raise ValueError("interpolation_bounds must be 'raise' or 'clip'.")
         if self.angular_mode not in {"fixed", "adaptive"}:
@@ -171,6 +217,9 @@ class BruteForce3PCFResult:
     sigma: tuple[int, int, int]
     q_epsilon: complex
     angular_mode: str
+    used_reduced_domain: bool
+    reduced_domain_exchange_validated: bool
+    reduced_domain_exchange_error_norm: float | None
     angular_converged: bool
     angular_refinements: int
     n_psi_used: int
@@ -207,6 +256,10 @@ class _ComputeWorkerState:
     a_min: float
     a_max: float
     phase_beta_bar: np.ndarray
+    reduce_domain: bool
+    reduced_domain_psi_images: np.ndarray | None
+    reduced_domain_delta_beta_images: np.ndarray | None
+    reduced_domain_phase_beta_bar_images: np.ndarray | None
     sigma: tuple[int, int, int]
     Sigma: int
     q_epsilon: complex
@@ -217,13 +270,25 @@ _RADIAL_WORKER_STATE: _RadialWorkerState | None = None
 _COMPUTE_WORKER_STATE: _ComputeWorkerState | None = None
 
 
-def _phase_beta_bar(psi: float, delta_beta: float) -> complex:
-    """Return ``exp(i beta_bar)`` without selecting an angle branch."""
+def _phase_beta_bar_array(psi: np.ndarray | float, delta_beta: np.ndarray | float) -> np.ndarray:
+    """Return ``exp(i beta_bar)`` without selecting an angle branch.
+
+    ``psi`` and ``delta_beta`` follow NumPy broadcasting.  The formula is
+    branch-free and is therefore stable both for the full-domain quadrature
+    and for the four images used by the symmetry reduction.
+    """
+    psi = np.asarray(psi, dtype=float)
+    delta_beta = np.asarray(delta_beta, dtype=float)
     c = np.cos(psi)
     s = np.sin(psi)
     denom_sq = 1.0 + np.sin(2.0 * psi) * np.cos(delta_beta)
-    denom = np.sqrt(max(denom_sq, np.finfo(float).tiny))
+    denom = np.sqrt(np.maximum(denom_sq, np.finfo(float).tiny))
     return -(c * np.exp(0.5j * delta_beta) + s * np.exp(-0.5j * delta_beta)) / denom
+
+
+def _phase_beta_bar(psi: float, delta_beta: float) -> complex:
+    """Scalar convenience wrapper for :func:`_phase_beta_bar_array`."""
+    return complex(_phase_beta_bar_array(psi, delta_beta))
 
 
 def _one_dimensional_hankel(
@@ -361,6 +426,58 @@ def _interpolate_radial_from_state(a: np.ndarray, state: _ComputeWorkerState) ->
     return (1.0 - weight) * y0 + weight * y1
 
 
+def _evaluate_theta_pair_image_from_state(
+    theta1: float,
+    theta2: float,
+    delta_phi: np.ndarray,
+    *,
+    psi_image: np.ndarray,
+    delta_beta_image: np.ndarray,
+    phase_beta_bar_image: np.ndarray,
+    delta_phi_chunk: int,
+    state: _ComputeWorkerState,
+) -> np.ndarray:
+    """Evaluate one Fourier-angle image with the cached radial table.
+
+    In the full-domain calculation the image is simply the cached grid.  For
+    the symmetry reduction, the cached table belongs to the fundamental
+    rectangle ``psi in (0, pi/4)``, ``Delta beta in [0, pi)``; this function
+    evaluates the physical phase and real-space geometry of one of its four
+    symmetry images while reusing that same radial table.
+    """
+    psi = np.asarray(psi_image, dtype=float)[None, :, None]
+    dbeta = np.asarray(delta_beta_image, dtype=float)[None, None, :]
+    phase_beta_bar_image = np.asarray(phase_beta_bar_image, dtype=np.complex128)
+    sigma1, sigma2, sigma3 = state.sigma
+    out = np.empty(np.asarray(delta_phi).size, dtype=np.complex128)
+
+    # ``psi_weight`` and ``delta_beta_weight`` belong to the fundamental grid.
+    # For the reduced-domain construction, sin[2(pi/2-psi)] = sin(2 psi), so these
+    # are also the correct weights for every image.
+    angular_weight = state.psi_weight[None, :, None] * np.sin(2.0 * psi)
+    prefactor = state.q_epsilon * ((-1j) ** state.Sigma) / (2.0 * (2.0 * np.pi) ** 3)
+
+    for start in range(0, out.size, int(delta_phi_chunk)):
+        stop = min(start + int(delta_phi_chunk), out.size)
+        dphi = np.asarray(delta_phi[start:stop], dtype=float)[:, None, None]
+        chi = dbeta - dphi
+
+        z = theta1 * np.cos(psi) * np.exp(0.5j * chi) + theta2 * np.sin(psi) * np.exp(-0.5j * chi)
+        a = np.abs(z)
+        alpha = np.angle(z)
+        radial = _interpolate_radial_from_state(a, state)
+
+        phase = (
+            np.power(phase_beta_bar_image, sigma1)[None, :, :]
+            * np.exp(0.5j * (sigma2 - sigma3) * chi)
+            * np.exp(-1j * state.Sigma * alpha)
+        )
+        integral = state.delta_beta_weight * np.sum(angular_weight * phase * radial, axis=(1, 2))
+        out[start:stop] = prefactor * integral
+
+    return out
+
+
 def _evaluate_theta_pair_from_state(
     theta1: float,
     theta2: float,
@@ -370,36 +487,38 @@ def _evaluate_theta_pair_from_state(
     state: _ComputeWorkerState,
 ) -> np.ndarray:
     """Evaluate all requested opening angles for one real-space theta pair."""
-    psi = state.psi[None, :, None]
-    dbeta = state.delta_beta[None, None, :]
-    c = np.cos(psi)
-    s = np.sin(psi)
-    sigma1, sigma2, sigma3 = state.sigma
-    out = np.empty(np.asarray(delta_phi).size, dtype=np.complex128)
-
-    angular_weight = state.psi_weight[None, :, None] * np.sin(2.0 * psi)
-    prefactor = state.q_epsilon * ((-1j) ** state.Sigma) / (2.0 * (2.0 * np.pi) ** 3)
-
-    for start in range(0, out.size, int(delta_phi_chunk)):
-        stop = min(start + int(delta_phi_chunk), out.size)
-        dphi = np.asarray(delta_phi[start:stop], dtype=float)[:, None, None]
-        chi = dbeta - dphi
-
-        z = theta1 * c * np.exp(0.5j * chi) + theta2 * s * np.exp(-0.5j * chi)
-        a = np.abs(z)
-        alpha = np.angle(z)
-        radial = _interpolate_radial_from_state(a, state)
-
-        phase = (
-            np.power(state.phase_beta_bar, sigma1)[None, :, :]
-            * np.exp(0.5j * (sigma2 - sigma3) * chi)
-            * np.exp(-1j * state.Sigma * alpha)
+    if not state.reduce_domain:
+        return _evaluate_theta_pair_image_from_state(
+            theta1,
+            theta2,
+            delta_phi,
+            psi_image=state.psi,
+            delta_beta_image=state.delta_beta,
+            phase_beta_bar_image=state.phase_beta_bar,
+            delta_phi_chunk=delta_phi_chunk,
+            state=state,
         )
-        integral = state.delta_beta_weight * np.sum(angular_weight * phase * radial, axis=(1, 2))
-        out[start:stop] = prefactor * integral
 
-    return out
+    if (
+        state.reduced_domain_psi_images is None
+        or state.reduced_domain_delta_beta_images is None
+        or state.reduced_domain_phase_beta_bar_images is None
+    ):
+        raise RuntimeError("symmetry-reduced-domain state was not initialized.")
 
+    result = np.zeros(np.asarray(delta_phi).size, dtype=np.complex128)
+    for image in range(4):
+        result += _evaluate_theta_pair_image_from_state(
+            theta1,
+            theta2,
+            delta_phi,
+            psi_image=state.reduced_domain_psi_images[image],
+            delta_beta_image=state.reduced_domain_delta_beta_images[image],
+            phase_beta_bar_image=state.reduced_domain_phase_beta_bar_images[image],
+            delta_phi_chunk=delta_phi_chunk,
+            state=state,
+        )
+    return result
 
 def _compute_worker_initializer(state: _ComputeWorkerState) -> None:
     global _COMPUTE_WORKER_STATE
@@ -497,6 +616,8 @@ class BruteForceX3PCF:
         self._phase_beta_bar_table: np.ndarray | None = None
         self._n_psi_current: int | None = None
         self._n_delta_beta_current: int | None = None
+        self._reduced_domain_exchange_validated = False
+        self._reduced_domain_exchange_error_norm: float | None = None
 
     # ------------------------------------------------------------------
     # Basic helpers
@@ -525,12 +646,20 @@ class BruteForceX3PCF:
 
     @property
     def n_psi_current(self) -> int | None:
-        """Number of Fourier-ratio angular nodes in the cached radial table."""
+        """Number of Fourier-ratio nodes in the cached radial table.
+
+        With ``reduce_domain=True`` this is the number of nodes on the
+        reduced interval ``(0, pi/4)`` rather than on the full interval.
+        """
         return self._n_psi_current
 
     @property
     def n_delta_beta_current(self) -> int | None:
-        """Number of relative-Fourier-angle nodes in the cached radial table."""
+        """Number of relative-angle nodes in the cached radial table.
+
+        With ``reduce_domain=True`` this is the number of nodes on
+        ``[0, pi)`` rather than on the full ``[0, 2 pi)`` domain.
+        """
         return self._n_delta_beta_current
 
     def _mp_context(self):
@@ -543,21 +672,136 @@ class BruteForceX3PCF:
     # Angular-grid and radial-table construction
     # ------------------------------------------------------------------
     @staticmethod
-    def _make_angular_grid(n_psi: int, n_delta_beta: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-        """Return full-domain angular quadrature nodes and weights.
+    def _make_angular_grid(
+        n_psi: int,
+        n_delta_beta: int,
+        *,
+        reduce_domain: bool,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+        """Return the active Fourier-angle quadrature grid.
 
-        The psi nodes remain strictly inside ``(0, pi/2)`` to avoid requiring
-        an arbitrary general bispectrum to be finite at a zero Fourier side.
-        Delta-beta uses a periodic midpoint rule and retains the full domain.
+        The default grid covers ``psi in (0, pi/2)`` and
+        ``Delta beta in [0, 2 pi)``.  The opt-in symmetry-reduced construction uses
+        the fundamental rectangle ``psi in (0, pi/4)``,
+        ``Delta beta in [0, pi)``.  The latter is not merely an integration
+        truncation: the real-space evaluation explicitly sums the four
+        symmetry images, so its result is a full-domain integral when the
+        required source-bispectrum symmetries hold.
         """
         xpsi, wpsi = np.polynomial.legendre.leggauss(int(n_psi))
-        psi = 0.25 * np.pi * (xpsi + 1.0)
-        psi_weight = 0.25 * np.pi * wpsi
+        psi_extent = 0.25 * np.pi if reduce_domain else 0.5 * np.pi
+        psi = 0.5 * psi_extent * (xpsi + 1.0)
+        psi_weight = 0.5 * psi_extent * wpsi
 
         ndb = int(n_delta_beta)
-        delta_beta = 2.0 * np.pi * (np.arange(ndb, dtype=float) + 0.5) / ndb
-        delta_beta_weight = 2.0 * np.pi / ndb
+        delta_beta_extent = np.pi if reduce_domain else 2.0 * np.pi
+        delta_beta = delta_beta_extent * (np.arange(ndb, dtype=float) + 0.5) / ndb
+        delta_beta_weight = delta_beta_extent / ndb
         return psi, psi_weight, delta_beta, delta_beta_weight
+
+    def _validate_reduce_domain_exchange_symmetry(self, ell: np.ndarray, *, force: bool = False) -> None:
+        """Verify the nontrivial symmetry required by the symmetry-reduction shortcut.
+
+        This solver accepts a length-only source bispectrum
+        ``B(ell1, ell2, ell3)``.  Consequently its mirror symmetry under
+        ``Delta beta -> -Delta beta`` is structural: the three side lengths
+        are unchanged.  The additional reduction
+
+        ``(psi, Delta beta) -> (pi/2 - psi, Delta beta)``
+
+        requires the ordered source bispectrum to be invariant under the
+        exchange of legs 2 and 3,
+
+        ``B(ell1, ell2, ell3) = B(ell1, ell3, ell2)``.
+
+        That property is automatic for the usual single-field shear
+        bispectrum, but is not automatic for cross fields with distinct
+        samples at vertices 2 and 3.  The check is deliberately performed on
+        interior, nondegenerate triangles.
+        """
+        cfg = self.config
+        if not cfg.reduce_domain:
+            return
+        if self._reduced_domain_exchange_validated and not force:
+            return
+        if not cfg.reduce_domain_validate_exchange:
+            self._reduced_domain_exchange_validated = False
+            self._reduced_domain_exchange_error_norm = None
+            warnings.warn(
+                "symmetry-reduced-domain acceleration is being used without "
+                "checking the required 2<->3 source-bispectrum exchange symmetry. "
+                "Use this only for a model whose symmetry has been independently "
+                "established.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return
+
+        ell = np.asarray(ell, dtype=float)
+        ntest = int(cfg.reduce_domain_n_symmetry_tests)
+        # Avoid the two FFTLog endpoints, where support cutoffs can make a
+        # symmetry check uninformative.  The phase-space points are all well
+        # inside the nondegenerate Fourier-triangle domain.
+        sample_index = np.linspace(1, ell.size - 2, ntest).round().astype(int)
+        ell_scale = ell[sample_index]
+        psi = np.linspace(0.13 * np.pi, 0.37 * np.pi, ntest)
+        delta_beta = np.linspace(0.17 * np.pi, 0.83 * np.pi, ntest)
+
+        ell2 = ell_scale * np.cos(psi)
+        ell3 = ell_scale * np.sin(psi)
+        ell1 = np.sqrt(np.maximum(ell2**2 + ell3**2 + 2.0 * ell2 * ell3 * np.cos(delta_beta), 0.0))
+
+        value_23 = np.asarray(
+            self.bispectrum(ell1, ell2, ell3, **dict(self.model_kwargs)),
+            dtype=np.complex128,
+        )
+        value_32 = np.asarray(
+            self.bispectrum(ell1, ell3, ell2, **dict(self.model_kwargs)),
+            dtype=np.complex128,
+        )
+        try:
+            value_23 = np.broadcast_to(value_23, ell1.shape)
+            value_32 = np.broadcast_to(value_32, ell1.shape)
+        except ValueError as exc:
+            raise ValueError(
+                "bispectrum must return a scalar or an array broadcastable to the "
+                "symmetry-validation test shape."
+            ) from exc
+        if not np.all(np.isfinite(value_23)) or not np.all(np.isfinite(value_32)):
+            raise ValueError(
+                "The symmetry-reduced-domain exchange-symmetry check encountered "
+                "non-finite bispectrum values. Use the full angular domain, enlarge "
+                "the model support, or disable the check only after an independent validation."
+            )
+
+        difference = np.abs(value_23 - value_32)
+        tolerance = cfg.reduce_domain_atol + cfg.reduce_domain_rtol * np.maximum(
+            np.abs(value_23), np.abs(value_32)
+        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            normalized = np.divide(
+                difference,
+                tolerance,
+                out=np.where(difference == 0.0, 0.0, np.inf),
+                where=tolerance > 0.0,
+            )
+        max_norm = float(np.max(normalized))
+        self._reduced_domain_exchange_error_norm = max_norm
+        if max_norm > 1.0:
+            raise ValueError(
+                "reduce_domain=True requires B(ell1, ell2, ell3) = "
+                "B(ell1, ell3, ell2) for the ordered source bispectrum, but the "
+                "configured numerical check failed: "
+                f"max normalized difference={max_norm:.3e}.  This is expected for "
+                "a generic cross bispectrum with inequivalent fields or samples at "
+                "vertices 2 and 3. Use the full angular domain instead."
+            )
+        self._reduced_domain_exchange_validated = True
+        if cfg.verbose:
+            print(
+                "[BruteForceX3PCF] reduced-domain 2<->3 exchange symmetry verified: "
+                f"max normalized difference={max_norm:.3e}"
+            )
 
     def _radial_worker_state(self, ell: np.ndarray) -> _RadialWorkerState:
         cfg = self.config
@@ -574,7 +818,12 @@ class BruteForceX3PCF:
         )
 
     def _prepare_angular_grid(self, n_psi: int, n_delta_beta: int, *, force: bool = False) -> "BruteForceX3PCF":
-        """Build or replace the radial table for one full Fourier-angle grid."""
+        """Build or replace the radial table for one active Fourier-angle grid.
+
+        In symmetry-reduced-domain mode this table belongs only to the fundamental
+        Fourier-angle rectangle; the remaining sectors are reconstructed during
+        the real-space angular integral.
+        """
         n_psi = int(n_psi)
         n_delta_beta = int(n_delta_beta)
         if n_psi < 2 or n_delta_beta < 4:
@@ -590,7 +839,12 @@ class BruteForceX3PCF:
 
         cfg = self.config
         ell = np.geomspace(cfg.ell_min, cfg.ell_max, int(cfg.n_ell))
-        psi, psi_weight, delta_beta, delta_beta_weight = self._make_angular_grid(n_psi, n_delta_beta)
+        self._validate_reduce_domain_exchange_symmetry(ell, force=force)
+        psi, psi_weight, delta_beta, delta_beta_weight = self._make_angular_grid(
+            n_psi,
+            n_delta_beta,
+            reduce_domain=cfg.reduce_domain,
+        )
         state = self._radial_worker_state(ell)
 
         tasks = [
@@ -683,6 +937,34 @@ class BruteForceX3PCF:
         assert self._log_a_grid is not None
         assert self.a_grid is not None
         assert self._phase_beta_bar_table is not None
+        use_reduced_domain = bool(self.config.reduce_domain)
+        reduced_domain_psi_images: np.ndarray | None = None
+        reduced_domain_delta_beta_images: np.ndarray | None = None
+        reduced_domain_phase_beta_bar_images: np.ndarray | None = None
+        if use_reduced_domain:
+            # The four images tile the full Fourier-angle domain.  They are
+            # ordered as (psi, dbeta), (pi/2-psi, dbeta),
+            # (psi, 2pi-dbeta), (pi/2-psi, 2pi-dbeta).  The cached radial
+            # table is reused for all images; their real-space geometry and
+            # spin phases are nevertheless evaluated explicitly.
+            reduced_domain_psi_images = np.stack(
+                (self.psi, 0.5 * np.pi - self.psi, self.psi, 0.5 * np.pi - self.psi),
+                axis=0,
+            )
+            reduced_domain_delta_beta_images = np.stack(
+                (
+                    self.delta_beta,
+                    self.delta_beta,
+                    2.0 * np.pi - self.delta_beta,
+                    2.0 * np.pi - self.delta_beta,
+                ),
+                axis=0,
+            )
+            reduced_domain_phase_beta_bar_images = _phase_beta_bar_array(
+                reduced_domain_psi_images[:, :, None],
+                reduced_domain_delta_beta_images[:, None, :],
+            )
+
         return _ComputeWorkerState(
             psi=self.psi,
             psi_weight=self.psi_weight,
@@ -693,6 +975,10 @@ class BruteForceX3PCF:
             a_min=float(self.a_grid[0]),
             a_max=float(self.a_grid[-1]),
             phase_beta_bar=self._phase_beta_bar_table,
+            reduce_domain=use_reduced_domain,
+            reduced_domain_psi_images=reduced_domain_psi_images,
+            reduced_domain_delta_beta_images=reduced_domain_delta_beta_images,
+            reduced_domain_phase_beta_bar_images=reduced_domain_phase_beta_bar_images,
             sigma=self.sigma,
             Sigma=self.Sigma,
             q_epsilon=self.q_epsilon,
@@ -850,9 +1136,11 @@ class BruteForceX3PCF:
             pair.  Lower values reduce peak temporary memory.
         angular_mode
             Optional per-call override of ``config.angular_mode``.
-            ``"adaptive"`` uses full-grid dyadic refinement in the selected
-            Fourier-angle dimensions and tests convergence on this exact target
-            real-space grid.
+            ``"adaptive"`` uses dyadic refinement of the active Fourier-angle
+            rectangle and tests convergence on this exact target real-space
+            grid.  With ``reduce_domain=True``, each active rectangle
+            is the symmetry-reduced fundamental domain and the four physical images
+            are included before convergence is assessed.
         """
         theta1 = self._as_positive_grid(theta1, "theta1")
         theta2 = self._as_positive_grid(theta2, "theta2")
@@ -899,6 +1187,9 @@ class BruteForceX3PCF:
             sigma=self.sigma,
             q_epsilon=self.q_epsilon,
             angular_mode=mode,
+            used_reduced_domain=bool(self.config.reduce_domain),
+            reduced_domain_exchange_validated=bool(self._reduced_domain_exchange_validated),
+            reduced_domain_exchange_error_norm=self._reduced_domain_exchange_error_norm,
             angular_converged=converged,
             angular_refinements=refinements,
             n_psi_used=self._n_psi_current,
