@@ -70,7 +70,7 @@ class CouplingCache:
 
         with h5py.File(self.filename, "a") as h5:
             h5.attrs["format"] = "multipole_coupling_b_cache_v2"
-            h5.attrs["description"] = "b_p^(q)(psi) cache keyed by two_q=2q=sigma3 and two_p=2p"
+            h5.attrs["description"] = "b_p^(q)(psi) cache keyed by two_q=2q=sigma1 (reference spin) and two_p=2p"
             if key.group in h5:
                 if not overwrite:
                     return key

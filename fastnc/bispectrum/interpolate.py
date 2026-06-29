@@ -21,7 +21,6 @@ from .grids import (
     MultipoleGridConfig,
     make_ell_psi_delta_beta_grid,
     ellpsi_to_ell1ell2,
-    fold_psi,
 )
 
 
@@ -660,9 +659,9 @@ class InterpolatedBispectrumMultipole2D(BispectrumMultipole2D):
         )
         ell, psi, _, _, _, _ = make_ell_psi_delta_beta_grid(grid_config)
         ELL, PSI = np.meshgrid(ell, psi, indexing="ij")
-        E1, E2 = ellpsi_to_ell1ell2(ELL, PSI)
+        E2, E3 = ellpsi_to_ell1ell2(ELL, PSI)
         modes = base.available_modes(config.mode_max)
-        values = np.asarray([base(int(m), E1, E2) for m in modes])
+        values = np.asarray([base(int(m), E2, E3) for m in modes])
         grid = BispectrumMultipole2DGrid(
             modes=np.asarray(modes, dtype=int),
             ell_grid=ell,
@@ -679,17 +678,17 @@ class InterpolatedBispectrumMultipole2D(BispectrumMultipole2D):
             return self.modes
         return self.modes[np.abs(self.modes) <= mode_max]
 
-    def evaluate(self, mode, ell1, ell2):
+    def evaluate(self, mode, ell2, ell3):
         scalar_mode = np.isscalar(mode)
         modes = np.atleast_1d(np.asarray(mode, dtype=int))
 
-        ell1 = np.asarray(ell1, dtype=float)
         ell2 = np.asarray(ell2, dtype=float)
-        ell1, ell2 = np.broadcast_arrays(ell1, ell2)
-        shape = ell1.shape
+        ell3 = np.asarray(ell3, dtype=float)
+        ell2, ell3 = np.broadcast_arrays(ell2, ell3)
+        shape = ell2.shape
 
-        ell = np.sqrt(ell1**2 + ell2**2)
-        psi = fold_psi(np.arctan2(ell2, ell1))
+        ell = np.sqrt(ell2**2 + ell3**2)
+        psi = np.arctan2(ell3, ell2)
 
         # Avoid uncontrolled extrapolation in the interpolation object.
         ell = np.clip(ell, self.ell_grid.min(), self.ell_grid.max())

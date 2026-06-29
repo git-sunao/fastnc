@@ -2,8 +2,8 @@
 
 This module provides two callable objects:
 
-- CouplingKernel(sigma3): natural API for the Fourier-basis kernel
-  G_delta(sigma3; psi), where delta = L - nu_k.
+- CouplingKernel(sigma1): natural API for the X1-reference Fourier-basis
+  kernel G_delta(sigma1; psi), where delta = L - nu_k.
 
 - CouplingMatrix(sigma1, sigma2, sigma3): backward-compatible API that
   accepts (L, k) at call time, converts them to delta = L - nu_k, and then
@@ -30,7 +30,7 @@ Method = Literal["auto", "cache", "direct"]
 
 @dataclass(frozen=True)
 class CouplingKernelConfig:
-    sigma3: int
+    sigma1: int
     use_cache: bool = True
     cache_file: str | Path = "coupling_b_cache.h5"
     npsi: int = 1025
@@ -40,18 +40,19 @@ class CouplingKernelConfig:
 
 
 class CouplingKernel:
-    """Callable object for G_delta(sigma3; psi) with fixed sigma3.
+    """Callable object for G_delta(sigma1; psi) with fixed sigma3.
 
     The natural label is
 
         delta = L - nu_k,
 
-    so this object is independent of sigma1 and sigma2.
+    so this object is independent of sigma2 and sigma3 in the X1-reference
+    formalism.
     """
 
     def __init__(
         self,
-        sigma3: int,
+        sigma1: int,
         *,
         use_cache: bool = True,
         cache_file: str | Path = "coupling_b_cache.h5",
@@ -66,7 +67,7 @@ class CouplingKernel:
             cache_policy = "lazy" if lazy else "read_only"
 
         self.config = CouplingKernelConfig(
-            sigma3=int(sigma3),
+            sigma1=int(sigma1),
             use_cache=bool(use_cache),
             cache_file=Path(cache_file),
             npsi=int(npsi),
@@ -85,16 +86,16 @@ class CouplingKernel:
             self._cache_session = CouplingCacheSession(self.config.cache_file)
 
     @property
-    def sigma3(self) -> int:
-        return self.config.sigma3
+    def sigma1(self) -> int:
+        return self.config.sigma1
 
     @property
     def two_q(self) -> int:
-        return self.sigma3
+        return self.sigma1
 
     @property
     def q(self) -> float:
-        return 0.5 * self.sigma3
+        return 0.5 * self.sigma1
 
     @property
     def cache_session(self) -> CouplingCacheSession:
@@ -109,7 +110,7 @@ class CouplingKernel:
     def __repr__(self) -> str:
         mode = "cache" if self.config.use_cache else "direct"
         return (
-            f"CouplingKernel(sigma3={self.sigma3}, q={self.q}, default={mode}, "
+            f"CouplingKernel(sigma1={self.sigma1}, q={self.q}, default={mode}, "
             f"cache_file='{self.config.cache_file}', npsi={self.config.npsi}, "
             f"cache_policy='{self.config.cache_policy}')"
         )
@@ -161,7 +162,7 @@ class CouplingKernel:
             two_delta = _as_two_x(delta, name="delta", atol=self.config.atol)
             vals = np.array(
                 [
-                    coupling_delta(two_delta, self.sigma3, float(xx), atol=self.config.atol)
+                    coupling_delta(two_delta, self.sigma1, float(xx), atol=self.config.atol)
                     for xx in x.reshape(-1)
                 ]
             )
@@ -207,7 +208,7 @@ class CouplingKernel:
         call. The session keeps already-read b-cache blocks in memory.
         """
         two_delta = _as_two_x(delta, name="delta", atol=self.config.atol)
-        two_q = int(self.sigma3)
+        two_q = int(self.sigma1)
         two_p = -two_delta
 
         x = np.asarray(psi, dtype=float)
@@ -393,8 +394,8 @@ class CouplingMatrix(CouplingKernel):
 
     The object accepts sigma1, sigma2, sigma3 at initialization and L, k at
     call time, but internally computes delta = L - nu_k and delegates to the
-    CouplingKernel delta implementation.  Thus the actual cached/evaluated
-    object depends only on delta and sigma3.
+    CouplingKernel delta implementation.  In the X1-reference formalism the
+    actual cached/evaluated object depends only on delta and sigma1.
     """
 
     def __init__(
@@ -412,10 +413,10 @@ class CouplingMatrix(CouplingKernel):
         atol: float = 1e-14,
         cache_session: CouplingCacheSession | None = None,
     ) -> None:
-        self.sigma1 = int(sigma1)
-        self.sigma2 = int(sigma2)
+        self._sigma2 = int(sigma2)
+        self._sigma3 = int(sigma3)
         super().__init__(
-            int(sigma3),
+            int(sigma1),
             use_cache=use_cache,
             cache_file=cache_file,
             npsi=npsi,
@@ -425,6 +426,14 @@ class CouplingMatrix(CouplingKernel):
             atol=atol,
             cache_session=cache_session,
         )
+
+    @property
+    def sigma2(self) -> int:
+        return self._sigma2
+
+    @property
+    def sigma3(self) -> int:
+        return self._sigma3
 
     @property
     def sigma(self) -> tuple[int, int, int]:

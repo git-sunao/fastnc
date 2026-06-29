@@ -3,19 +3,21 @@
 The current manuscript defines
 
     G_{Lk}(sigma; psi) = int_0^{2pi} dDelta
-        exp[i (L - nu_k) Delta] exp[i sigma_3 bar_beta(psi, Delta)]
+        exp[i (L - nu_k) Delta] exp[i sigma_1 bar_beta(psi, Delta)]
 
 with
 
-    nu_k = k + (sigma_2 - sigma_1)/2.
+    nu_k = k + (sigma_3 - sigma_2)/2.
 
+This is the ``X_1``-reference convention: the independent Fourier vectors are
+``ell_2`` and ``ell_3``, and the reference field is the field at vertex 1.
 Thus the coupling depends on L and k only through
 
     delta = L - nu_k,
 
-and on the spin assignment only through sigma_3.  Writing
+and on the spin assignment only through sigma_1.  Writing
 
-    h_3 = sigma_3 / 2,
+    h_1 = sigma_1 / 2,
     A(z;psi) = (cos(psi) z + sin(psi))/(cos(psi) + sin(psi) z),
     A(z;psi)^{h_3} = sum_p b_p^{(h_3)}(psi) z^p,
 
@@ -25,7 +27,7 @@ one has
 
 Internally all half-integer labels are stored exactly with integer keys:
 
-    two_q     = 2 h_3 = sigma_3,
+    two_q     = 2 h_1 = sigma_1,
     two_delta = 2 delta,
     two_p     = 2 p = -two_delta.
 """
@@ -77,7 +79,7 @@ def coupling_index(k: Number, sigma: Iterable[int], *, atol: float = 1e-12) -> C
     kf = float(k)
     m = 0.5 * Sigma + kf
     n = 0.5 * Sigma - kf
-    nu = kf + 0.5 * (s2 - s1)
+    nu = kf + 0.5 * (s3 - s2)
     integer_orders = abs(m - round(m)) < atol and abs(n - round(n)) < atol
     return CouplingIndex(Sigma=Sigma, k=kf, m=m, n=n, nu=nu, integer_orders=integer_orders)
 
@@ -100,7 +102,7 @@ def _is_endpoint(psi: float, target: float, atol: float) -> bool:
 
 
 def bar_beta(psi: float, Delta: float) -> float:
-    """bar_beta defined by beta_3 = beta + bar_beta."""
+    """bar_beta defined by beta_1 = beta + bar_beta in the X1 convention."""
     z = -(cos(psi) * np.exp(0.5j * Delta) + sin(psi) * np.exp(-0.5j * Delta))
     return float(np.angle(z))
 
@@ -211,30 +213,30 @@ def spin_phase_coeff_from_two_q(two_q: int, p: int, psi: float, *, atol: float =
     return spin_phase_coeff_from_keys(two_q, 2 * int(p), psi, atol=atol)
 
 
-def exact_zero_delta(two_delta: int, sigma3: int, psi, *, atol: float = 1e-14):
-    """Return True if Fourier support implies G_delta(sigma3;psi)=0 exactly.
+def exact_zero_delta(two_delta: int, sigma1: int, psi, *, atol: float = 1e-14):
+    """Return True if Fourier support implies G_delta(sigma1;psi)=0 exactly.
 
     Supports scalar or numpy-array psi.
     """
     two_delta = int(two_delta)
-    sigma3 = int(sigma3)
+    sigma1 = int(sigma1)
     two_p = -two_delta
 
     x = np.asarray(psi, dtype=float)
     scalar_input = x.ndim == 0
 
-    if sigma3 == 0:
+    if sigma1 == 0:
         out = np.full_like(x, two_delta != 0, dtype=bool)
         return bool(out) if scalar_input else out
 
-    # Analytic support rules require integer h_3 and integer p.
-    if sigma3 % 2 != 0 or two_p % 2 != 0:
+    # Analytic support rules require integer reference half-spin and integer p.
+    if sigma1 % 2 != 0 or two_p % 2 != 0:
         out = np.zeros_like(x, dtype=bool)
         return bool(out) if scalar_input else out
 
-    q = sigma3 // 2
+    q = sigma1 // 2
     p = two_p // 2
-    eta = 1 if sigma3 > 0 else -1
+    eta = 1 if sigma1 > 0 else -1
 
     out = np.zeros_like(x, dtype=bool)
 
@@ -257,20 +259,20 @@ def exact_zero_delta(two_delta: int, sigma3: int, psi, *, atol: float = 1e-14):
     return bool(out) if scalar_input else out
 
 
-def coupling_delta(two_delta: int, sigma3: int, psi: float, *, atol: float = 1e-14) -> float:
-    """Compute G_delta(sigma3;psi), where two_delta = 2*(L - nu_k)."""
+def coupling_delta(two_delta: int, sigma1: int, psi: float, *, atol: float = 1e-14) -> float:
+    """Compute G_delta(sigma1;psi), where sigma1 is the reference-vertex spin."""
     two_delta = int(two_delta)
-    sigma3 = int(sigma3)
-    if exact_zero_delta(two_delta, sigma3, psi, atol=atol):
+    sigma1 = int(sigma1)
+    if exact_zero_delta(two_delta, sigma1, psi, atol=atol):
         return 0.0
     two_p = -two_delta
-    val = 2 * pi * spin_phase_coeff_from_keys(sigma3, two_p, psi, atol=atol)
+    val = 2 * pi * spin_phase_coeff_from_keys(sigma1, two_p, psi, atol=atol)
     return float(0.0 if abs(val) < 10 * np.finfo(float).eps else val)
 
 
-def coupling_delta_float(delta: Number, sigma3: int, psi: float, *, atol: float = 1e-14) -> float:
+def coupling_delta_float(delta: Number, sigma1: int, psi: float, *, atol: float = 1e-14) -> float:
     """Compute G_delta from delta=L-nu_k, accepting integer/half-integer delta."""
-    return coupling_delta(_as_two_x(delta, name="delta", atol=atol), sigma3, psi, atol=atol)
+    return coupling_delta(_as_two_x(delta, name="delta", atol=atol), sigma1, psi, atol=atol)
 
 
 def coupling_G(L: int, k: Number, sigma: Iterable[int], psi: float, *, atol: float = 1e-14) -> float:
@@ -278,7 +280,7 @@ def coupling_G(L: int, k: Number, sigma: Iterable[int], psi: float, *, atol: flo
     two_delta = two_delta_from_L_k(int(L), k, sigma, atol=atol)
     if two_delta is None:
         return 0.0
-    return coupling_delta(two_delta, _as_sigma(sigma)[2], psi, atol=atol)
+    return coupling_delta(two_delta, _as_sigma(sigma)[0], psi, atol=atol)
 
 
 def coupling_G_quad(L: int, k: Number, sigma: Iterable[int], psi: float) -> float:

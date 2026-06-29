@@ -21,8 +21,8 @@ class ThreePCFCalculator:
     This is the low-level stage orchestrator.  It owns one common
     :class:`FFTGrid` and the stage grids
 
-    - ``Bgrid`` for ``B_L(ell1, ell2)``,
-    - ``Hgrid`` for angularly mixed ``H_k(ell1, ell2)``, and
+    - ``Bgrid`` for ``B_L(ell2, ell3)``,
+    - ``Hgrid`` for angularly mixed ``H_k(ell2, ell3)``, and
     - ``ZKgrid`` for double-Hankel transformed ``zeta_k(theta1, theta2)``.
 
     The final real-space 3PCF is returned as :class:`ZetaGrid` by
@@ -135,7 +135,7 @@ class ThreePCFCalculator:
     # ------------------------------------------------------------------
     # Stage execution
     def compute_bmultipoles(self, *, force: bool = False) -> BMultipoleGrid:
-        """Compute and store ``B_L(ell1, ell2)`` on the managed FFT grid."""
+        """Compute and store ``B_L(ell_2, ell_3)`` on the managed FFT grid."""
         if force:
             self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
             self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)

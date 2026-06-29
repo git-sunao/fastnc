@@ -27,10 +27,11 @@ class FFTGrid:
         Indices selecting the requested theta values from ``theta_fft``.
     xy
         FFTLog ``xy`` parameter.
-    ELL1, ELL2
-        Broadcast two-dimensional Fourier grids.
+    ELL2, ELL3
+        Broadcast two-dimensional independent Fourier grids in the X1-reference
+        convention.
     psi_ell
-        ``atan2(ELL2, ELL1)`` on the Fourier grid.
+        ``atan2(ELL3, ELL2)`` on the Fourier grid.
     theta
         User-facing real-space grid selected by ``down_sampler``.
     theta_user
@@ -91,6 +92,20 @@ class FFTGrid:
             xy=config.xy,
         )
         return cls.from_tuned_grid(tuned)
+
+    # X1-reference semantic aliases.  The stored array names ELL1/ELL2 are
+    # retained for compatibility; they represent (ell_2, ell_3) here.
+    @property
+    def ELL3(self) -> np.ndarray:
+        return self.ELL2
+
+    @property
+    def ell2_grid(self) -> np.ndarray:
+        return self.ELL1
+
+    @property
+    def ell3_grid(self) -> np.ndarray:
+        return self.ELL2
 
     @property
     def n_ell(self) -> int:

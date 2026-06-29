@@ -44,8 +44,14 @@ class EffectiveSpinTriple:
         return int(sum(self.sigma))
 
     def nu(self, k: float | np.ndarray):
-        """Return nu_k = k + (sigma2-sigma1)/2."""
-        return np.asarray(k, dtype=float) + 0.5 * (self.sigma2 - self.sigma1)
+        """Return ``nu_k = k + (sigma3 - sigma2)/2`` for the X1 reference formalism.
+
+        The independent Fourier vectors are ``ell_2`` and ``ell_3`` and the
+        reference field is at vertex 1.  Consequently the angular coupling
+        contains the spin of vertex 1, while the opening-angle offset is fixed
+        by the two non-reference vertices 2 and 3.
+        """
+        return np.asarray(k, dtype=float) + 0.5 * (self.sigma3 - self.sigma2)
 
     def bessel_orders(self, k: float) -> tuple[int, int]:
         """Return integer Bessel orders m_k and n_k for an allowed k."""

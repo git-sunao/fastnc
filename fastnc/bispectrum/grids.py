@@ -63,53 +63,62 @@ def delta_beta_min_from_eps_mu(eps_mu: float) -> float:
 
 
 def ellpsi_to_ell1ell2(ell, psi):
-    """Convert ``(ell, psi)`` to ``(ell1, ell2)``.
+    """Legacy positional alias for ``ellpsi_to_ell2ell3``."""
+    return ellpsi_to_ell2ell3(ell, psi)
 
-    Here ``ell1 = ell cos psi`` and ``ell2 = ell sin psi``.
+
+def ellpsi_to_ell2ell3(ell, psi):
+    """Convert ``(ell,psi)`` to the independent X1-reference radii.
+
+    ``ell2=ell cos(psi)`` and ``ell3=ell sin(psi)`` with
+    ``0<psi<pi/2``.  No exchange folding is performed.
     """
     return ell * np.cos(psi), ell * np.sin(psi)
 
 
-def ell1ell2delta_beta_to_ell3(ell1, ell2, delta_beta):
-    """Return the third side from the outer angle ``Delta beta``.
+def ell2ell3delta_beta_to_ell1(ell2, ell3, delta_beta):
+    """Return ``ell_1=|ell_2+ell_3|`` for the X1-reference convention.
 
-    The convention is
+    ``ell_2`` and ``ell_3`` are the independent Fourier radii and
+    ``Delta beta = beta_2-beta_3``.  Fourier closure gives
 
-        ell3^2 = ell1^2 + ell2^2 + 2 ell1 ell2 cos(Delta beta).
+        ell_1^2 = ell_2^2 + ell_3^2 + 2 ell_2 ell_3 cos(Delta beta).
     """
-    ell3_sq = ell1**2 + ell2**2 + 2.0 * ell1 * ell2 * np.cos(delta_beta)
-    ell3 = np.sqrt(np.maximum(ell3_sq, 0.0))
+    ell1_sq = ell2**2 + ell3**2 + 2.0 * ell2 * ell3 * np.cos(delta_beta)
+    ell1 = np.sqrt(np.maximum(ell1_sq, 0.0))
+    return np.minimum(np.maximum(ell1, np.abs(ell2 - ell3)), ell2 + ell3)
 
-    # Roundoff-level safety at degenerate triangle boundaries.
-    ell3 = np.minimum(ell3, ell1 + ell2)
-    ell3 = np.maximum(ell3, np.abs(ell1 - ell2))
-    return ell3
+
+# Historical helper retained for external callers.  Its positional names are
+# intentionally legacy-only; new X1-reference code must use the explicit
+# ell2ell3delta_beta_to_ell1 function above.
+def ell1ell2delta_beta_to_ell3(ell1, ell2, delta_beta):
+    return ell2ell3delta_beta_to_ell1(ell1, ell2, delta_beta)
 
 
 def ellpsidelta_beta_to_sides(ell, psi, delta_beta):
-    """Convert ``(ell, psi, Delta beta)`` to ``(ell1, ell2, ell3)``."""
-    ell1, ell2 = ellpsi_to_ell1ell2(ell, psi)
-    ell3 = ell1ell2delta_beta_to_ell3(ell1, ell2, delta_beta)
+    """Convert X1-reference coordinates to ordered sides ``(ell1,ell2,ell3)``.
+
+    The polar coordinates parameterize the two independent radii ``(ell2,ell3)``.
+    """
+    ell2, ell3 = ellpsi_to_ell1ell2(ell, psi)
+    ell1 = ell2ell3delta_beta_to_ell1(ell2, ell3, delta_beta)
     return ell1, ell2, ell3
 
 
 def sides_to_ellpsidelta_beta(ell1, ell2, ell3):
-    """Convert side lengths to ``(ell, psi, Delta beta)``.
+    """Convert ordered sides to X1-reference ``(ell, psi, Delta beta)``.
 
-    Since
+    The independent radii are ``(ell2,ell3)`` and
 
-        ell3^2 = ell1^2 + ell2^2 + 2 ell1 ell2 cos(Delta beta),
-
-    we have
-
-        cos(Delta beta) = (ell3^2 - ell1^2 - ell2^2) / (2 ell1 ell2).
+        cos(Delta beta) = (ell1^2-ell2^2-ell3^2)/(2 ell2 ell3).
     """
     ell1 = np.asarray(ell1, dtype=float)
     ell2 = np.asarray(ell2, dtype=float)
     ell3 = np.asarray(ell3, dtype=float)
-    ell = np.sqrt(ell1**2 + ell2**2)
-    psi = np.arctan2(ell2, ell1)
-    cos_delta = (ell3**2 - ell1**2 - ell2**2) / (2.0 * ell1 * ell2)
+    ell = np.sqrt(ell2**2 + ell3**2)
+    psi = np.arctan2(ell3, ell2)
+    cos_delta = (ell1**2 - ell2**2 - ell3**2) / (2.0 * ell2 * ell3)
     delta_beta = np.arccos(np.clip(cos_delta, -1.0, 1.0))
     return ell, psi, delta_beta
 
@@ -123,7 +132,11 @@ sides_to_ellpsialpha = sides_to_ellpsidelta_beta
 
 
 def fold_psi(psi):
-    """Fold ``psi`` to the fundamental range ``[0, pi/4]``."""
+    """Deprecated historical exchange fold.
+
+    Do not use for X1-reference multipoles: ``ell2`` and ``ell3`` are ordered
+    legs and may carry distinct fields.
+    """
     psi = np.asarray(psi)
     return np.where(psi > np.pi / 4, np.pi / 2 - psi, psi)
 
@@ -134,7 +147,7 @@ class MultipoleGridConfig:
     ell_max: float = 1.0e5
     n_ell: int = 100
     psi_min: float = 1.0e-4
-    psi_max: float = np.pi / 4
+    psi_max: float = np.pi / 2 - 1.0e-4
     n_psi: int = 80
 
     # Direct endpoint control in the Fourier variable Delta beta.

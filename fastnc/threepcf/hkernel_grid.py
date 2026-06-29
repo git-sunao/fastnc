@@ -14,12 +14,13 @@ from .spin import SpinSpec, as_effective_spin_triple
 class HKernelKey:
     """Deduplication key for ``H_k``.
 
-    For fixed B_L values, the angular mixing depends on the coupling through
-    ``sigma3`` and ``nu_k``.  ``two_nu`` stores ``2*nu_k`` as an integer to avoid
+    For fixed B_L values, the X1-reference angular mixing depends on the
+    reference-vertex spin ``sigma1`` and ``nu_k``.  ``two_nu`` stores ``2*nu_k``
+    as an integer to avoid
     floating-point dictionary keys.
     """
 
-    sigma3: int
+    sigma1: int
     two_nu: int
 
 
@@ -34,12 +35,17 @@ class HKernel:
     source_sigma: tuple[int, int, int]
 
     @property
-    def ell1(self) -> np.ndarray:
+    def ell2(self) -> np.ndarray:
         return self.grid.ELL1
 
     @property
-    def ell2(self) -> np.ndarray:
+    def ell3(self) -> np.ndarray:
         return self.grid.ELL2
+
+    @property
+    def ell1(self) -> np.ndarray:
+        """Compatibility alias for the first stored independent Fourier axis."""
+        return self.ell2
 
 
 @dataclass
@@ -66,7 +72,7 @@ class HKernelGrid:
     def key_from_sigma_k(sigma: tuple[int, int, int], k: float) -> HKernelKey:
         eff = as_effective_spin_triple(sigma)
         two_nu = int(round(2.0 * float(eff.nu(float(k)))))
-        return HKernelKey(sigma3=int(eff.sigma3), two_nu=two_nu)
+        return HKernelKey(sigma1=int(eff.sigma1), two_nu=two_nu)
 
     @staticmethod
     def two_k(k: float) -> int:

@@ -47,10 +47,12 @@ class ZetaKMode:
 
     @property
     def theta1(self) -> np.ndarray:
+        """Length ``|X_2-X_1|`` in the X1-reference convention."""
         return self.grid.theta
 
     @property
     def theta2(self) -> np.ndarray:
+        """Length ``|X_3-X_1|`` in the X1-reference convention."""
         return self.grid.theta
 
     @property

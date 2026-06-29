@@ -1,17 +1,17 @@
 """Angular-bispectrum multipole objects and calculators.
 
-Fourier multipoles are defined with respect to the outer angle
+Fourier multipoles are defined in the X1-reference convention with
 
-    Delta beta = beta1 - beta2,
+    Delta beta = beta2 - beta3,
 
-not the inner angle alpha.  For side-only bispectra the third side is
+and independent radii ``(ell2,ell3)``.  Fourier closure gives
 
-    ell3^2 = ell1^2 + ell2^2 + 2 ell1 ell2 cos(Delta beta).
+    ell1^2 = ell2^2 + ell3^2 + 2 ell2 ell3 cos(Delta beta).
 
 The default ``basis='fourier-even'`` convention is
 
-    B(ell1, ell2, Delta beta)
-      = c0(ell1, ell2) + sum_{q>=1} cq(ell1, ell2) cos(q Delta beta),
+    B(ell2, ell3, Delta beta)
+      = c0(ell2, ell3) + sum_{q>=1} cq(ell2, ell3) cos(q Delta beta),
 
 with
 
@@ -41,7 +41,7 @@ from .grids import (
     MultipoleGridConfig,
     make_ell_psi_delta_beta_grid,
     make_delta_beta_grid,
-    ell1ell2delta_beta_to_ell3,
+    ell2ell3delta_beta_to_ell1,
     sides_to_ellpsidelta_beta,
 )
 
@@ -54,7 +54,7 @@ class BispectrumMultipole2DConfig:
     ell_max: float = 1.0e5
     n_ell: int = 100
     psi_min: float = 1.0e-4
-    psi_max: float = np.pi / 4
+    psi_max: float = np.pi / 2 - 1.0e-4
     n_psi: int = 80
 
     # Direct endpoint control in the Fourier variable Delta beta.
@@ -81,7 +81,7 @@ BispectrumMultipoleConfig = BispectrumMultipole2DConfig
 class BispectrumMultipole2D:
     """Object for a 2D angular-bispectrum multipole model.
 
-    This is the fiducial public object for ``B_mode(ell1, ell2)``.  Different
+    This is the fiducial public object for ``B_mode(ell2, ell3)``.  Different
     construction routes are represented by internal evaluators, not by public
     prefixes such as ``Projected`` or ``Decomposed``.
     """
@@ -127,13 +127,14 @@ class BispectrumMultipole2D:
             modes=modes,
         )
 
-    def __call__(self, mode, ell1, ell2):
-        return self.evaluate(mode, ell1, ell2)
+    def __call__(self, mode, ell2, ell3):
+        return self.evaluate(mode, ell2, ell3)
 
-    def evaluate(self, mode, ell1, ell2):
+    def evaluate(self, mode, ell2, ell3):
+        """Evaluate ``B_L(ell2, ell3)`` in the X1-reference convention."""
         if getattr(self, "_evaluator", None) is None:
             raise NotImplementedError
-        return self._evaluator(mode, ell1, ell2)
+        return self._evaluator(mode, ell2, ell3)
 
     def available_modes(self, mode_max=None):
         if self.modes is None:
@@ -177,9 +178,10 @@ class BispectrumMultipole2D:
         from .interpolate import InterpolatedBispectrumMultipole2D
         return InterpolatedBispectrumMultipole2D.from_multipole(self, config, **params)
 
-    def resum(self, ell1, ell2, delta_beta, mode_max=None):
+    def resum(self, ell2, ell3, delta_beta, mode_max=None):
+        """Reconstruct ``B(ell2,ell3,Delta beta)`` around ``ell1``."""
         modes = self.available_modes(mode_max)
-        coeff = self.evaluate(modes, ell1, ell2)
+        coeff = self.evaluate(modes, ell2, ell3)
         delta_beta = np.asarray(delta_beta)
 
         if self.basis == "legendre":
@@ -205,13 +207,13 @@ class BispectrumMultipole2D:
         weights = np.exp(1j * modes.reshape((-1,) + (1,) * delta_beta.ndim) * delta_beta)
         return self._sum_modes(coeff, weights)
 
-    def resum_alpha(self, ell1, ell2, alpha, mode_max=None):
+    def resum_alpha(self, ell2, ell3, alpha, mode_max=None):
         """Convenience wrapper for inner-angle inputs.
 
         Since ``alpha = pi - Delta beta``, this converts to the package's
         outer-angle convention before calling ``resum``.
         """
-        return self.resum(ell1, ell2, np.pi - np.asarray(alpha), mode_max=mode_max)
+        return self.resum(ell2, ell3, np.pi - np.asarray(alpha), mode_max=mode_max)
 
 
 class BispectrumMultipole3D:
@@ -307,12 +309,12 @@ class _Bispectrum2DMultipoleEvaluator:
             return np.arange(-c.mode_max, c.mode_max + 1)
         return np.arange(0, c.mode_max + 1)
 
-    def __call__(self, mode, ell1, ell2):
+    def __call__(self, mode, ell2, ell3):
         return self.calculator.evaluate_points(
             self.bispectrum,
             mode,
-            ell1,
             ell2,
+            ell3,
             regulator=self.regulator,
             **self.params,
         )
@@ -387,8 +389,8 @@ class BispectrumMultipole2DCalculator:
             return MultipoleFourier(x, c.mode_max, method=c.decomposer_method)
         raise ValueError(f"unsupported basis: {self.basis}")
 
-    def evaluate_points(self, bispectrum: Bispectrum2D, mode, ell1, ell2, regulator=None, **params):
-        """Evaluate selected multipole modes at arbitrary ``(ell1, ell2)``.
+    def evaluate_points(self, bispectrum: Bispectrum2D, mode, ell2, ell3, regulator=None, **params):
+        """Evaluate selected multipole modes at arbitrary ``(ell2, ell3)``.
 
         This is the lazy/brute-force path used by ``Bispectrum2D.multipole``.
         It performs the angle decomposition only for the requested points, in
@@ -401,15 +403,15 @@ class BispectrumMultipole2DCalculator:
         scalar_mode = np.isscalar(mode)
         modes = np.atleast_1d(np.asarray(mode, dtype=int))
 
-        ell1 = np.asarray(ell1, dtype=float)
         ell2 = np.asarray(ell2, dtype=float)
-        ell1, ell2 = np.broadcast_arrays(ell1, ell2)
-        shape = ell1.shape
+        ell3 = np.asarray(ell3, dtype=float)
+        ell2, ell3 = np.broadcast_arrays(ell2, ell3)
+        shape = ell2.shape
 
-        e1 = ell1[..., None]
         e2 = ell2[..., None]
-        db = delta_beta.reshape((1,) * ell1.ndim + (-1,))
-        e3 = ell1ell2delta_beta_to_ell3(e1, e2, db)
+        e3 = ell3[..., None]
+        db = delta_beta.reshape((1,) * ell2.ndim + (-1,))
+        e1 = ell2ell3delta_beta_to_ell1(e2, e3, db)
 
         # Some Bispectrum2D implementations accept broadcastable inputs, but
         # LOS-projected bispectra require ell1, ell2, and ell3 to have exactly

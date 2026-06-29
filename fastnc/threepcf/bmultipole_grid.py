@@ -109,12 +109,19 @@ class BMultipoleGrid:
         return self.values is not None
 
     @property
-    def ell1(self) -> np.ndarray:
+    def ell2(self) -> np.ndarray:
+        """Independent Fourier radius ``ell_2`` (X1-reference convention)."""
         return self.grid.ELL1
 
     @property
-    def ell2(self) -> np.ndarray:
+    def ell3(self) -> np.ndarray:
+        """Independent Fourier radius ``ell_3`` (X1-reference convention)."""
         return self.grid.ELL2
+
+    @property
+    def ell1(self) -> np.ndarray:
+        """Compatibility alias for the first stored independent Fourier axis."""
+        return self.ell2
 
     @property
     def stored_mode_count(self) -> int:
@@ -150,7 +157,7 @@ class BMultipoleGrid:
         self._set_basis(getattr(bmultipole, "basis", self.basis))
 
         vals = [
-            bmultipole(int(L), self.grid.ELL1, self.grid.ELL2)
+            bmultipole(int(L), self.ell2, self.ell3)
             for L in self.L_values
         ]
         self.values = np.asarray(vals)
