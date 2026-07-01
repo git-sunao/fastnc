@@ -1,4 +1,5 @@
 import re,os,sys
+from setuptools import find_packages
 
 try:
     from setuptools import setup
@@ -29,7 +30,7 @@ if __name__ == '__main__':
         author=find_from_doc('author'),
         author_email='sunaosugiyama@gmail.com',
         keywords=['cosmology', 'large scale structure', 'three-point correlation function'],
-        packages=['fastnc'],
+        packages=find_packages(),
         install_requires=get_requirements(),
         classifiers=['Programming Language :: Python :: 3'],
     )
