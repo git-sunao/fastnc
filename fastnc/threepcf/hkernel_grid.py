@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
+import time
 from collections.abc import Callable, Iterable
 import numpy as np
 
@@ -62,6 +64,7 @@ class HKernelGrid:
     grid: FFTGrid
     kernels: dict[HKernelKey, HKernel] = field(default_factory=dict)
     aliases: dict[tuple[tuple[int, int, int], int], HKernelKey] = field(default_factory=dict)
+    logger: logging.Logger | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         self.spin = tuple(int(x) for x in self.spin)
@@ -143,13 +146,19 @@ class HKernelGrid:
         Bgrid.grid.validate_same(self.grid)
         eps = tuple(int(e) for e in epsilon)
         sigma = self.sigma_from_epsilon(eps)
+        t_eps = time.perf_counter()
         coupling = coupling_factory(sigma)
+        if self.logger is not None:
+            self.logger.debug("3PCF hkernels epsilon=%s coupling ready in %.3f s", eps, time.perf_counter() - t_eps)
         out: list[HKernel] = []
         for k in self.k_values(eps):
             key = self.key_from_sigma_k(sigma, float(k))
             alias = self._alias_key(eps, float(k))
             if key not in self.kernels or force:
+                t_k = time.perf_counter()
                 value = self._compute_value(Bgrid, coupling, float(k))
+                if self.logger is not None:
+                    self.logger.debug("3PCF hkernels epsilon=%s k=%+.1f contraction finished in %.3f s", eps, float(k), time.perf_counter() - t_k)
                 self.kernels[key] = HKernel(
                     grid=self.grid,
                     key=key,
@@ -159,6 +168,8 @@ class HKernelGrid:
                 )
             self.aliases[alias] = key
             out.append(self.kernels[key])
+        if self.logger is not None:
+            self.logger.debug("3PCF hkernels epsilon=%s (%d modes) finished in %.3f s", eps, len(out), time.perf_counter() - t_eps)
         return out
 
     def compute_all_epsilons(

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from collections.abc import Iterable
+import logging
+import time
 import numpy as np
 
 from ..hankel.wrapper import DoubleHankelConfig, double_hankel_transform
@@ -94,6 +96,7 @@ class ZetaKGrid:
     modes: dict[ZetaKKey, ZetaKMode] = field(default_factory=dict)
     aliases: dict[tuple[tuple[int, int, int], int], ZetaKKey] = field(default_factory=dict)
     active_epsilons: tuple[tuple[int, int, int], ...] = field(default_factory=tuple)
+    logger: logging.Logger | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         self.spin = tuple(int(x) for x in self.spin)
@@ -203,6 +206,7 @@ class ZetaKGrid:
             alias = self._alias_key(eps, float(k))
             if key not in self.modes or force:
                 hkernel = Hgrid.get_for_epsilon(eps, float(k))
+                t_k = time.perf_counter()
                 self.modes[key] = self._compute_mode(
                     hkernel,
                     sigma=sigma,
@@ -210,6 +214,8 @@ class ZetaKGrid:
                     hankel_config=hankel_config,
                     bin_width_logtheta=bin_width_logtheta,
                 )
+                if self.logger is not None:
+                    self.logger.debug("3PCF zetak epsilon=%s k=%+.1f FFTLog finished in %.3f s", eps, float(k), time.perf_counter() - t_k)
             self.aliases[alias] = key
             out.append(self.modes[key])
         return out

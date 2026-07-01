@@ -1,6 +1,9 @@
 """Low-level 3PCF calculator for the B_L -> H_k -> zeta_k -> zeta pipeline."""
 from __future__ import annotations
 
+import logging
+import time
+
 import numpy as np
 
 from ..coupling import CouplingMatrix
@@ -35,12 +38,25 @@ class ThreePCFCalculator:
         config: ThreePCFConfig | None = None,
         *,
         coupling_kwargs: dict | None = None,
+        log: bool = False,
+        log_level: int | str = logging.INFO,
+        logger: logging.Logger | None = None,
     ):
         if bmultipole is None:
             raise ValueError("bmultipole must be provided.")
 
         self.bmultipole = bmultipole
         self.config = config or ThreePCFConfig()
+
+        # Logging is opt-in so library use remains silent by default.  The
+        # timing dictionary stores the elapsed wall time of the latest call to
+        # each public computation stage, including calls that reuse a cache.
+        self.log = bool(log)
+        self.logger = logger or logging.getLogger("fastnc.threepcf")
+        self.log_level = logging._checkLevel(log_level)
+        if self.log:
+            self.logger.setLevel(self.log_level)
+        self.timings: dict[str, float] = {}
 
         self.coupling_kwargs = dict(self.config.coupling_kwargs)
         if coupling_kwargs is not None:
@@ -51,14 +67,23 @@ class ThreePCFCalculator:
         self.grid = FFTGrid.from_config(self.config)
 
         basis = getattr(self.bmultipole, "basis", "fourier-even")
-        self.Bgrid = BMultipoleGrid(grid=self.grid, Lmax=self.config.Lmax, basis=basis)
-        self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
-        self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
+        self.Bgrid = BMultipoleGrid(grid=self.grid, Lmax=self.config.Lmax, basis=basis, logger=self.logger if self.log else None)
+        self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid, logger=self.logger if self.log else None)
+        self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid, logger=self.logger if self.log else None)
         # Backward-friendly attribute name for interactive inspection only.
         self.Zgrid: ZetaGrid | None = None
 
         self._coupling_cache_sessions: dict[str, CouplingCacheSession] = {}
         self._couplings: dict[tuple[int, int, int], CouplingMatrix] = {}
+
+    def _log_stage_start(self, stage: str) -> None:
+        if self.log:
+            self.logger.info("3PCF %-20s started", stage)
+
+    def _log_stage_end(self, stage: str, elapsed: float) -> None:
+        self.timings[stage] = elapsed
+        if self.log:
+            self.logger.info("3PCF %-20s finished in %.3f s", stage, elapsed)
 
     # ------------------------------------------------------------------
     # Component bookkeeping
@@ -129,18 +154,24 @@ class ThreePCFCalculator:
             session = self._get_cache_session()
             if session is not None:
                 kwargs["cache_session"] = session
-            self._couplings[sig] = CouplingMatrix(sig[0], sig[1], sig[2], **kwargs)
+            self._couplings[sig] = CouplingMatrix(sig[0], sig[1], sig[2], logger=self.logger if self.log else None, **kwargs)
         return self._couplings[sig]
 
     # ------------------------------------------------------------------
     # Stage execution
     def compute_bmultipoles(self, *, force: bool = False) -> BMultipoleGrid:
         """Compute and store ``B_L(ell_2, ell_3)`` on the managed FFT grid."""
-        if force:
-            self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
-            self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
-            self.Zgrid = None
-        return self.Bgrid.compute(self.bmultipole, force=force)
+        stage = "bmultipoles"
+        self._log_stage_start(stage)
+        t0 = time.perf_counter()
+        try:
+            if force:
+                self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid, logger=self.logger if self.log else None)
+                self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid, logger=self.logger if self.log else None)
+                self.Zgrid = None
+            return self.Bgrid.compute(self.bmultipole, force=force)
+        finally:
+            self._log_stage_end(stage, time.perf_counter() - t0)
 
     def compute_hkernels(
         self,
@@ -152,20 +183,26 @@ class ThreePCFCalculator:
         force: bool = False,
     ) -> HKernelGrid:
         """Compute and store deduplicated ``H_k`` kernels."""
-        eps = self._epsilons(
-            epsilons=epsilons,
-            epsilon=epsilon,
-            component=component,
-            all_components=all_components,
-        )
-        Bgrid = self.compute_bmultipoles()
-        self.Hgrid.compute_all_epsilons(
-            Bgrid,
-            eps,
-            coupling_factory=self._make_coupling,
-            force=force,
-        )
-        return self.Hgrid
+        stage = "hkernels"
+        self._log_stage_start(stage)
+        t0 = time.perf_counter()
+        try:
+            eps = self._epsilons(
+                epsilons=epsilons,
+                epsilon=epsilon,
+                component=component,
+                all_components=all_components,
+            )
+            Bgrid = self.compute_bmultipoles()
+            self.Hgrid.compute_all_epsilons(
+                Bgrid,
+                eps,
+                coupling_factory=self._make_coupling,
+                force=force,
+            )
+            return self.Hgrid
+        finally:
+            self._log_stage_end(stage, time.perf_counter() - t0)
 
     def _hankel_config(self) -> DoubleHankelConfig:
         cfg = self.config
@@ -190,21 +227,27 @@ class ThreePCFCalculator:
         force: bool = False,
     ) -> ZetaKGrid:
         """Compute and store deduplicated ``zeta_k(theta1, theta2)`` modes."""
-        eps = self._epsilons(
-            epsilons=epsilons,
-            epsilon=epsilon,
-            component=component,
-            all_components=all_components,
-        )
-        Hgrid = self.compute_hkernels(epsilons=eps)
-        self.ZKgrid.compute_all_epsilons(
-            Hgrid,
-            eps,
-            hankel_config=self._hankel_config(),
-            bin_width_logtheta=self.config.effective_bin_width_logtheta(),
-            force=force,
-        )
-        return self.ZKgrid
+        stage = "zetak"
+        self._log_stage_start(stage)
+        t0 = time.perf_counter()
+        try:
+            eps = self._epsilons(
+                epsilons=epsilons,
+                epsilon=epsilon,
+                component=component,
+                all_components=all_components,
+            )
+            Hgrid = self.compute_hkernels(epsilons=eps)
+            self.ZKgrid.compute_all_epsilons(
+                Hgrid,
+                eps,
+                hankel_config=self._hankel_config(),
+                bin_width_logtheta=self.config.effective_bin_width_logtheta(),
+                force=force,
+            )
+            return self.ZKgrid
+        finally:
+            self._log_stage_end(stage, time.perf_counter() - t0)
 
     # Explicit alias with separator for readability in prose.
     compute_zeta_k = compute_zetak
@@ -225,18 +268,24 @@ class ThreePCFCalculator:
         ``ZetaKGrid.resum(delta_phi)``.  Projection conversion is not performed
         here; call ``ZetaGrid.to_projection(...)`` on the returned object.
         """
-        ZKgrid = self.compute_zetak(
-            all_components=True,
-            force=force,
-        )
-        self.Zgrid = ZKgrid.resum(
-            delta_phi,
-            phase=phase,
-            normalization=normalization,
-            bin_width=bin_width,
-            config=self.config,
-        )
-        return self.Zgrid
+        stage = "zeta"
+        self._log_stage_start(stage)
+        t0 = time.perf_counter()
+        try:
+            ZKgrid = self.compute_zetak(
+                all_components=True,
+                force=force,
+            )
+            self.Zgrid = ZKgrid.resum(
+                delta_phi,
+                phase=phase,
+                normalization=normalization,
+                bin_width=bin_width,
+                config=self.config,
+            )
+            return self.Zgrid
+        finally:
+            self._log_stage_end(stage, time.perf_counter() - t0)
 
     def compute(self, delta_phi, **kwargs) -> ZetaGrid:
         """Alias for :meth:`compute_zeta`."""

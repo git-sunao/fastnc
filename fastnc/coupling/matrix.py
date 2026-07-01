@@ -16,6 +16,8 @@ CouplingMatrix.__call__() when CouplingMatrix subclasses CouplingKernel.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import time
 from math import pi
 from pathlib import Path
 from typing import Iterable, Literal
@@ -62,6 +64,7 @@ class CouplingKernel:
         fallback_direct: bool = True,
         atol: float = 1e-14,
         cache_session: CouplingCacheSession | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         if lazy is not None:
             cache_policy = "lazy" if lazy else "read_only"
@@ -81,6 +84,7 @@ class CouplingKernel:
         if cache_session is not None and not self.config.use_cache:
             raise ValueError("cache_session was provided but use_cache=False.")
 
+        self.logger = logger
         self._cache_session = cache_session
         if self.config.use_cache and self._cache_session is None:
             self._cache_session = CouplingCacheSession(self.config.cache_file)
@@ -221,6 +225,8 @@ class CouplingKernel:
             return float(0.0) if scalar_input else out.reshape(x.shape)
 
         try:
+            in_memory = session._key(two_q, two_p, two_p, npsi=int(npsi)) in session.memory
+            t_cache = time.perf_counter()
             psi_grid, two_p_grid, b_grid = session.read_b_for_two_p(
                 two_q,
                 two_p,
@@ -236,7 +242,11 @@ class CouplingKernel:
                 psi_grid,
                 b_grid[:, col],
             )
+            if self.logger is not None:
+                self.logger.debug("coupling delta=%+.1f cache_%s in %.3f s", 0.5 * two_delta, "hit" if in_memory else "load", time.perf_counter() - t_cache)
         except Exception:
+            if self.logger is not None:
+                self.logger.debug("coupling delta=%+.1f cache fallback to direct evaluation", 0.5 * two_delta)
             if not fallback_direct:
                 raise
             vals = np.array(
@@ -412,6 +422,7 @@ class CouplingMatrix(CouplingKernel):
         fallback_direct: bool = True,
         atol: float = 1e-14,
         cache_session: CouplingCacheSession | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         self._sigma2 = int(sigma2)
         self._sigma3 = int(sigma3)
@@ -425,6 +436,7 @@ class CouplingMatrix(CouplingKernel):
             fallback_direct=fallback_direct,
             atol=atol,
             cache_session=cache_session,
+            logger=logger,
         )
 
     @property
