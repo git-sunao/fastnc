@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/06/09 17:37:16
+Last edit  : 2026/06/29 02:12:44
 
 Description:
 coupling.py contains classes for 
@@ -130,6 +130,8 @@ class ModeCouplingFunctionBase:
             self.save_cache()
         # correction for numerical bias
         self.correct()
+
+        print(f'archived model: {self.tol=}')
 
     def compute(self):
         """

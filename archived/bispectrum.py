@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2026/05/26 10:18:45
+Last edit  : 2026/05/26 19:04:55
 
 Description:
 bispectrum.py contains classes for computing bispectrum 
@@ -263,17 +263,19 @@ class BispectrumBase:
                 self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'fourier':
-            x = -np.arccos(mu)
+            # x = np.pi-np.arccos(1-mu)
+            # x = np.pi-np.arccos(-mu)
+            x = np.arccos(mu)
             self.multipole_decomposer = MultipoleFourier(x, \
                 self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'cosine':
-            x = -np.arccos(mu)
+            x = np.pi-np.arccos(-mu)
             self.multipole_decomposer = MultipoleCosine(x, \
                 self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
         elif self.multipole_type == 'sine':
-            x = -np.arccos(mu)
+            x = np.pi-np.arccos(-mu)
             self.multipole_decomposer = MultipoleSine(x, \
                 self.Lmax_multipole_diag, \
                 method=self.config_multipole['method'])
@@ -483,7 +485,7 @@ class BispectrumBase:
         
     # Spectra methods
     # matter power spectrum (to be implemented in subclasses)
-    def matter_bispectrum_no_baryon(self, k1, k2, k3, z):
+    def matter_bispectrum_no_baryon(self, k1, k2, k3, z, **args):
         """
         Compute matter bispectrum.
 
@@ -495,7 +497,7 @@ class BispectrumBase:
         """
         raise NotImplementedError
 
-    def matter_bispectrum(self, k1, k2, k3, z):
+    def matter_bispectrum(self, k1, k2, k3, z, **args):
         """
         Matter bispetrum including baryon
         
@@ -505,7 +507,7 @@ class BispectrumBase:
             k3 (array) : k3 array in h/Mpc unit
             z (array)  : redshift array
         """
-        b = self.matter_bispectrum_no_baryon(k1,k2,k3,z)
+        b = self.matter_bispectrum_no_baryon(k1,k2,k3,z, **args)
         r = self.baryon_model(k1,k2,k3,z)
         return b*r
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/11/28 09:43:15
+Last edit  : 2026/06/26 00:10:43
 
 Description:
 This is the module of fastnc, which calculate the
@@ -72,7 +72,7 @@ class FastNaturalComponents:
     # default configuration
     projection       = 'x'
     config_multipole = {'Lmax':None, 'Mmax':None, 'Lmax_diag':None, 'multipole_type':'legendre', \
-                        'use_GLM_table':False, 'cache':True}
+                        'use_GLM_table':False, 'cache':True, 'tol':1e-5, 'Npsi':200, 'zero_diag_HM':False}
     config_bin       = {'t1':None, 'phi':None, 'mu':[0,1,2,3], 'dlnt':None}
     config_fftlog    = {'nu1':1.01, 'nu2':1.01, 'N_pad':0, 'xy':1}
     config_fftgrid   = {'auto':True, 'ell1min':None, 'ell1max':None, 'nfft':150}
@@ -119,7 +119,8 @@ class FastNaturalComponents:
         if self.multipole_type == 'legendre':
             self.GLM = MCF222LegendreFourier(self.Lmax_diag, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
         elif self.multipole_type == 'fourier':
-            self.GLM = MCF222FourierFourier(self.Lmax_diag, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
+            self.GLM = MCF222FourierFourier(self.Lmax_diag, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'], tol=self.config_multipole['tol'], Npsi=self.config_multipole['Npsi'])
+            # self.GLM = MCF222FourierFourier(self.Lmax_diag, self.Mmax, verbose=self.verbose, cache=self.config_multipole['cache'])
         else:
             raise ValueError('Error: multipole_type={} is not expected'.format(self.multipole_type))
 
@@ -248,11 +249,20 @@ class FastNaturalComponents:
             bL = self.bispectrum.kappa_bispectrum_multipole(
                 L, self.ELL_FFT, self.PSI_FFT, **args)
         if self.config_multipole['use_GLM_table']:
+            # print('Using table for GLM (old)')
             GLM = self.GLM.from_table(L, M)
         else:
+            # print('NOT using table for GLM (old)')
             GLM = self.GLM(L, M, self.PSI_FFT)
+
+        # Special 
+        if self.config_multipole['zero_diag_HM']:
+            print('Setting zero for diag of HM before L sum where M=L and psi == pi/4 (old version)')
+            sel = (L == M)[:,None,None] & (self.PSI_FFT == np.pi/4)[None,:,:] & (L != 0)[:,None,None]
+            GLM[sel] = 0.0
+
         # Sum up GLM*bL over L
-        HM = np.sum(((-1)**L*GLM.T*bL.T).T, axis=0)
+        HM = np.sum(((-1.0)**L*GLM.T*bL.T).T, axis=0)
 
         if self.Lmax_diag <= self.Lmax:
             return HM
@@ -334,6 +344,7 @@ class FastNaturalComponents:
         # natural-component multipole indices
         M = np.arange(Mmax+1)
         L = np.arange(Lmin, Lmax+1)
+        print(f"[old] {L=}")
         # First we compute the kernel HM for all M
         bL = self.bispectrum.kappa_bispectrum_multipole(
             L, self.ELL_FFT, self.PSI_FFT, **args)

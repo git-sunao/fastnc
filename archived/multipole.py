@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Author     : Sunao Sugiyama 
-Last edit  : 2024/03/25 17:49:02
+Last edit  : 2026/05/27 13:32:25
 
 Description:
 multipole.py contains the Multipole class, 
