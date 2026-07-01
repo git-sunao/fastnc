@@ -627,3 +627,233 @@ class TreeLevelFourierMultipole3D(BispectrumMultipole3D):
         result = np.real_if_close(result, tol=500)
         return result[0] if scalar else result
 
+
+
+class FactorizedBispectrum3D(Bispectrum3D):
+    r"""A bispectrum of the fully factorized form
+
+    .. math::
+
+       B(k_1,k_2,k_3;z)=U(k_1;z)U(k_2;z)U(k_3;z).
+
+    Parameters
+    ----------
+    k
+        Logarithmically spaced positive grid on which the radial factor is
+        decomposed by FFTLog.
+    radial_factor
+        Callable ``radial_factor(k, z)`` returning :math:`U(k;z)`.  It must be
+        positive on ``k`` for the complex-power FFTLog representation used by
+        :meth:`analytic_multipole`.
+
+    Notes
+    -----
+    The class is intended as the generic semi-analytic building block for
+    one-halo-like terms.  In particular, the BiHalofit one-halo contribution
+    is obtained by supplying its scalar one-halo radial factor as
+    ``radial_factor``.
+    """
+
+    def __init__(
+        self,
+        k,
+        radial_factor,
+        *,
+        support: Support3D | None = None,
+        support_policy: str = "ignore",
+    ):
+        k = np.asarray(k, dtype=float)
+        if k.ndim != 1 or k.size < 8 or np.any(k <= 0.0):
+            raise ValueError("k must be a positive one-dimensional grid with at least eight samples")
+        if np.any(np.diff(k) <= 0.0):
+            raise ValueError("k must be strictly increasing")
+        dln = np.diff(np.log(k))
+        if not np.allclose(dln, dln[0], rtol=1.0e-7, atol=1.0e-12):
+            raise ValueError("the FFTLog representation requires a logarithmically spaced k grid")
+        if not callable(radial_factor):
+            raise TypeError("radial_factor must be callable as radial_factor(k, z)")
+        self.k = k
+        self.radial_factor = radial_factor
+        self.support = support or Support3D(
+            k_min=float(k[0]), k_max=float(k[-1]), policy=support_policy
+        )
+
+    def factor(self, k, z):
+        value = np.asarray(self.radial_factor(np.asarray(k, dtype=float), z), dtype=float)
+        if np.any(~np.isfinite(value)) or np.any(value <= 0.0):
+            raise ValueError("radial_factor must return finite positive values")
+        return value
+
+    def evaluate(self, k1, k2, k3, z, **params):
+        if params:
+            raise TypeError(f"Unexpected parameter(s): {', '.join(sorted(params))}")
+        k1, k2, k3, z = np.broadcast_arrays(
+            np.asarray(k1, float), np.asarray(k2, float),
+            np.asarray(k3, float), np.asarray(z, float),
+        )
+        if np.any(k1 <= 0.0) or np.any(k2 <= 0.0) or np.any(k3 <= 0.0):
+            raise ValueError("triangle side lengths must be positive")
+        return self.factor(k1, z) * self.factor(k2, z) * self.factor(k3, z)
+
+    def analytic_multipole(
+        self,
+        *,
+        fftlog_config: PowerLawFFTLogConfig | None = None,
+        kernel_table_config=_DEFAULT_KERNEL_TABLE_CONFIG,
+    ):
+        """Construct semi-analytic full-Fourier multipoles.
+
+        Only the universal geometry table is retained across calls.  FFTLog
+        coefficients are rebuilt from ``radial_factor(k, z)`` for each
+        requested redshift, so no cosmology-dependent cache is introduced.
+        """
+        if kernel_table_config is _DEFAULT_KERNEL_TABLE_CONFIG:
+            kernel_table_config = FourierPowerKernelTableConfig()
+        return FactorizedFourierMultipole3D(
+            self,
+            fftlog_config=fftlog_config,
+            kernel_table_config=kernel_table_config,
+        )
+
+
+class FactorizedFourierMultipole3D(BispectrumMultipole3D):
+    r"""Semi-analytic Fourier multipoles of :class:`FactorizedBispectrum3D`.
+
+    With :math:`U(k;z)\simeq\sum_n c_n(z)k^{\nu_n}`, this evaluator uses
+
+    .. math::
+
+       B_m(k_1,k_2;z)=U(k_1;z)U(k_2;z)
+       \sum_n c_n(z)k_>^{\nu_n}\mathcal K_m^{(\nu_n)}(k_</k_>).
+
+    The geometry table contains only :math:`\mathcal K`; it is independent of
+    the radial factor, cosmology, and redshift.
+    """
+
+    basis = "fourier"
+    _UNIVERSAL_TABLE_CACHE: dict[tuple, _UniversalFourierGeometryKernelTable] = {}
+
+    def __init__(
+        self,
+        model: FactorizedBispectrum3D,
+        *,
+        fftlog_config: PowerLawFFTLogConfig | None = None,
+        kernel_table_config: FourierPowerKernelTableConfig | None = None,
+    ):
+        self.model = model
+        self.support = model.support
+        self.fftlog_config = fftlog_config or PowerLawFFTLogConfig(
+            bias=-1.5,
+            c_window_width=0.25,
+            N_pad=64,
+        )
+        # The exponent grid follows the FFTLog configuration and k grid, not
+        # the values of U.  A unit spectrum obtains it without introducing a
+        # cosmology-dependent stored coefficient.
+        _, self.nu = power_law_fftlog_coefficients(
+            model.k, np.ones_like(model.k), self.fftlog_config
+        )
+        self.kernel_table_config = kernel_table_config
+        self._geometry_table: _UniversalFourierGeometryKernelTable | None = None
+
+    def _geometry_cache_key(self, mode_max):
+        cfg = self.kernel_table_config
+        return (
+            tuple(np.round(self.nu.real, 14)), tuple(np.round(self.nu.imag, 14)),
+            int(mode_max), int(cfg.n_r), int(cfg.n_phi), float(cfg.r_max),
+            float(cfg.r_spacing_power), cfg.interpolation,
+        )
+
+    def _build_or_extend_table(self, mode_max):
+        cfg = self.kernel_table_config
+        if cfg is None:
+            return None
+        target_mode = max(int(mode_max), int(cfg.min_mode_max))
+        if self._geometry_table is not None and self._geometry_table.mode_max >= target_mode:
+            return self._geometry_table
+        key = self._geometry_cache_key(target_mode)
+        table = self._UNIVERSAL_TABLE_CACHE.get(key)
+        if table is None:
+            table = _UniversalFourierGeometryKernelTable(self.nu, target_mode, cfg)
+            self._UNIVERSAL_TABLE_CACHE[key] = table
+        self._geometry_table = table
+        return table
+
+    def build_kernel_table(self, mode_max=None):
+        if self.kernel_table_config is None:
+            raise RuntimeError("kernel_table_config=None disables the kernel table")
+        if mode_max is None:
+            mode_max = self.kernel_table_config.min_mode_max
+        return self._build_or_extend_table(int(mode_max))
+
+    def _coefficients(self, z):
+        values = self.model.factor(self.model.k, z)
+        coeff, nu = power_law_fftlog_coefficients(self.model.k, values, self.fftlog_config)
+        if not np.allclose(nu, self.nu, rtol=0.0, atol=1.0e-13):
+            raise RuntimeError("FFTLog exponent grid unexpectedly changed")
+        return coeff
+
+    def _u3_stencil_direct(self, coeff, mode_max, k_hi, r, *, n_phi=256):
+        k_hi, r = np.broadcast_arrays(np.asarray(k_hi, float), np.asarray(r, float))
+        flat_k, flat_r = k_hi.ravel(), r.ravel()
+        n_phi = int(n_phi)
+        phi = 2.0*np.pi*(np.arange(n_phi, dtype=float)+0.5)/float(n_phi)
+        cphi = np.cos(phi)
+        phase = np.exp(-1j*np.arange(int(mode_max)+1)*np.pi/float(n_phi))
+        out = np.empty((int(mode_max)+1, flat_k.size), complex)
+        for i, (kh, ratio) in enumerate(zip(flat_k, flat_r)):
+            arg = 1.0 + 2.0*ratio*cphi + ratio*ratio
+            base = np.exp(0.5*self.nu[:, None]*np.log(arg)[None, :])
+            geom = phase[None, :] * np.fft.fft(base, axis=1)[:, :int(mode_max)+1]/float(n_phi)
+            out[:, i] = (coeff * kh**self.nu) @ geom
+        return out.reshape((int(mode_max)+1,) + k_hi.shape)
+
+    def _u3_stencil(self, coeff, mode_max, k_hi, r):
+        k_hi, r = np.broadcast_arrays(np.asarray(k_hi, float), np.asarray(r, float))
+        table = self._build_or_extend_table(int(mode_max))
+        if table is None:
+            return self._u3_stencil_direct(coeff, mode_max, k_hi, r)
+        valid = table.contains(r)
+        out = np.empty((int(mode_max)+1,) + k_hi.shape, complex)
+        flat_out = out.reshape(int(mode_max)+1, -1)
+        flat_k, flat_r, flat_valid = k_hi.ravel(), r.ravel(), valid.ravel()
+        if np.any(flat_valid):
+            kk = flat_k[flat_valid]
+            geom = table.interpolate(0, int(mode_max), flat_r[flat_valid])
+            amp = coeff[:, None] * np.exp(self.nu[:, None]*np.log(kk)[None, :])
+            flat_out[:, flat_valid] = np.sum(amp[:, None, :]*geom, axis=0)
+        if np.any(~flat_valid):
+            flat_out[:, ~flat_valid] = self._u3_stencil_direct(
+                coeff, mode_max, flat_k[~flat_valid], flat_r[~flat_valid]
+            ).reshape(int(mode_max)+1, -1)
+        return out
+
+    def _evaluate_one_redshift(self, modes, k1, k2, z):
+        hi = np.maximum(k1, k2)
+        r = np.minimum(k1, k2)/hi
+        max_mode = int(np.max(np.abs(modes)))
+        coeff = self._coefficients(float(z))
+        u3 = self._u3_stencil(coeff, max_mode, hi, r)[np.abs(modes)]
+        u1 = self.model.factor(k1, float(z))[None, ...]
+        u2 = self.model.factor(k2, float(z))[None, ...]
+        return u1*u2*u3
+
+    def evaluate(self, mode, k1, k2, z, **params):
+        if params:
+            raise TypeError(f"Unexpected parameter(s): {', '.join(sorted(params))}")
+        scalar = np.isscalar(mode)
+        modes = np.atleast_1d(np.asarray(mode, int))
+        k1, k2, z = np.broadcast_arrays(np.asarray(k1, float), np.asarray(k2, float), np.asarray(z, float))
+        if np.any(k1 <= 0.0) or np.any(k2 <= 0.0):
+            raise ValueError("k1 and k2 must be positive")
+        result = np.empty((modes.size,) + k1.shape, complex)
+        # Coefficients are cosmology/redshift dependent and intentionally not
+        # cached.  Grouping equal z values avoids redundant FFTLogs within one
+        # vectorized call without retaining proposal-specific state.
+        flat_z = z.ravel()
+        for zi in np.unique(flat_z):
+            mask = (z == zi)
+            values = self._evaluate_one_redshift(modes, k1[mask], k2[mask], float(zi))
+            result.reshape(modes.size, -1)[:, mask.ravel()] = values.reshape(modes.size, -1)
+        result = np.real_if_close(result, tol=500)
+        return result[0] if scalar else result

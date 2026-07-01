@@ -24,6 +24,7 @@ from .regulator import Ell3HighPassRegulator
 from .halofit import Halofit, HalofitMultipole
 from .analytic import (
     TreeLevelBispectrum3D, TreeLevelFourierMultipole3D,
+    FactorizedBispectrum3D, FactorizedFourierMultipole3D,
     FourierPowerKernelTableConfig,
     standard_linear_growth, eisenstein_hu_no_wiggle_pklin, fourier_power_kernel,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "InterpolatedBispectrumMultipole3D",
     "Ell3HighPassRegulator",
     "Halofit", "HalofitMultipole", "TreeLevelBispectrum3D", "TreeLevelFourierMultipole3D",
+    "FactorizedBispectrum3D", "FactorizedFourierMultipole3D",
     "FourierPowerKernelTableConfig",
     "standard_linear_growth", "eisenstein_hu_no_wiggle_pklin", "fourier_power_kernel",
     "BiHalofitBispectrum3D", "BiHalofitBispectrumMultipole3D",
