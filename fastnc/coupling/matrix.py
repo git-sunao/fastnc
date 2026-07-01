@@ -24,7 +24,12 @@ from typing import Iterable, Literal
 
 import numpy as np
 
-from .cache import CachePolicy, CouplingCache, CouplingCacheSession
+from .cache import (
+    CachePolicy,
+    CouplingCache,
+    CouplingCacheSession,
+    resolve_coupling_cache_file,
+)
 from .compute import _as_two_x, coupling_delta, exact_zero_delta, two_delta_from_L_k
 
 Method = Literal["auto", "cache", "direct"]
@@ -34,7 +39,7 @@ Method = Literal["auto", "cache", "direct"]
 class CouplingKernelConfig:
     sigma1: int
     use_cache: bool = True
-    cache_file: str | Path = "coupling_b_cache.h5"
+    cache_file: str | Path | None = None
     npsi: int = 1025
     cache_policy: CachePolicy = "lazy"
     fallback_direct: bool = True
@@ -57,7 +62,7 @@ class CouplingKernel:
         sigma1: int,
         *,
         use_cache: bool = True,
-        cache_file: str | Path = "coupling_b_cache.h5",
+        cache_file: str | Path | None = None,
         npsi: int = 1025,
         cache_policy: CachePolicy = "lazy",
         lazy: bool | None = None,
@@ -72,7 +77,7 @@ class CouplingKernel:
         self.config = CouplingKernelConfig(
             sigma1=int(sigma1),
             use_cache=bool(use_cache),
-            cache_file=Path(cache_file),
+            cache_file=resolve_coupling_cache_file(cache_file),
             npsi=int(npsi),
             cache_policy=cache_policy,
             fallback_direct=bool(fallback_direct),
@@ -183,7 +188,7 @@ class CouplingKernel:
         else:
             # Explicit cache_file override: use a temporary session. This preserves
             # the public API while keeping the fast path tied to self.cache_session.
-            session = CouplingCacheSession(Path(cache_file))
+            session = CouplingCacheSession(resolve_coupling_cache_file(cache_file))
 
         return self._call_delta_with_session(
             delta,
@@ -415,7 +420,7 @@ class CouplingMatrix(CouplingKernel):
         sigma3: int,
         *,
         use_cache: bool = True,
-        cache_file: str | Path = "coupling_b_cache.h5",
+        cache_file: str | Path | None = None,
         npsi: int = 1025,
         cache_policy: CachePolicy = "lazy",
         lazy: bool | None = None,

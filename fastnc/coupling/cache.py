@@ -6,6 +6,8 @@ so integer and half-integer q are both represented exactly.
 """
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -16,6 +18,38 @@ import numpy as np
 from .compute import b_array_from_two_q
 
 CachePolicy = Literal["read_only", "lazy", "refresh"]
+
+
+def default_cache_dir() -> Path:
+    """Return fastnc's user cache directory.
+
+    ``FASTNC_CACHE_DIR`` takes precedence.  Otherwise use the conventional
+    per-user cache location for the active platform, without adding a runtime
+    dependency on ``platformdirs``.
+    """
+    override = os.environ.get("FASTNC_CACHE_DIR")
+    if override:
+        return Path(override).expanduser()
+
+    home = Path.home()
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local"))
+        return base / "fastnc" / "Cache"
+    if sys.platform == "darwin":
+        return home / "Library" / "Caches" / "fastnc"
+    return Path(os.environ.get("XDG_CACHE_HOME", home / ".cache")) / "fastnc"
+
+
+def default_coupling_cache_file() -> Path:
+    """Return the default persistent HDF5 file for coupling coefficients."""
+    return default_cache_dir() / "coupling" / "coupling_b_cache.h5"
+
+
+def resolve_coupling_cache_file(filename: str | Path | None) -> Path:
+    """Resolve an explicit cache path or the process-wide default path."""
+    if filename is None:
+        return default_coupling_cache_file()
+    return Path(filename).expanduser()
 
 
 @dataclass(frozen=True)
@@ -37,8 +71,8 @@ class BCacheKey:
 class CouplingCache:
     """Lazy, appendable HDF5 cache for b_p^{(q)}(psi)."""
 
-    def __init__(self, filename: str | Path):
-        self.filename = Path(filename)
+    def __init__(self, filename: str | Path | None = None):
+        self.filename = resolve_coupling_cache_file(filename)
         self.filename.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -151,7 +185,7 @@ class CouplingCacheSession:
     ``[two_p, two_p]``.
     """
 
-    def __init__(self, filename: str | Path) -> None:
+    def __init__(self, filename: str | Path | None = None) -> None:
         self.cache = CouplingCache(filename)
         self.memory: dict[BCacheKey, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 

@@ -7,7 +7,7 @@ import time
 import numpy as np
 
 from ..coupling import CouplingMatrix
-from ..coupling.cache import CouplingCacheSession
+from ..coupling.cache import CouplingCacheSession, resolve_coupling_cache_file
 from ..hankel.wrapper import DoubleHankelConfig
 from .bmultipole_grid import BMultipoleGrid
 from .config import ThreePCFConfig
@@ -137,7 +137,7 @@ class ThreePCFCalculator:
     # ------------------------------------------------------------------
     # Coupling/session management
     def _cache_session_key(self) -> str:
-        return str(self.coupling_kwargs.get("cache_file", "coupling_b_cache.h5"))
+        return str(resolve_coupling_cache_file(self.coupling_kwargs.get("cache_file")))
 
     def _get_cache_session(self) -> CouplingCacheSession | None:
         if not bool(self.coupling_kwargs.get("use_cache", True)):
