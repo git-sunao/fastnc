@@ -226,6 +226,26 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             **params,
         )
 
+    def three_halo_fourier_multipole(
+        self,
+        *,
+        fftlog_config=None,
+        kernel_table_config=None,
+    ):
+        """Return full-Fourier semi-analytic multipoles of the BiHalofit 3h term.
+
+        This is the dressed-tree implementation based on the universal
+        FFTLog geometry table.  It performs no opening-angle quadrature in
+        the public evaluation path.
+        """
+        if not self.ready:
+            raise RuntimeError("Configure cosmology, pklin, and growth first.")
+        return BiHalofitThreeHaloFourierMultipole3D(
+            self.halofit,
+            fftlog_config=fftlog_config,
+            kernel_table_config=kernel_table_config,
+        )
+
     def one_halo_response_multipole(
         self,
         *,
@@ -494,6 +514,159 @@ class BiHalofitOneHaloResponseMultipole3D(BispectrumMultipole3D):
             vals = self._evaluate_one_redshift(modes, k1[mask], k2[mask], float(z0))
             out.reshape(modes.size, -1)[:, mask.ravel()] = vals.reshape(modes.size, -1)
         out = np.real_if_close(out, tol=500)
+        return out[0] if scalar else out
+
+
+class BiHalofitThreeHaloFourierMultipole3D(BispectrumMultipole3D):
+    r"""Full-Fourier semi-analytic BiHalofit three-halo multipoles.
+
+    Write ``D(k)=I(k)`` and ``H(k)=I(k)P_E(k)``.  The BiHalofit three-halo
+    contribution is a dressed tree bispectrum.  The angular dependence is
+    reduced to Fourier stencils of ``D(k3) k3**s`` and ``H(k3) k3**s`` with
+    shifts ``s in {-2,0,1,2,4}``, all contracted against the same universal
+    geometry table used by the tree-level implementation.
+    """
+
+    basis = "fourier"
+
+    def __init__(self, halofit, *, fftlog_config=None, kernel_table_config=None):
+        self.halofit = halofit
+        self.fftlog_config = fftlog_config
+        self.kernel_table_config = (
+            FourierPowerKernelTableConfig() if kernel_table_config is None else kernel_table_config
+        )
+        self.support = Support3D(
+            k_min=float(np.min(halofit.k)), k_max=float(np.max(halofit.k)),
+            z_min=float(np.min(halofit.z)), z_max=float(np.max(halofit.z)), policy="ignore",
+        )
+        self._models = {
+            "D": FactorizedBispectrum3D(halofit.k, lambda k,z: self._radial("D", k, z)),
+            "H": FactorizedBispectrum3D(halofit.k, lambda k,z: self._radial("H", k, z)),
+        }
+        self._multipoles = {
+            name: model.analytic_multipole(
+                fftlog_config=self.fftlog_config,
+                kernel_table_config=self.kernel_table_config,
+            )
+            for name, model in self._models.items()
+        }
+
+    def build_kernel_table(self, mode_max=16):
+        """Build the shared universal geometry table up to ``mode_max``."""
+        return self._multipoles["D"].build_kernel_table(int(mode_max) + 2)
+
+    def _coeff(self, z):
+        self.halofit.update()
+        return self.halofit.get_bihalofit_coeffs(np.asarray([float(z)]))[0]
+
+    def _radial_values(self, k, z, c=None):
+        if c is None:
+            c = self._coeff(z)
+        k = np.asarray(k, float)
+        q = k * float(c["r_sigma"])
+        D = 1.0 / (1.0 + float(c["en"]) * q)
+        PL = self.halofit.get_interpolated_pklin(k, float(z))
+        PE = (
+            ((1.0 + float(c["fn"]) * q*q) / (1.0 + float(c["gn"]) * q + float(c["hn"]) * q*q)) * PL
+            + 1.0 / (float(c["mn"]) * q**float(c["mun"]) + float(c["nn"]) * q**float(c["nun"]))
+              / (1.0 + (float(c["pn"]) * q)**-3)
+        )
+        return D, PE, D * PE
+
+    def _radial(self, which, k, z):
+        D, _, H = self._radial_values(k, z)
+        return D if which == "D" else H
+
+    @staticmethod
+    def _T12_coefficients(k1, k2):
+        D = 2.0*k1*k2
+        S = k1*k1 + k2*k2
+        R = 0.5*(k1/k2 + k2/k1)
+        return (
+            5.0/7.0 - R*S/D + (2.0/7.0)*S*S/(D*D),
+            R/D - (4.0/7.0)*S/(D*D),
+            (2.0/7.0)/(D*D),
+        )
+
+    @staticmethod
+    def _cyclic_coefficients(k1, k2, PE1, PE2, eta):
+        def variable(kfixed, kopp):
+            U=(kopp*kopp-kfixed*kfixed)/(2.0*kfixed)
+            V=-1.0/(2.0*kfixed)
+            return (
+                0.5*kfixed*U+(2.0/7.0)*U*U,
+                5.0/7.0+0.5*(kfixed*V+U/kfixed)+(4.0/7.0)*U*V,
+                0.5*V/kfixed+(2.0/7.0)*V*V,
+            )
+        a=variable(k2,k1); b=variable(k1,k2)
+        return (
+            PE2*a[0]+PE1*b[0],
+            PE2*a[1]+PE1*b[1]+eta*(k1*PE2+k2*PE1),
+            PE2*a[2]+PE1*b[2],
+        )
+
+    @staticmethod
+    def _select(stencil, modes):
+        return stencil[np.abs(np.asarray(modes, int))]
+
+    def _evaluate_at_z(self, modes, k1, k2, z):
+        modes = np.asarray(modes, int)
+        max_mode = int(np.max(np.abs(modes))) + 2
+        c = self._coeff(z)
+        D1, PE1, _ = self._radial_values(k1, z, c=c)
+        D2, PE2, _ = self._radial_values(k2, z, c=c)
+        hi = np.maximum(k1, k2)
+        r = np.minimum(k1, k2) / hi
+        coeffD = self._multipoles["D"]._coefficients(float(z))
+        coeffH = self._multipoles["H"]._coefficients(float(z))
+        mD = self._multipoles["D"]
+        mH = self._multipoles["H"]
+
+        # Direct (12) channel: D3 times a quartic polynomial in k3.
+        C0, C2, C4 = self._T12_coefficients(k1, k2)
+        eta = float(c["dn"]) * float(c["r_sigma"])
+        D0 = self._select(mD._u3_stencil_shift(coeffD, max_mode, hi, r, 0), modes)
+        D1s = self._select(mD._u3_stencil_shift(coeffD, max_mode, hi, r, 1), modes)
+        D2s = self._select(mD._u3_stencil_shift(coeffD, max_mode, hi, r, 2), modes)
+        D4s = self._select(mD._u3_stencil_shift(coeffD, max_mode, hi, r, 4), modes)
+        T12 = 2.0 * (D1 * D2 * PE1 * PE2)[None, ...] * (
+            C0[None, ...]*D0 + eta*D1s + C2[None, ...]*D2s + C4[None, ...]*D4s
+        )
+
+        # Pair-combined cyclic channels.  The k3^-2 coefficient is combined
+        # before using the scaled universal kernel, retaining r -> 1 regularity.
+        Em2, E0, E2 = self._cyclic_coefficients(k1, k2, PE1, PE2, eta)
+        H0 = self._select(mH._u3_stencil_shift(coeffH, max_mode, hi, r, 0), modes)
+        H2 = self._select(mH._u3_stencil_shift(coeffH, max_mode, hi, r, 2), modes)
+        Hm2_scaled = self._select(mH._u3_stencil_shift(coeffH, max_mode, hi, r, -2), modes)
+        scale = (1.0-r*r)**2
+        Tcyc = 2.0 * (D1*D2)[None, ...] * (E0[None,...]*H0 + E2[None,...]*H2)
+        diagonal = np.isclose(r, 1.0, rtol=0.0, atol=8*np.finfo(float).eps)
+        if np.any(~diagonal):
+            regular_m2 = np.where(diagonal, 0.0, Em2/scale)
+            Tcyc += 2.0 * (D1*D2)[None,...] * regular_m2[None,...] * Hm2_scaled
+        if np.any(diagonal):
+            # Exact k1=k2 identity for the pair-combined cyclic sum.
+            k = k1
+            diag = (D1*D1*PE1)[None,...] * (
+                (13.0/7.0)*H0 - (5.0/7.0)*H2 + 4.0*eta*k[None,...]*H0
+            )
+            Tcyc = np.where(diagonal[None,...], diag, Tcyc)
+        return T12 + Tcyc
+
+    def evaluate(self, mode, k1, k2, z, **params):
+        if params:
+            raise TypeError(f"Unexpected parameter(s): {', '.join(sorted(params))}")
+        scalar = np.isscalar(mode)
+        modes = np.atleast_1d(np.asarray(mode, int))
+        k1,k2,z = np.broadcast_arrays(np.asarray(k1,float), np.asarray(k2,float), np.asarray(z,float))
+        if np.any(k1 <= 0.0) or np.any(k2 <= 0.0):
+            raise ValueError("k1 and k2 must be positive")
+        out=np.empty((modes.size,) + k1.shape, complex)
+        for zi in np.unique(z):
+            mask=(z==zi)
+            out.reshape(modes.size,-1)[:,mask.ravel()] = self._evaluate_at_z(modes,k1[mask],k2[mask],float(zi)).reshape(modes.size,-1)
+        out=np.real_if_close(out,tol=1000)
         return out[0] if scalar else out
 
 

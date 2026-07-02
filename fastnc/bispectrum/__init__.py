@@ -30,7 +30,7 @@ from .analytic import (
 )
 
 from .presets import (
-    BiHalofitBispectrum3D, BiHalofitBispectrumMultipole3D, BiHalofitOneHaloResponseMultipole3D,
+    BiHalofitBispectrum3D, BiHalofitBispectrumMultipole3D, BiHalofitOneHaloResponseMultipole3D, BiHalofitThreeHaloFourierMultipole3D,
     OneHaloProductBispectrum3D, NFWOneHaloBispectrum3D,
     default_wmap_like_cosmology, simple_linear_growth,
     simple_debug_pklin, eisenstein_hu_like_pklin,
@@ -57,7 +57,7 @@ __all__ = [
     "FactorizedBispectrum3D", "FactorizedFourierMultipole3D",
     "FourierPowerKernelTableConfig",
     "standard_linear_growth", "eisenstein_hu_no_wiggle_pklin", "fourier_power_kernel",
-    "BiHalofitBispectrum3D", "BiHalofitBispectrumMultipole3D", "BiHalofitOneHaloResponseMultipole3D",
+    "BiHalofitBispectrum3D", "BiHalofitBispectrumMultipole3D", "BiHalofitOneHaloResponseMultipole3D", "BiHalofitThreeHaloFourierMultipole3D",
     "OneHaloProductBispectrum3D", "NFWOneHaloBispectrum3D",
     "default_wmap_like_cosmology", "simple_linear_growth",
     "simple_debug_pklin", "eisenstein_hu_like_pklin",

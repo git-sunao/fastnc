@@ -259,7 +259,9 @@ class _UniversalFourierGeometryKernelTable:
             raise ValueError("n_phi must exceed twice the maximum stored Fourier mode")
         t = np.linspace(0.0, 1.0, int(config.n_r))
         self.r = float(config.r_max) * (1.0 - (1.0 - t) ** float(config.r_spacing_power))
-        self.kernel0, self.kernel_m2_scaled = self._build()
+        self.kernels = self._build()
+        self.kernel0 = self.kernels[0]
+        self.kernel_m2_scaled = self.kernels[-2]
 
     def contains(self, r):
         r = np.asarray(r, float)
@@ -267,8 +269,8 @@ class _UniversalFourierGeometryKernelTable:
 
     def _build(self):
         nnu, nmode, nr = self.nu.size, self.mode_max + 1, self.r.size
-        out0 = np.empty((nnu, nmode, nr), complex)
-        outm2 = np.empty_like(out0)
+        shifts = (0, -2, 1, 2, 4)
+        out = {shift: np.empty((nnu, nmode, nr), complex) for shift in shifts}
         # Midpoint nodes avoid evaluating the integrable r=1 endpoint at
         # phi=pi.  The phase restores the Fourier convention at phi=2pi j/N.
         n_phi = int(self.config.n_phi)
@@ -278,16 +280,20 @@ class _UniversalFourierGeometryKernelTable:
         for ir, ratio in enumerate(self.r):
             arg = 1.0 + 2.0*ratio*cphi + ratio*ratio
             base = np.exp(0.5*self.nu[:, None]*np.log(arg)[None, :])
-            out0[:, :, ir] = phase[None, :] * np.fft.fft(base, axis=1)[:, :nmode]/float(n_phi)
+            fft = np.fft.fft
+            for shift in (0, 1, 2, 4):
+                values = base * arg[None, :] ** (0.5 * shift)
+                out[shift][:, :, ir] = phase[None, :] * fft(values, axis=1)[:, :nmode] / float(n_phi)
             # The isolated q^{-1} kernel is not regular at r=1.  Store the
             # cancellation-safe object (1-r^2)^2 K^{nu-2}; its r=1 value is
-            # not used because the cyclic diagonal is imposed analytically.
+            # supplied through an analytic diagonal identity by callers.
             scale = (1.0-ratio*ratio)**2
             if scale == 0.0:
-                outm2[:, :, ir] = 0.0
+                out[-2][:, :, ir] = 0.0
             else:
-                outm2[:, :, ir] = scale * phase[None, :] * np.fft.fft(base/arg[None, :], axis=1)[:, :nmode]/float(n_phi)
-        return out0, outm2
+                values = base / arg[None, :]
+                out[-2][:, :, ir] = scale * phase[None, :] * fft(values, axis=1)[:, :nmode] / float(n_phi)
+        return out
 
     @staticmethod
     def _linear(grid, x):
@@ -311,7 +317,10 @@ class _UniversalFourierGeometryKernelTable:
         if mode_max > self.mode_max: raise ValueError("requested mode exceeds table support")
         r=np.asarray(r,float); flat=r.ravel()
         if not np.all(self.contains(flat)): raise ValueError("r is outside geometry-table domain")
-        values=self.kernel0 if shift == 0 else self.kernel_m2_scaled
+        try:
+            values = self.kernels[int(shift)]
+        except KeyError as exc:
+            raise ValueError(f"unsupported geometry-kernel shift: {shift}") from exc
         values=values[:, :mode_max+1]
         if self.config.interpolation == "linear":
             ix,t=self._linear(self.r,flat)
@@ -832,6 +841,42 @@ class FactorizedFourierMultipole3D(BispectrumMultipole3D):
             flat_out[:, ~flat_valid] = self._u3_stencil_direct(
                 coeff, mode_max, flat_k[~flat_valid], flat_r[~flat_valid]
             ).reshape(int(mode_max)+1, -1)
+        return out
+
+    def _u3_stencil_shift(self, coeff, mode_max, k_hi, r, shift=0):
+        """Fourier stencil of ``k3**shift * U(k3)``.
+
+        The ``shift=-2`` branch returns the cancellation-safe scaled object
+        ``(1-r**2)**2 [U(k3)/k3**2]_m``.  Positive shifts are contracted with
+        the corresponding universal geometry kernels.
+        """
+        k_hi, r = np.broadcast_arrays(np.asarray(k_hi, float), np.asarray(r, float))
+        table = self._build_or_extend_table(int(mode_max))
+        if table is None:
+            # Validation fallback: direct midpoint FFT.
+            nphi = 512
+            phi = 2.0*np.pi*(np.arange(nphi)+0.5)/nphi
+            phase = np.exp(-1j*np.arange(int(mode_max)+1)*np.pi/nphi)
+            out = np.empty((int(mode_max)+1,) + k_hi.shape, complex)
+            for i,(kh,rr) in enumerate(zip(k_hi.ravel(), r.ravel())):
+                q=1+2*rr*np.cos(phi)+rr*rr
+                base=np.exp(0.5*self.nu[:,None]*np.log(q)[None,:]) * q[None,:]**(0.5*shift)
+                val=phase[None,:]*np.fft.fft(base,axis=1)[:,:int(mode_max)+1]/nphi
+                amp=coeff*kh**(self.nu+shift)
+                tmp=amp@val
+                if shift == -2: tmp *= (1-rr*rr)**2
+                out.reshape(int(mode_max)+1,-1)[:,i]=tmp
+            return out
+        valid=table.contains(r)
+        out=np.empty((int(mode_max)+1,) + k_hi.shape, complex)
+        fo=out.reshape(int(mode_max)+1,-1); fk=k_hi.ravel(); fr=r.ravel(); fv=valid.ravel()
+        if np.any(fv):
+            kk=fk[fv]
+            geom=table.interpolate(shift,int(mode_max),fr[fv])
+            amp=coeff[:,None]*np.exp((self.nu[:,None]+shift)*np.log(kk)[None,:])
+            fo[:,fv]=np.sum(amp[:,None,:]*geom,axis=0)
+        if np.any(~fv):
+            fo[:,~fv]=self._u3_stencil_shift(coeff,int(mode_max),fk[~fv],fr[~fv],shift).reshape(int(mode_max)+1,-1)
         return out
 
     def _evaluate_one_redshift(self, modes, k1, k2, z):
