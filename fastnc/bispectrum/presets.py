@@ -15,7 +15,7 @@ from .base import Bispectrum3D
 from .multipole import BispectrumMultipole3D
 from .los import LineOfSightProjector
 from .support import Support3D
-from .halofit import Halofit, HalofitMultipole
+from .halofit import Halofit
 from .analytic import (
     FactorizedBispectrum3D, FactorizedFourierMultipole3D,
     FourierPowerKernelTableConfig,
@@ -41,6 +41,21 @@ def default_wmap_like_cosmology() -> dict[str, float]:
     This is intended for code-path tests, not precision calculations.
     """
     return dict(_DEFAULT_COSMO_WMAP_LIKE)
+
+
+def _normalize_bihalofit_terms(which):
+    """Validate and canonicalize a BiHalofit term selection."""
+    if isinstance(which, str):
+        which = (which,)
+    else:
+        which = tuple(which)
+    valid = {"Bh1", "Bh3"}
+    invalid = set(which) - valid
+    if invalid:
+        raise ValueError(f"Unknown BiHalofit term(s): {sorted(invalid)}")
+    if not which:
+        raise ValueError("Select at least one of 'Bh1' or 'Bh3'.")
+    return tuple(term for term in ("Bh1", "Bh3") if term in which)
 
 
 class BiHalofitBispectrum3D(Bispectrum3D):
@@ -208,22 +223,71 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             )
         return self.halofit.get_bihalofit(k1, k2, k3, z, **params)
 
-    def analytic_multipole(
+    def fourier_multipole(
         self,
         *,
-        which=("Bh3",),
-        **params,
+        which=("Bh1", "Bh3"),
+        one_halo_kwargs: Mapping | None = None,
+        three_halo_kwargs: Mapping | None = None,
     ):
-        """Return the semi-analytic 3D BiHalofit multipole object.
+        r"""Return accelerated full-Fourier BiHalofit multipoles.
 
-        The returned object evaluates ``B_L^3D(k1,k2,z)``.  LOS projection is
-        applied later through ``LineOfSightProjector.as_multipole_projector()``
-        or ``projected_analytic_multipole``.
+        ``Bh1`` is evaluated by the shape-response approximation and ``Bh3``
+        by the dressed-tree semi-analytic evaluator.  When both are selected,
+        the returned object adds their multipoles.  The two child evaluators
+        use the same kernel-table configuration, so the universal geometry
+        cache is shared whenever their FFTLog exponent grids agree.
         """
-        return BiHalofitBispectrumMultipole3D(
-            self.halofit,
+        if not self.ready:
+            raise RuntimeError("Configure cosmology, pklin, and growth first.")
+        selected = _normalize_bihalofit_terms(which)
+        one_halo_kwargs = dict(one_halo_kwargs or {})
+        three_halo_kwargs = dict(three_halo_kwargs or {})
+        # The geometry table is shared through a process-wide cache.  Passing
+        # the same configuration object makes the intended common setup
+        # explicit, while still allowing an expert caller to override either
+        # term independently.
+        shared_kernel_config = one_halo_kwargs.get(
+            "kernel_table_config", three_halo_kwargs.get("kernel_table_config")
+        )
+        if shared_kernel_config is not None:
+            one_halo_kwargs.setdefault("kernel_table_config", shared_kernel_config)
+            three_halo_kwargs.setdefault("kernel_table_config", shared_kernel_config)
+        shared_fftlog_config = one_halo_kwargs.get(
+            "fftlog_config", three_halo_kwargs.get("fftlog_config")
+        )
+        if shared_fftlog_config is not None:
+            one_halo_kwargs.setdefault("fftlog_config", shared_fftlog_config)
+            three_halo_kwargs.setdefault("fftlog_config", shared_fftlog_config)
+        return BiHalofitFourierMultipole3D(
+            self,
+            which=selected,
+            one_halo_kwargs=one_halo_kwargs,
+            three_halo_kwargs=three_halo_kwargs,
+        )
+
+    def projected_fourier_multipole(
+        self,
+        projector,
+        *,
+        sample_combination=None,
+        which=("Bh1", "Bh3"),
+        modes=None,
+        mode_max=None,
+        one_halo_kwargs: Mapping | None = None,
+        three_halo_kwargs: Mapping | None = None,
+    ):
+        """Return the LOS projection of :meth:`fourier_multipole`."""
+        m3d = self.fourier_multipole(
             which=which,
-            **params,
+            one_halo_kwargs=one_halo_kwargs,
+            three_halo_kwargs=three_halo_kwargs,
+        )
+        return m3d.project_los(
+            projector,
+            sample_combination=sample_combination,
+            modes=modes,
+            mode_max=mode_max,
         )
 
     def three_halo_fourier_multipole(
@@ -283,24 +347,6 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             kernel_table_config=kernel_table_config,
         )
 
-    def projected_analytic_multipole(
-        self,
-        projector,
-        *,
-        sample_combination=None,
-        which=("Bh3",),
-        modes=None,
-        mode_max=None,
-        **params,
-    ):
-        """Return the LOS-projected semi-analytic angular multipole object."""
-        m3d = self.analytic_multipole(which=which, **params)
-        return m3d.project_los(
-            projector,
-            sample_combination=sample_combination,
-            modes=modes,
-            mode_max=mode_max,
-        )
 
 
 
@@ -670,101 +716,81 @@ class BiHalofitThreeHaloFourierMultipole3D(BispectrumMultipole3D):
         return out[0] if scalar else out
 
 
-class BiHalofitBispectrumMultipole3D(BispectrumMultipole3D):
-    """Semi-analytic 3D multipole for BiHalofit.
+class BiHalofitFourierMultipole3D(BispectrumMultipole3D):
+    r"""Combined accelerated full-Fourier BiHalofit multipoles.
 
-    The public name intentionally omits ``3h``.  Currently the implemented
-    semi-analytic term is the BiHalofit 3-halo contribution, so ``which`` must
-    be equivalent to ``["Bh3"]``.  The ``which`` interface is kept for future
-    extension to ``["Bh1", "Bh3"]``.
+    This class is a thin composition of the retained one-halo response and
+    three-halo dressed-tree evaluators.  It contains no legacy cosine-basis
+    machinery and evaluates
+
+    .. math:: B_m = B_{
+m h1,m} + B_{
+m h3,m}
+
+    when both terms are requested.
     """
 
-    basis = "fourier-even"
+    basis = "fourier"
 
     def __init__(
         self,
-        halofit,
+        bihalofit: BiHalofitBispectrum3D,
         *,
-        which=("Bh3",),
-        n_fftlog=128,
-        k_fft_min=None,
-        k_fft_max=None,
-        fftlog_pad=4.0,
-        bias_D=0.0,
-        bias_H=0.0,
-        kernel_method="auto",
-        n_kernel_phi=128,
-        cyclic_r_quad=0.97,
-        cyclic_quad_n_phi=256,
+        which=("Bh1", "Bh3"),
+        one_halo_kwargs: Mapping | None = None,
+        three_halo_kwargs: Mapping | None = None,
     ):
-        self.which = tuple(which) if isinstance(which, (list, tuple)) else (which,)
-        if set(self.which) != {"Bh3"}:
-            raise NotImplementedError(
-                "BiHalofitBispectrumMultipole3D currently implements only which=['Bh3']. "
-                "The which argument is reserved for future Bh1+Bh3 support."
+        self.bihalofit = bihalofit
+        self.which = _normalize_bihalofit_terms(which)
+        self.support = bihalofit.support
+        self.one_halo = None
+        self.three_halo = None
+        if "Bh1" in self.which:
+            self.one_halo = bihalofit.one_halo_response_multipole(
+                **dict(one_halo_kwargs or {})
+            )
+        if "Bh3" in self.which:
+            self.three_halo = bihalofit.three_halo_fourier_multipole(
+                **dict(three_halo_kwargs or {})
             )
 
-        self.halofit = halofit.to_multipole(
-            n_fftlog=n_fftlog,
-            k_fft_min=k_fft_min,
-            k_fft_max=k_fft_max,
-            fftlog_pad=fftlog_pad,
-            bias_D=bias_D,
-            bias_H=bias_H,
-            n_kernel_phi=n_kernel_phi,
-        ) if not isinstance(halofit, HalofitMultipole) else halofit
+    def build_kernel_table(self, mode_max=16):
+        """Build one common geometry-table extent for the selected terms.
 
-        if isinstance(halofit, HalofitMultipole):
-            self.halofit.n_fftlog = int(n_fftlog)
-            self.halofit.k_fft_min = k_fft_min
-            self.halofit.k_fft_max = k_fft_max
-            self.halofit.fftlog_pad = float(fftlog_pad)
-            self.halofit.bias_D = float(bias_D)
-            self.halofit.bias_H = float(bias_H)
-            self.halofit.n_kernel_phi = int(n_kernel_phi)
-            self.halofit._clear_radial_fftlog_cache()
-
-        self.kernel_method = kernel_method
-        self.cyclic_r_quad = float(cyclic_r_quad)
-        self.cyclic_quad_n_phi = int(cyclic_quad_n_phi)
+        The underlying factorized evaluators are assigned the same requested
+        extent so that their class-level universal-table cache resolves to a
+        single immutable geometry object whenever their FFTLog exponent grids
+        coincide.
+        """
+        mode_max = int(mode_max)
+        extra = 2
+        if self.one_halo is not None:
+            extra = max(extra, self.one_halo.shape_mode_max)
+        required = mode_max + extra
+        built = {}
+        if self.one_halo is not None:
+            built["Bh1"] = {
+                name: multipole.build_kernel_table(required)
+                for name, multipole in self.one_halo._multipoles.items()
+            }
+        if self.three_halo is not None:
+            built["Bh3"] = {
+                name: multipole.build_kernel_table(required)
+                for name, multipole in self.three_halo._multipoles.items()
+            }
+        return built
 
     def evaluate(self, mode, k1, k2, z, **params):
-        scalar_mode = np.isscalar(mode)
-        modes = np.atleast_1d(np.asarray(mode, dtype=int)).ravel()
-        k1 = np.asarray(k1, dtype=float)
-        k2 = np.asarray(k2, dtype=float)
-        z = np.asarray(z, dtype=float)
-        k1, k2, z = np.broadcast_arrays(k1, k2, z)
-
-        kernel_method = params.pop("kernel_method", self.kernel_method)
-        cyclic_r_quad = params.pop("cyclic_r_quad", self.cyclic_r_quad)
-        cyclic_quad_n_phi = params.pop("cyclic_quad_n_phi", self.cyclic_quad_n_phi)
         if params:
             unknown = ", ".join(sorted(params))
             raise TypeError(f"Unexpected BiHalofit multipole parameter(s): {unknown}")
-
-        vals = []
-        z_flat = z.ravel()
-        unique_z = np.unique(z_flat)
-        for L in modes:
-            out_L = np.empty_like(k1, dtype=complex)
-            for z0 in unique_z:
-                mask = (z == z0)
-                out_L[mask] = self.halofit.get_bihalofit_3h_multipole_semianalytic(
-                    k1[mask],
-                    k2[mask],
-                    L=int(L),
-                    z=float(z0),
-                    kernel_method=kernel_method,
-                    cyclic_r_quad=cyclic_r_quad,
-                    cyclic_quad_n_phi=cyclic_quad_n_phi,
-                    return_parts=False,
-                )
-            vals.append(out_L)
-        out = np.asarray(vals)
-        out = np.real_if_close(out, tol=1000)
-        return out[0] if scalar_mode else out
-
+        total = None
+        if self.one_halo is not None:
+            total = self.one_halo.evaluate(mode, k1, k2, z)
+        if self.three_halo is not None:
+            value = self.three_halo.evaluate(mode, k1, k2, z)
+            total = value if total is None else total + value
+        return total
 
 
 
