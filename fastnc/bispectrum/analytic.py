@@ -661,6 +661,7 @@ class FactorizedBispectrum3D(Bispectrum3D):
         *,
         support: Support3D | None = None,
         support_policy: str = "ignore",
+        allow_signed: bool = False,
     ):
         k = np.asarray(k, dtype=float)
         if k.ndim != 1 or k.size < 8 or np.any(k <= 0.0):
@@ -674,13 +675,18 @@ class FactorizedBispectrum3D(Bispectrum3D):
             raise TypeError("radial_factor must be callable as radial_factor(k, z)")
         self.k = k
         self.radial_factor = radial_factor
+        self.allow_signed = bool(allow_signed)
         self.support = support or Support3D(
             k_min=float(k[0]), k_max=float(k[-1]), policy=support_policy
         )
 
     def factor(self, k, z):
         value = np.asarray(self.radial_factor(np.asarray(k, dtype=float), z), dtype=float)
-        if np.any(~np.isfinite(value)) or np.any(value <= 0.0):
+        if np.any(~np.isfinite(value)):
+            raise ValueError("radial_factor must return finite values")
+        if self.allow_signed:
+            return value
+        if np.any(value <= 0.0):
             raise ValueError("radial_factor must return finite positive values")
         return value
 

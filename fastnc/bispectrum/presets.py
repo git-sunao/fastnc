@@ -16,6 +16,10 @@ from .multipole import BispectrumMultipole3D
 from .los import LineOfSightProjector
 from .support import Support3D
 from .halofit import Halofit, HalofitMultipole
+from .analytic import (
+    FactorizedBispectrum3D, FactorizedFourierMultipole3D,
+    FourierPowerKernelTableConfig,
+)
 
 
 _DEFAULT_COSMO_WMAP_LIKE = {
@@ -222,6 +226,43 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             **params,
         )
 
+    def one_halo_response_multipole(
+        self,
+        *,
+        reference_r1: float = 0.5,
+        reference_r2: float = 0.0,
+        response_step: float = 1.0e-4,
+        shape_n_phi: int = 64,
+        shape_mode_max: int = 8,
+        fftlog_config=None,
+        kernel_table_config=None,
+    ):
+        """Return the first-order shape-response approximation to ``Bh1``.
+
+        The backbone is a factorized one-halo profile at fixed reference
+        triangle shape.  The dependence of ``log10(an)``, ``log10(alphan)``,
+        and ``log10(betan)`` on the actual BiHalofit shape variables
+        ``(r1,r2)`` is restored to first order.  Shape-response Fourier
+        coefficients are evaluated by a small FFT on inexpensive scalar
+        coefficient functions; all radial ``k3`` factors use the universal
+        FFTLog geometry table.
+        """
+        if not self.ready:
+            raise RuntimeError(
+                "BiHalofitBispectrum3D is not configured. "
+                "Configure cosmology, pklin, and growth first."
+            )
+        return BiHalofitOneHaloResponseMultipole3D(
+            self.halofit,
+            reference_r1=reference_r1,
+            reference_r2=reference_r2,
+            response_step=response_step,
+            shape_n_phi=shape_n_phi,
+            shape_mode_max=shape_mode_max,
+            fftlog_config=fftlog_config,
+            kernel_table_config=kernel_table_config,
+        )
+
     def projected_analytic_multipole(
         self,
         projector,
@@ -240,6 +281,220 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             modes=modes,
             mode_max=mode_max,
         )
+
+
+
+class BiHalofitOneHaloResponseMultipole3D(BispectrumMultipole3D):
+    r"""First-order response multipoles for the BiHalofit one-halo term.
+
+    This is an experimental semi-analytic approximation.  It expands the
+    profile around a fixed reference triangle shape ``(r1_ref,r2_ref)`` and
+    retains the first-order response to the three shape-dependent logarithmic
+    parameters ``log10(an)``, ``log10(alphan)``, and ``log10(betan)``.
+
+    The costly radial dependence on ``k3`` is evaluated through
+    :class:`FactorizedFourierMultipole3D`; only the inexpensive triangle-shape
+    coefficient functions are sampled on a small Fourier grid.
+    """
+
+    basis = "fourier"
+    _PARAMETERS = ("log10an", "log10aln", "log10ben")
+
+    def __init__(
+        self,
+        halofit,
+        *,
+        reference_r1: float = 0.5,
+        reference_r2: float = 0.0,
+        response_step: float = 1.0e-4,
+        shape_n_phi: int = 64,
+        shape_mode_max: int = 8,
+        fftlog_config=None,
+        kernel_table_config=None,
+    ):
+        if not (0.0 <= reference_r1 <= 1.0 and 0.0 <= reference_r2 <= 1.0):
+            raise ValueError("reference_r1 and reference_r2 must lie in [0,1]")
+        if response_step <= 0.0:
+            raise ValueError("response_step must be positive")
+        if int(shape_n_phi) < 16 or int(shape_n_phi) % 2:
+            raise ValueError("shape_n_phi must be an even integer >= 16")
+        if int(shape_mode_max) < 0 or int(shape_mode_max) >= int(shape_n_phi)//2:
+            raise ValueError("shape_mode_max must satisfy 0 <= M < shape_n_phi/2")
+        self.halofit = halofit
+        self.reference_r1 = float(reference_r1)
+        self.reference_r2 = float(reference_r2)
+        self.response_step = float(response_step)
+        self.shape_n_phi = int(shape_n_phi)
+        self.shape_mode_max = int(shape_mode_max)
+        self.fftlog_config = fftlog_config
+        self.kernel_table_config = (
+            FourierPowerKernelTableConfig() if kernel_table_config is None else kernel_table_config
+        )
+        self.support = Support3D(
+            k_min=float(np.min(halofit.k)),
+            k_max=float(np.max(halofit.k)),
+            z_min=float(np.min(halofit.z)),
+            z_max=float(np.max(halofit.z)),
+            policy="ignore",
+        )
+        self._models: dict[str, FactorizedBispectrum3D] = {}
+        self._multipoles: dict[str, FactorizedFourierMultipole3D] = {}
+        self._build_radial_models()
+
+    @staticmethod
+    def _clip_alpha(log10_alpha, ns):
+        alpha = 10.0 ** log10_alpha
+        return np.minimum(alpha, 1.0 - (2.0 / 3.0) * ns)
+
+    def _theta(self, z, r1, r2):
+        self.halofit.update()
+        c = self.halofit.get_bihalofit_coeffs(np.asarray([z], dtype=float))[0]
+        r1 = np.asarray(r1, dtype=float)
+        r2 = np.asarray(r2, dtype=float)
+        logan = c["log10an1"] + c["log10an2"] * r1 ** c["gan"]
+        logaln = c["log10aln1"] + c["log10aln2"] * r2**2
+        logben = c["log10ben1"] + c["log10ben2"] * r2
+        return {
+            "log10an": np.asarray(logan, float),
+            "log10aln": np.asarray(logaln, float),
+            "log10ben": np.asarray(logben, float),
+            "bn": float(c["bn"]),
+            "cn": float(c["cn"]),
+            "r_sigma": float(c["r_sigma"]),
+            "ns": float(self.halofit.cosmo["ns"]),
+        }
+
+    @staticmethod
+    def _profile_q(q, theta):
+        q = np.maximum(np.asarray(q, dtype=float), 1.0e-100)
+        an = 10.0 ** theta["log10an"]
+        alpha = np.minimum(10.0 ** theta["log10aln"], 1.0 - (2.0 / 3.0) * theta["ns"])
+        beta = 10.0 ** theta["log10ben"]
+        denom = an * q**alpha + theta["bn"] * q**beta
+        return 1.0 / denom / (1.0 + 1.0 / (theta["cn"] * q))
+
+    def _reference_theta(self, z):
+        return self._theta(z, self.reference_r1, self.reference_r2)
+
+    def _radial(self, kind, k, z):
+        theta = self._reference_theta(float(z))
+        q = np.asarray(k, float) * theta["r_sigma"]
+        if kind == "base":
+            return self._profile_q(q, theta)
+        param = kind
+        h = self.response_step
+        tp = dict(theta)
+        tm = dict(theta)
+        tp[param] = theta[param] + h
+        tm[param] = theta[param] - h
+        return (self._profile_q(q, tp) - self._profile_q(q, tm)) / (2.0 * h)
+
+    def _build_radial_models(self):
+        kinds = ("base",) + self._PARAMETERS
+        for kind in kinds:
+            model = FactorizedBispectrum3D(
+                self.halofit.k,
+                lambda k, z, _kind=kind: self._radial(_kind, k, z),
+                allow_signed=(kind != "base"),
+            )
+            self._models[kind] = model
+            self._multipoles[kind] = model.analytic_multipole(
+                fftlog_config=self.fftlog_config,
+                kernel_table_config=self.kernel_table_config,
+            )
+
+    def build_kernel_table(self, mode_max=None):
+        if mode_max is None:
+            mode_max = self.shape_mode_max
+        target = int(mode_max) + self.shape_mode_max
+        return self._multipoles["base"].build_kernel_table(target)
+
+    def _shape_delta_modes(self, k1, k2, z):
+        """Return Fourier modes of parameter shifts around the reference."""
+        k1, k2 = np.broadcast_arrays(np.asarray(k1, float), np.asarray(k2, float))
+        nphi = self.shape_n_phi
+        phi = 2.0*np.pi*(np.arange(nphi, dtype=float)+0.5)/float(nphi)
+        cphi = np.cos(phi)
+        a = k1[..., None]
+        b = k2[..., None]
+        k3 = np.sqrt(a*a + b*b + 2.0*a*b*cphi)
+        sides = np.stack((np.broadcast_to(a, k3.shape), np.broadcast_to(b, k3.shape), k3), axis=0)
+        ordered = np.sort(sides, axis=0)
+        kmin, kmid, kmax = ordered
+        r1 = kmin / np.maximum(kmax, np.finfo(float).tiny)
+        r2 = np.maximum((kmid + kmin - kmax) / np.maximum(kmax, np.finfo(float).tiny), 0.0)
+        actual = self._theta(float(z), r1, r2)
+        ref = self._reference_theta(float(z))
+        modes = np.arange(-self.shape_mode_max, self.shape_mode_max + 1)
+        phase = np.exp(-1j * modes * np.pi / float(nphi))
+        out = {}
+        for name in self._PARAMETERS:
+            delta = actual[name] - ref[name]
+            fft = np.fft.fft(delta, axis=-1) / float(nphi)
+            out[name] = phase.reshape((1,)*k1.ndim + (-1,)) * fft[..., np.mod(modes, nphi)]
+        return modes, out
+
+    @staticmethod
+    def _convolve_shape(shape_modes, shape_coeff, radial_modes, wanted_modes):
+        """Convolve finite shape Fourier modes with radial multipoles."""
+        shape_modes = np.asarray(shape_modes, int)
+        wanted_modes = np.asarray(wanted_modes, int)
+        max_radial = (radial_modes.shape[0] - 1) // 2
+        out = np.zeros((wanted_modes.size,) + radial_modes.shape[1:], complex)
+        for ell, coeff in zip(shape_modes, np.moveaxis(shape_coeff, -1, 0)):
+            index = wanted_modes - int(ell) + max_radial
+            valid = (index >= 0) & (index < radial_modes.shape[0])
+            if np.any(valid):
+                out[valid] += coeff[None, ...] * radial_modes[index[valid]]
+        return out
+
+    def _evaluate_one_redshift(self, modes, k1, k2, z):
+        ext = int(np.max(np.abs(modes))) + self.shape_mode_max
+        radial_modes = np.arange(-ext, ext + 1)
+        base = self._multipoles["base"].evaluate(radial_modes, k1, k2, z)
+        u0_1 = self._models["base"].factor(k1, z)
+        u0_2 = self._models["base"].factor(k2, z)
+        # Extract the one-variable U(k3) Fourier multipoles directly.  Calling
+        # a FactorizedFourierMultipole for a response factor would instead
+        # construct dU(k1)dU(k2)dU(k3), which is not the derivative required
+        # by the product rule.
+        hi = np.maximum(k1, k2)
+        ratio = np.minimum(k1, k2) / hi
+        base_mp = self._multipoles["base"]
+        u0_3 = base_mp._u3_stencil(
+            base_mp._coefficients(float(z)), ext, hi, ratio
+        )[np.abs(radial_modes)]
+        shape_modes, delta = self._shape_delta_modes(k1, k2, z)
+        result = base.copy()
+        for param in self._PARAMETERS:
+            up_1 = self._models[param].factor(k1, z)
+            up_2 = self._models[param].factor(k2, z)
+            response_mp = self._multipoles[param]
+            up3 = response_mp._u3_stencil(
+                response_mp._coefficients(float(z)), ext, hi, ratio
+            )[np.abs(radial_modes)]
+            derivative = (
+                up_1[None, ...] * u0_2[None, ...] * u0_3
+                + u0_1[None, ...] * up_2[None, ...] * u0_3
+                + u0_1[None, ...] * u0_2[None, ...] * up3
+            )
+            result += self._convolve_shape(shape_modes, delta[param], derivative, radial_modes)
+        select = modes + ext
+        return result[select]
+
+    def evaluate(self, mode, k1, k2, z, **params):
+        if params:
+            raise TypeError(f"Unexpected parameter(s): {', '.join(sorted(params))}")
+        scalar = np.isscalar(mode)
+        modes = np.atleast_1d(np.asarray(mode, int))
+        k1, k2, z = np.broadcast_arrays(np.asarray(k1, float), np.asarray(k2, float), np.asarray(z, float))
+        out = np.empty((modes.size,) + k1.shape, complex)
+        for z0 in np.unique(z.ravel()):
+            mask = (z == z0)
+            vals = self._evaluate_one_redshift(modes, k1[mask], k2[mask], float(z0))
+            out.reshape(modes.size, -1)[:, mask.ravel()] = vals.reshape(modes.size, -1)
+        out = np.real_if_close(out, tol=500)
+        return out[0] if scalar else out
 
 
 class BiHalofitBispectrumMultipole3D(BispectrumMultipole3D):
