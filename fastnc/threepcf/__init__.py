@@ -22,7 +22,12 @@ from .spin import (
     component_specs,
 )
 from .zeta_grid import ZetaGrid
-from .bruteforce import BruteForce3PCFConfig, BruteForce3PCFResult, BruteForceX3PCF
+from .bruteforce import (
+    BruteForce3PCFAdaptiveTrial,
+    BruteForce3PCFConfig,
+    BruteForce3PCFResult,
+    BruteForceX3PCF,
+)
 
 __all__ = [
     "ThreePCF",
@@ -44,6 +49,7 @@ __all__ = [
     "independent_epsilons",
     "component_specs",
     "ZetaGrid",
+    "BruteForce3PCFAdaptiveTrial",
     "BruteForce3PCFConfig",
     "BruteForce3PCFResult",
     "BruteForceX3PCF",

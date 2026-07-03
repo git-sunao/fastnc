@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import multiprocessing as mp
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Literal
 import warnings
 
 import numpy as np
@@ -90,15 +90,27 @@ class BruteForce3PCFConfig:
         ``abs(zeta_new-zeta_old) <= atol + rtol * max(abs(zeta_new), abs(zeta_old))``.
 
         The result reports the largest normalized difference.
-    angular_max_refinements
-        Maximum number of grid refinements after the initial grid.
     refine_psi, refine_delta_beta
         Select which Fourier-angle grid dimensions are refined in adaptive
         mode.  At least one must be true when ``angular_mode="adaptive"``.
+    angular_max_refinements
+        Maximum number of grid refinements after the initial grid.  Set to
+        ``None`` to continue refinement until convergence; this is intentionally
+        unbounded and should only be used with an external resource limit.
     adaptive_strict
-        If true, failure to reach the requested tolerance raises
-        :class:`RuntimeError`.  If false, a result with
-        ``angular_converged=False`` is returned after a warning.
+        Legacy failure switch.  If true, failure to reach the requested
+        tolerance raises :class:`RuntimeError`; if false, the final trial is
+        returned after a warning.  ``adaptive_failure`` takes precedence.
+    adaptive_failure
+        Explicit failure policy.  ``"raise"`` raises after a bounded adaptive
+        run fails.  ``"return_last"`` returns the finest trial with
+        ``angular_converged=False``.  ``None`` retains the legacy
+        ``adaptive_strict`` behavior.
+    adaptive_store_trials
+        Controls retained adaptive trial fields in the result: ``"none"`` keeps
+        none, ``"last"`` keeps the finest trial, and ``"all"`` keeps the
+        initial grid and every refinement.  Trial values are full 3PCF arrays,
+        so ``"all"`` can use substantial memory.
     n_processes
         Number of standard-library multiprocessing workers.  ``1`` disables
         process parallelism.  Radial FFTLog tasks are parallelized when
@@ -137,11 +149,13 @@ class BruteForce3PCFConfig:
     angular_mode: str = "fixed"
     angular_rtol: float = 1.0e-3
     angular_atol: float = 0.0
-    angular_max_refinements: int = 4
+    angular_max_refinements: int | None = 4
     angular_refinement_factor: int = 2
     refine_psi: bool = True
     refine_delta_beta: bool = True
     adaptive_strict: bool = True
+    adaptive_failure: Literal["raise", "return_last"] | None = None
+    adaptive_store_trials: Literal["none", "last", "all"] = "none"
 
     n_processes: int = 1
     mp_start_method: str | None = None
@@ -183,8 +197,16 @@ class BruteForce3PCFConfig:
             raise ValueError("angular_rtol and angular_atol must be non-negative.")
         if self.angular_rtol == 0.0 and self.angular_atol == 0.0:
             raise ValueError("At least one of angular_rtol or angular_atol must be positive.")
-        if int(self.angular_max_refinements) < 0:
-            raise ValueError("angular_max_refinements must be >= 0.")
+        if self.angular_max_refinements is not None and int(self.angular_max_refinements) < 0:
+            raise ValueError("angular_max_refinements must be >= 0 or None.")
+        if self.adaptive_failure not in {None, "raise", "return_last"}:
+            raise ValueError(
+                "adaptive_failure must be None, 'raise', or 'return_last'."
+            )
+        if self.adaptive_store_trials not in {"none", "last", "all"}:
+            raise ValueError(
+                "adaptive_store_trials must be 'none', 'last', or 'all'."
+            )
         if int(self.angular_refinement_factor) < 2:
             raise ValueError("angular_refinement_factor must be an integer >= 2.")
         if self.angular_mode == "adaptive" and not (self.refine_psi or self.refine_delta_beta):
@@ -201,6 +223,18 @@ class BruteForce3PCFConfig:
                     f"available methods are {sorted(allowed)}."
                 )
         return self
+
+
+@dataclass(frozen=True)
+class BruteForce3PCFAdaptiveTrial:
+    """One real-space evaluation in an adaptive Fourier-angle sequence."""
+
+    refinement: int
+    n_psi: int
+    n_delta_beta: int
+    value: np.ndarray
+    error_norm: float | None
+    max_abs_change: float | None
 
 
 @dataclass(frozen=True)
@@ -226,6 +260,7 @@ class BruteForce3PCFResult:
     n_delta_beta_used: int
     angular_error_norm: float | None
     angular_max_abs_change: float | None
+    adaptive_trials: tuple[BruteForce3PCFAdaptiveTrial, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1055,7 +1090,14 @@ class BruteForceX3PCF:
         delta_phi: np.ndarray,
         *,
         delta_phi_chunk: int,
-    ) -> tuple[np.ndarray, bool, int, float | None, float | None]:
+    ) -> tuple[
+        np.ndarray,
+        bool,
+        int,
+        float | None,
+        float | None,
+        tuple[BruteForce3PCFAdaptiveTrial, ...],
+    ]:
         """Globally refine Fourier-angle grids until the output converges."""
         cfg = self.config
         n_psi = int(cfg.n_psi)
@@ -1068,9 +1110,24 @@ class BruteForceX3PCF:
             delta_phi_chunk=delta_phi_chunk,
         )
 
+        trials: list[BruteForce3PCFAdaptiveTrial] = []
+        if cfg.adaptive_store_trials == "all":
+            trials.append(
+                BruteForce3PCFAdaptiveTrial(
+                    refinement=0,
+                    n_psi=n_psi,
+                    n_delta_beta=n_delta_beta,
+                    value=previous,
+                    error_norm=None,
+                    max_abs_change=None,
+                )
+            )
+
         last_norm: float | None = None
         last_abs: float | None = None
-        for refinement in range(1, int(cfg.angular_max_refinements) + 1):
+        refinement = 0
+        while cfg.angular_max_refinements is None or refinement < int(cfg.angular_max_refinements):
+            refinement += 1
             next_n_psi = n_psi * int(cfg.angular_refinement_factor) if cfg.refine_psi else n_psi
             next_n_delta_beta = (
                 n_delta_beta * int(cfg.angular_refinement_factor)
@@ -1090,6 +1147,16 @@ class BruteForceX3PCF:
                 rtol=cfg.angular_rtol,
                 atol=cfg.angular_atol,
             )
+            trial = BruteForce3PCFAdaptiveTrial(
+                refinement=refinement,
+                n_psi=next_n_psi,
+                n_delta_beta=next_n_delta_beta,
+                value=current,
+                error_norm=last_norm,
+                max_abs_change=last_abs,
+            )
+            if cfg.adaptive_store_trials == "all":
+                trials.append(trial)
             if cfg.verbose:
                 print(
                     "[BruteForceX3PCF] angular refinement "
@@ -1097,7 +1164,9 @@ class BruteForceX3PCF:
                     f"max normalized change={last_norm:.3e}, max abs change={last_abs:.3e}"
                 )
             if last_norm <= 1.0:
-                return current, True, refinement, last_norm, last_abs
+                if cfg.adaptive_store_trials == "last":
+                    trials = [trial]
+                return current, True, refinement, last_norm, last_abs, tuple(trials)
 
             previous = current
             n_psi = next_n_psi
@@ -1110,10 +1179,29 @@ class BruteForceX3PCF:
             f"n_delta_beta={self._n_delta_beta_current}; "
             f"max normalized change={last_norm!r}, max abs change={last_abs!r}."
         )
-        if cfg.adaptive_strict:
+        failure = cfg.adaptive_failure
+        if failure is None:
+            failure = "raise" if cfg.adaptive_strict else "return_last"
+            warn_on_return = not cfg.adaptive_strict
+        else:
+            warn_on_return = False
+        if failure == "raise":
             raise RuntimeError(message)
-        warnings.warn(message, RuntimeWarning, stacklevel=2)
-        return previous, False, int(cfg.angular_max_refinements), last_norm, last_abs
+        if warn_on_return:
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+        if cfg.adaptive_store_trials == "last":
+            trials = [
+                BruteForce3PCFAdaptiveTrial(
+                    refinement=refinement,
+                    n_psi=n_psi,
+                    n_delta_beta=n_delta_beta,
+                    value=previous,
+                    error_norm=last_norm,
+                    max_abs_change=last_abs,
+                )
+            ]
+        return previous, False, refinement, last_norm, last_abs, tuple(trials)
 
     def compute(
         self,
@@ -1166,8 +1254,9 @@ class BruteForceX3PCF:
             refinements = 0
             error_norm = None
             error_abs = None
+            adaptive_trials: tuple[BruteForce3PCFAdaptiveTrial, ...] = ()
         else:
-            value, converged, refinements, error_norm, error_abs = self._compute_adaptive(
+            value, converged, refinements, error_norm, error_abs, adaptive_trials = self._compute_adaptive(
                 theta1,
                 theta2,
                 delta_phi,
@@ -1196,4 +1285,5 @@ class BruteForceX3PCF:
             n_delta_beta_used=self._n_delta_beta_current,
             angular_error_norm=error_norm,
             angular_max_abs_change=error_abs,
+            adaptive_trials=adaptive_trials,
         )
