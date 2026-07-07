@@ -24,6 +24,10 @@ from .regulator import Ell3HighPassRegulator
 from .halofit import Halofit
 from .analytic import (
     standard_linear_growth, eisenstein_hu_no_wiggle_pklin, fourier_power_kernel,
+    PowerLawAngularKernelTableConfig, PowerLawAngularKernelTable,
+    FFTLogComponent, FFTLogCoefficientCache,
+    SemiAnalyticMultipoleTerm, SeparableMultipoleTerm, DirectFourierTerm,
+    CompositeSemiAnalyticBispectrumMultipole3D, TreeBispectrumMultipole3D,
 )
 
 from .presets import (
@@ -51,6 +55,10 @@ __all__ = [
     "InterpolatedBispectrumMultipole3D",
     "Ell3HighPassRegulator", "Halofit",
     "standard_linear_growth", "eisenstein_hu_no_wiggle_pklin", "fourier_power_kernel",
+    "PowerLawAngularKernelTableConfig", "PowerLawAngularKernelTable",
+    "FFTLogComponent", "FFTLogCoefficientCache",
+    "SemiAnalyticMultipoleTerm", "SeparableMultipoleTerm", "DirectFourierTerm",
+    "CompositeSemiAnalyticBispectrumMultipole3D", "TreeBispectrumMultipole3D",
     "OneHaloProductBispectrum3D", "NFWOneHaloBispectrum3D",
     "default_wmap_like_cosmology", "simple_linear_growth",
     "simple_debug_pklin", "eisenstein_hu_like_pklin",
