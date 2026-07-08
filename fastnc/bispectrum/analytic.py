@@ -181,13 +181,53 @@ class PowerLawAngularKernelTable:
             raise ValueError("r is outside the table domain")
         return self._interpolate(self._build(int(mode), int(shift)), r)
 
-    def evaluate_modes(self, modes, r, *, shift: int = 0):
-        """Return a stack with shape ``(n_mode, n_nu) + r.shape``."""
+    def evaluate_modes(
+        self,
+        modes,
+        r,
+        *,
+        shift: int = 0,
+        unique: bool = False,
+        unique_r=None,
+        inverse=None,
+    ):
+        """Return a stack with shape ``(n_mode, n_nu) + r.shape``.
+
+        Parameters
+        ----------
+        unique
+            When ``True``, interpolate the angular kernels only at the unique
+            values of ``r`` and restore the original layout afterwards.
+        unique_r, inverse
+            Optional precomputed ``np.unique(r.ravel(), return_inverse=True)``
+            result.  Supplying both avoids recomputing the ratio grouping when
+            several component/shift groups share the same geometry.
+        """
         modes = np.atleast_1d(np.asarray(modes, dtype=int))
-        return np.stack(
-            [self.evaluate(mode, r, shift=shift) for mode in modes],
+        r = np.asarray(r, dtype=float)
+        if not unique or r.ndim == 0:
+            return np.stack(
+                [self.evaluate(mode, r, shift=shift) for mode in modes],
+                axis=0,
+            )
+
+        if (unique_r is None) != (inverse is None):
+            raise ValueError("unique_r and inverse must be supplied together")
+        if unique_r is None:
+            unique_r, inverse = np.unique(r.ravel(), return_inverse=True)
+        else:
+            unique_r = np.asarray(unique_r, dtype=float)
+            inverse = np.asarray(inverse, dtype=int)
+            if inverse.shape != (r.size,):
+                raise ValueError("inverse must have shape (r.size,)")
+
+        values_unique = np.stack(
+            [self.evaluate(mode, unique_r, shift=shift) for mode in modes],
             axis=0,
         )
+        values = values_unique[:, :, inverse]
+        return values.reshape((modes.size, self.nu.size) + r.shape)
+
 
 
 @dataclass(frozen=True)
@@ -414,21 +454,44 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
                     dtype=complex,
                 ).ravel()
 
+        # Geometry is independent of the FFTLog component and of the shift
+        # p.  Build it once per chunk.  In particular, retain the unique r
+        # values so that K_L^(nu+p)(r) is interpolated only once per distinct
+        # ratio, not once per pixel.
+        geometry_chunks = []
+        for start in range(0, n_point, chunk_size):
+            stop = min(start + chunk_size, n_point)
+            k1_chunk = flat_k1[start:stop]
+            k2_chunk = flat_k2[start:stop]
+            k = np.hypot(k1_chunk, k2_chunk)
+            r = np.minimum(k1_chunk, k2_chunk) / k
+            unique_r, r_inverse = np.unique(r, return_inverse=True)
+            print(unique_r.shape)
+            geometry_chunks.append(
+                (start, stop, k1_chunk, k2_chunk, k, r, unique_r, r_inverse)
+            )
+
         for (_, shift), terms in separable_groups.items():
             component = terms[0].component
             coeff, nu = self.coefficient_cache.get(component, z)
             table = self._ensure_kernel_table(component)
 
-            for start in range(0, n_point, chunk_size):
-                stop = min(start + chunk_size, n_point)
-                k1_chunk = flat_k1[start:stop]
-                k2_chunk = flat_k2[start:stop]
-                k = np.hypot(k1_chunk, k2_chunk)
+            for start, stop, k1_chunk, k2_chunk, k, r, unique_r, r_inverse in geometry_chunks:
                 x1 = k1_chunk / k
                 x2 = k2_chunk / k
-                r = np.minimum(k1_chunk, k2_chunk) / k
 
-                kernels = table.evaluate_modes(modes, r, shift=shift)
+                # ``unique=True`` evaluates the interpolation at unique r
+                # values and restores the original chunk ordering.  The
+                # inverse map is constructed above once and reused for every
+                # component/shift group in this call.
+                kernels = table.evaluate_modes(
+                    modes,
+                    r,
+                    shift=shift,
+                    unique=True,
+                    unique_r=unique_r,
+                    inverse=r_inverse,
+                )
                 powers = k[None, :] ** nu[:, None]
                 core = np.einsum(
                     "n,nc,lnc->lc",
