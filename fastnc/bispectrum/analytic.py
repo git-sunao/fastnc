@@ -369,20 +369,98 @@ class FFTLogComponent:
 
 
 class FFTLogCoefficientCache:
-    """In-memory cache of FFTLog coefficients ``w_n(z)`` by component."""
+    """In-memory cache of FFTLog coefficients ``w_n(z)`` by component.
+
+    Coefficients are stored independently for every scalar redshift.  The
+    :meth:`get_many` and :meth:`warm` helpers provide an explicit batch API
+    for line-of-sight grids while retaining :meth:`get` as the scalar fast
+    path used by ordinary multipole evaluation.
+    """
 
     def __init__(self):
         self._coefficients: dict[tuple[int, float], tuple[np.ndarray, np.ndarray]] = {}
 
+    @staticmethod
+    def _scalar_redshift(z):
+        value = np.asarray(z, dtype=float)
+        if value.ndim != 0:
+            raise ValueError(
+                "FFTLogCoefficientCache.get requires a scalar redshift; "
+                "use get_many or warm for a redshift array"
+            )
+        return float(value)
+
     def get(self, component: FFTLogComponent, z):
-        key = (id(component), float(np.asarray(z)))
+        z_value = self._scalar_redshift(z)
+        key = (id(component), z_value)
         cached = self._coefficients.get(key)
         if cached is None:
-            values = np.asarray(component.evaluator(component.k_grid, z), dtype=float)
-            coeff, nu = power_law_fftlog_coefficients(component.k_grid, values, component.fftlog_config)
-            cached = (np.asarray(coeff, dtype=complex), np.asarray(nu, dtype=complex))
+            values = np.asarray(
+                component.evaluator(component.k_grid, z_value),
+                dtype=float,
+            )
+            try:
+                values = np.broadcast_to(values, component.k_grid.shape)
+            except ValueError as error:
+                raise ValueError(
+                    "FFTLog component evaluator must return values "
+                    "broadcastable to component.k_grid"
+                ) from error
+            coeff, nu = power_law_fftlog_coefficients(
+                component.k_grid,
+                values,
+                component.fftlog_config,
+            )
+            cached = (
+                np.asarray(coeff, dtype=complex),
+                np.asarray(nu, dtype=complex),
+            )
             self._coefficients[key] = cached
         return cached
+
+    def get_many(self, component: FFTLogComponent, z_values):
+        """Return cached coefficients on a redshift grid.
+
+        Parameters
+        ----------
+        component
+            FFTLog target whose coefficients are requested.
+        z_values
+            Scalar or array-like redshifts.  The returned leading dimensions
+            follow ``np.asarray(z_values).shape``.
+
+        Returns
+        -------
+        coefficients, nu
+            ``coefficients`` has shape ``z_values.shape + (n_nu,)`` and
+            contains ``w_n(z)``.  ``nu`` is the common one-dimensional FFTLog
+            exponent grid.
+        """
+        z_array = np.asarray(z_values, dtype=float)
+        flat_z = z_array.reshape(-1)
+        if flat_z.size == 0:
+            raise ValueError("z_values must contain at least one redshift")
+
+        coefficients = []
+        nu_reference = None
+        for z_value in flat_z:
+            coeff, nu = self.get(component, float(z_value))
+            if nu_reference is None:
+                nu_reference = nu
+            elif not np.array_equal(nu, nu_reference):
+                raise RuntimeError(
+                    "FFTLog exponent grid changed across redshift for one component"
+                )
+            coefficients.append(coeff)
+
+        stacked = np.stack(coefficients, axis=0)
+        stacked = stacked.reshape(z_array.shape + (stacked.shape[-1],))
+        return stacked, nu_reference
+
+    def warm(self, component: FFTLogComponent, z_values):
+        """Populate coefficient entries for all supplied redshifts."""
+        self.get_many(component, z_values)
+        return self
 
     def clear(self):
         self._coefficients.clear()
@@ -619,24 +697,35 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         Parameters
         ----------
         z
-            Redshift at which FFTLog coefficients are required.
+            Scalar or array-like redshifts at which FFTLog coefficients are
+            required.  Passing the LOS redshift grid warms all ``w_n(z)``
+            entries before projection.
         modes
             Fourier modes to precompute.
         shifts
             Optional iterable of integer kernel shifts.  If omitted, the
             shifts required by this model's separable terms are used.
+
+        Returns
+        -------
+        self
+            Returned for convenient method chaining.
         """
+        z_values = np.asarray(z, dtype=float)
+        if z_values.size == 0:
+            raise ValueError("z must contain at least one redshift")
         modes = np.atleast_1d(np.asarray(modes, dtype=int))
         required = (
             {int(term.p) for term in self.terms if isinstance(term, SeparableMultipoleTerm)}
             if shifts is None else {int(shift) for shift in shifts}
         )
         for component in self.components:
-            self.coefficient_cache.get(component, z)
+            self.coefficient_cache.warm(component, z_values)
             table = self._ensure_kernel_table(component)
             for shift in required:
                 for mode in modes:
                     table._build(int(mode), int(shift))
+        return self
 
     def evaluate(self, mode, k1, k2, z, **params):
         values = self.evaluate_modes(np.atleast_1d(np.asarray(mode, dtype=int)), k1, k2, z, **params)
