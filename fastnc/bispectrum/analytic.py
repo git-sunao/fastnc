@@ -231,6 +231,120 @@ class PowerLawAngularKernelTable:
 
 
 @dataclass(frozen=True)
+class TensorProductGeometryCache:
+    r"""Geometry shared by evaluations on a tensor-product ``(k1, k2)`` grid.
+
+    The cache is independent of redshift and of the physical bispectrum model.
+    It stores the full geometric quantities that cannot generally be compressed,
+    together with an exact compression of the ratio
+
+    .. math::
+       r = \min(k_1,k_2)/\sqrt{k_1^2+k_2^2}
+
+    when the two axes are the same logarithmically spaced grid.  In that case
+    ``r`` depends only on the index separation ``|i-j|`` and the angular
+    kernels need be evaluated at only ``n_k`` ratios rather than at every
+    pixel of the two-dimensional grid.
+
+    Instances are intended to be retained by callers and passed to
+    :meth:`CompositeSemiAnalyticBispectrumMultipole3D.evaluate_modes_grid`
+    for repeated redshift or mode evaluations.
+    """
+
+    k1_axis: np.ndarray
+    k2_axis: np.ndarray
+    k: np.ndarray
+    x1: np.ndarray
+    x2: np.ndarray
+    r: np.ndarray
+    r_unique: np.ndarray | None
+    r_inverse: np.ndarray | None
+    r_groups: tuple[np.ndarray, ...] | None
+    has_exact_ratio_groups: bool
+
+    @classmethod
+    def from_axes(cls, k1_axis, k2_axis):
+        k1_axis = np.asarray(k1_axis, dtype=float)
+        k2_axis = np.asarray(k2_axis, dtype=float)
+        if k1_axis.ndim != 1 or k2_axis.ndim != 1:
+            raise ValueError("k1_axis and k2_axis must be one-dimensional")
+        if k1_axis.size == 0 or k2_axis.size == 0:
+            raise ValueError("k1_axis and k2_axis must be non-empty")
+        if np.any(k1_axis <= 0.0) or np.any(k2_axis <= 0.0):
+            raise ValueError("tensor-product axes must be strictly positive")
+        if np.any(np.diff(k1_axis) <= 0.0) or np.any(np.diff(k2_axis) <= 0.0):
+            raise ValueError("tensor-product axes must be strictly increasing")
+
+        k1 = k1_axis[:, None]
+        k2 = k2_axis[None, :]
+        k = np.hypot(k1, k2)
+        x1 = k1 / k
+        x2 = k2 / k
+
+        same_axis = (
+            k1_axis.shape == k2_axis.shape
+            and np.array_equal(k1_axis, k2_axis)
+        )
+        is_log_uniform = False
+        dln = None
+        if same_axis and k1_axis.size > 1:
+            log_axis = np.log(k1_axis)
+            dln_values = np.diff(log_axis)
+            is_log_uniform = np.allclose(
+                dln_values,
+                dln_values[0],
+                rtol=1.0e-10,
+                atol=1.0e-13,
+            )
+            if is_log_uniform:
+                dln = float(dln_values[0])
+
+        if same_axis and is_log_uniform:
+            # For k_i=k_0 exp(i Delta),
+            # r_ij=[1+exp(2 |i-j| Delta)]^{-1/2}.  This construction is
+            # exact at the level of the grid definition, avoiding fragile
+            # floating-point equality grouping of the full r array.
+            n_axis = k1_axis.size
+            separation = np.abs(
+                np.arange(n_axis)[:, None] - np.arange(n_axis)[None, :]
+            )
+            r_unique = 1.0 / np.sqrt(
+                1.0 + np.exp(2.0 * dln * np.arange(n_axis, dtype=float))
+            )
+            r = r_unique[separation]
+            r_inverse = separation.ravel()
+            r_groups = tuple(
+                np.flatnonzero(r_inverse == index)
+                for index in range(r_unique.size)
+            )
+            has_exact_ratio_groups = True
+        else:
+            r = np.minimum(k1, k2) / k
+            r_unique = None
+            r_inverse = None
+            r_groups = None
+            has_exact_ratio_groups = False
+
+        return cls(
+            k1_axis=k1_axis,
+            k2_axis=k2_axis,
+            k=k,
+            x1=x1,
+            x2=x2,
+            r=r,
+            r_unique=r_unique,
+            r_inverse=r_inverse,
+            r_groups=r_groups,
+            has_exact_ratio_groups=has_exact_ratio_groups,
+        )
+
+    @property
+    def shape(self):
+        return self.k.shape
+
+
+
+@dataclass(frozen=True)
 class FFTLogComponent:
     """A named reusable FFTLog target :math:`W(k;z)`.
 
@@ -373,6 +487,132 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         self.coefficient_cache.clear()
         self._kernel_tables.clear()
 
+    def prepare_grid(self, k1_axis, k2_axis):
+        """Prepare reusable geometry for a tensor-product Fourier grid.
+
+        The returned :class:`TensorProductGeometryCache` is redshift
+        independent.  It should be reused when evaluating the same axes at
+        multiple redshifts or for several physical models.
+        """
+        return TensorProductGeometryCache.from_axes(k1_axis, k2_axis)
+
+    @staticmethod
+    def _resolve_grid_geometry(k1_axis, k2_axis, geometry):
+        if geometry is None:
+            if k1_axis is None or k2_axis is None:
+                raise ValueError(
+                    "k1_axis and k2_axis are required when geometry is not supplied"
+                )
+            return TensorProductGeometryCache.from_axes(k1_axis, k2_axis)
+        if not isinstance(geometry, TensorProductGeometryCache):
+            raise TypeError("geometry must be a TensorProductGeometryCache")
+        if k1_axis is not None and not np.array_equal(
+            np.asarray(k1_axis, dtype=float), geometry.k1_axis
+        ):
+            raise ValueError("k1_axis does not match the supplied geometry")
+        if k2_axis is not None and not np.array_equal(
+            np.asarray(k2_axis, dtype=float), geometry.k2_axis
+        ):
+            raise ValueError("k2_axis does not match the supplied geometry")
+        return geometry
+
+    def evaluate_modes_grid(
+        self,
+        modes,
+        k1_axis=None,
+        k2_axis=None,
+        z=None,
+        *,
+        geometry: TensorProductGeometryCache | None = None,
+        chunk_size=4096,
+        **params,
+    ):
+        """Evaluate modes on a tensor-product grid.
+
+        This generic implementation preserves the arbitrary-term API.  Models
+        with additional algebraic structure may override it with a specialised
+        axis-aware implementation.  ``TreeBispectrumMultipole3D`` does so in
+        order to reuse one-dimensional spectrum evaluations and exact
+        index-separation ratio groups.
+        """
+        if z is None:
+            raise ValueError("z is required")
+        geometry = self._resolve_grid_geometry(k1_axis, k2_axis, geometry)
+        return self.evaluate_modes(
+            modes,
+            geometry.k1_axis[:, None],
+            geometry.k2_axis[None, :],
+            z,
+            chunk_size=chunk_size,
+            **params,
+        )
+
+    def _component_cores_grid(
+        self,
+        modes,
+        component,
+        shifts,
+        geometry: TensorProductGeometryCache,
+        z,
+    ):
+        r"""Evaluate shared FFTLog contractions for a tensor-product grid.
+
+        For each requested shift this returns
+
+        .. math::
+           S_{L,p}(k_1,k_2;z)
+           = \sum_n w_n(z) k^{\nu_n}
+             \mathcal K_L^{(\nu_n+p)}(r).
+
+        The exact index-separation grouping is used whenever ``geometry`` was
+        prepared from identical logarithmic axes.  It avoids both repeated
+        interpolation at equal ratios and the large temporary tensor with
+        shape ``(n_mode, n_nu, n_k1, n_k2)``.
+        """
+        modes = np.atleast_1d(np.asarray(modes, dtype=int))
+        shifts = tuple(sorted({int(shift) for shift in shifts}))
+        coeff, nu = self.coefficient_cache.get(component, z)
+        table = self._ensure_kernel_table(component)
+        n_mode = modes.size
+        n_point = geometry.k.size
+
+        # This factor is independent of the angular-kernel shift and is
+        # deliberately formed once for all requested p values.
+        powers = geometry.k.reshape(1, n_point) ** nu.reshape(-1, 1)
+        cores = {}
+
+        if geometry.has_exact_ratio_groups:
+            assert geometry.r_unique is not None
+            assert geometry.r_groups is not None
+            for shift in shifts:
+                kernels_unique = table.evaluate_modes(
+                    modes,
+                    geometry.r_unique,
+                    shift=shift,
+                )
+                core_flat = np.empty((n_mode, n_point), dtype=complex)
+                for ratio_index, point_index in enumerate(geometry.r_groups):
+                    left = kernels_unique[:, :, ratio_index] * coeff[None, :]
+                    core_flat[:, point_index] = left @ powers[:, point_index]
+                cores[shift] = core_flat.reshape((n_mode,) + geometry.shape)
+            return cores
+
+        # Fallback for arbitrary axes: retain the fully vectorized route.
+        # Exact r compression is intentionally not inferred from floating
+        # values, because rounding-based grouping would mix interpolation and
+        # geometry errors.
+        for shift in shifts:
+            kernels = table.evaluate_modes(modes, geometry.r, shift=shift)
+            core = np.einsum(
+                "n,nc,lnc->lc",
+                coeff,
+                powers,
+                kernels.reshape((n_mode, nu.size, n_point)),
+                optimize=True,
+            )
+            cores[shift] = core.reshape((n_mode,) + geometry.shape)
+        return cores
+
     def warm_cache(self, *, z, modes, shifts=None):
         """Precompute FFTLog coefficients and requested angular-kernel tables.
 
@@ -466,7 +706,6 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
             k = np.hypot(k1_chunk, k2_chunk)
             r = np.minimum(k1_chunk, k2_chunk) / k
             unique_r, r_inverse = np.unique(r, return_inverse=True)
-            print(unique_r.shape)
             geometry_chunks.append(
                 (start, stop, k1_chunk, k2_chunk, k, r, unique_r, r_inverse)
             )
@@ -620,3 +859,145 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
         self.linear_power = linear_power
         self.k_grid = np.asarray(k_grid, dtype=float)
         self.regularize_squeezed = bool(regularize_squeezed)
+
+        self._linear_power_component = component
+
+    def warm_cache(self, *, z, modes, shifts=None):
+        """Warm only non-negative modes for the parity-even tree model."""
+        modes = np.unique(np.abs(np.atleast_1d(np.asarray(modes, dtype=int))))
+        return super().warm_cache(z=z, modes=modes, shifts=shifts)
+
+    def evaluate_modes(self, modes, k1, k2, z, *, chunk_size=4096, **params):
+        """Generic-array evaluation exploiting ``B_{-L}=B_L`` for tree level."""
+        modes = np.atleast_1d(np.asarray(modes, dtype=int))
+        work_modes = np.unique(np.abs(modes))
+        work = super().evaluate_modes(
+            work_modes,
+            k1,
+            k2,
+            z,
+            chunk_size=chunk_size,
+            **params,
+        )
+        inverse = np.searchsorted(work_modes, np.abs(modes))
+        return work[inverse]
+
+    @staticmethod
+    def _axis_values(evaluator, axis, z):
+        values = np.asarray(evaluator(axis, z), dtype=float)
+        try:
+            values = np.broadcast_to(values, axis.shape)
+        except ValueError as error:
+            raise ValueError(
+                "linear_power must return values broadcastable to its k input"
+            ) from error
+        return np.asarray(values)
+
+    def _axis_divided_difference(self, geometry, p1_axis, p2_axis, z):
+        """Return ``[P(k1)-P(k2)]/(k1^2-k2^2)`` on the prepared grid."""
+        k1 = geometry.k1_axis[:, None]
+        k2 = geometry.k2_axis[None, :]
+        p1 = p1_axis[:, None]
+        p2 = p2_axis[None, :]
+        denominator = k1 * k1 - k2 * k2
+        with np.errstate(divide="ignore", invalid="ignore"):
+            divided = (p1 - p2) / denominator
+
+        diagonal = np.isclose(k1, k2, rtol=1.0e-12, atol=0.0)
+        if np.any(diagonal):
+            # This is the continuous diagonal limit
+            # D_P(k,k) = [2k]^{-1} dP/dk.  The derivative is evaluated only
+            # once on the k1 axis, rather than once per diagonal grid point.
+            eps = 1.0e-4
+            kp = geometry.k1_axis * np.exp(eps)
+            km = geometry.k1_axis * np.exp(-eps)
+            derivative = (
+                self._axis_values(self.linear_power, kp, z)
+                - self._axis_values(self.linear_power, km, z)
+            ) / (kp - km)
+            diagonal_limit = derivative[:, None] / (2.0 * k1)
+            divided = np.where(diagonal, diagonal_limit, divided)
+        return divided
+
+    def evaluate_modes_grid(
+        self,
+        modes,
+        k1_axis=None,
+        k2_axis=None,
+        z=None,
+        *,
+        geometry: TensorProductGeometryCache | None = None,
+        **params,
+    ):
+        """Fast tree-level evaluation on a tensor-product Fourier grid.
+
+        The method evaluates ``P(k1;z)`` and ``P(k2;z)`` only on their
+        one-dimensional axes, reuses the exact ratio grouping for identical
+        logarithmic axes, and assembles the hard-coded tree terms in a fused
+        expression.  It returns an array with shape
+        ``(len(modes), len(k1_axis), len(k2_axis))``.
+        """
+        if z is None:
+            raise ValueError("z is required")
+        geometry = self._resolve_grid_geometry(k1_axis, k2_axis, geometry)
+        modes = np.atleast_1d(np.asarray(modes, dtype=int))
+        work_modes = np.unique(np.abs(modes))
+
+        p1_axis = self._axis_values(self.linear_power, geometry.k1_axis, z)
+        p2_axis = self._axis_values(self.linear_power, geometry.k2_axis, z)
+        p1 = p1_axis[:, None]
+        p2 = p2_axis[None, :]
+        n_mode = work_modes.size
+        result = np.zeros((n_mode,) + geometry.shape, dtype=complex)
+
+        # Finite Fourier contribution from the 12 permutation.  These terms
+        # require no FFTLog expansion and are assembled directly from the
+        # axis-cached power spectra.
+        p12 = p1 * p2
+        k1 = geometry.k1_axis[:, None]
+        k2 = geometry.k2_axis[None, :]
+        ratio = k1 / k2
+        abs_modes = np.abs(work_modes)
+        result[abs_modes == 0] += (12.0 / 7.0) * p12
+        result[abs_modes == 1] += 0.5 * (ratio + 1.0 / ratio) * p12
+        result[abs_modes == 2] += (1.0 / 7.0) * p12
+
+        shifts = (0, 2, -2)
+        cores = self._component_cores_grid(
+            work_modes,
+            self._linear_power_component,
+            shifts,
+            geometry,
+            z,
+        )
+
+        # The p=0,+2 23 and 31 pieces share the same core for a fixed p.
+        for shift in (0, 2):
+            prefactor = (
+                2.0 * _a23(shift, geometry.x1, geometry.x2) * p2
+                + 2.0 * _a23(shift, geometry.x2, geometry.x1) * p1
+            )
+            result += prefactor[None, :, :] * cores[shift]
+
+        if self.regularize_squeezed:
+            ureg = (
+                (geometry.x1 * geometry.x1 - geometry.x2 * geometry.x2) ** 2
+                / (14.0 * geometry.x1 * geometry.x1 * geometry.x2 * geometry.x2)
+            )
+            dp = self._axis_divided_difference(geometry, p1_axis, p2_axis, z)
+            pbar = 0.5 * (p1 + p2)
+            k1sq = k1 * k1
+            k2sq = k2 * k2
+            vreg = 2.0 * pbar - (
+                k1sq * k1sq + 5.0 * k1sq * k2sq + k2sq * k2sq
+            ) / (geometry.k * geometry.k) * dp
+            result += (ureg * vreg)[None, :, :] * cores[-2]
+        else:
+            prefactor = (
+                2.0 * _a23(-2, geometry.x1, geometry.x2) * p2
+                + 2.0 * _a23(-2, geometry.x2, geometry.x1) * p1
+            )
+            result += prefactor[None, :, :] * cores[-2]
+
+        inverse = np.searchsorted(work_modes, np.abs(modes))
+        return result[inverse]

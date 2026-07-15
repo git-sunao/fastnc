@@ -25,6 +25,7 @@ from .halofit import Halofit
 from .analytic import (
     standard_linear_growth, eisenstein_hu_no_wiggle_pklin, fourier_power_kernel,
     PowerLawAngularKernelTableConfig, PowerLawAngularKernelTable,
+    TensorProductGeometryCache,
     FFTLogComponent, FFTLogCoefficientCache,
     SemiAnalyticMultipoleTerm, SeparableMultipoleTerm, DirectFourierTerm,
     CompositeSemiAnalyticBispectrumMultipole3D, TreeBispectrumMultipole3D,
@@ -56,6 +57,7 @@ __all__ = [
     "Ell3HighPassRegulator", "Halofit",
     "standard_linear_growth", "eisenstein_hu_no_wiggle_pklin", "fourier_power_kernel",
     "PowerLawAngularKernelTableConfig", "PowerLawAngularKernelTable",
+    "TensorProductGeometryCache",
     "FFTLogComponent", "FFTLogCoefficientCache",
     "SemiAnalyticMultipoleTerm", "SeparableMultipoleTerm", "DirectFourierTerm",
     "CompositeSemiAnalyticBispectrumMultipole3D", "TreeBispectrumMultipole3D",
