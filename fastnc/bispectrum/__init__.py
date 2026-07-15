@@ -29,6 +29,9 @@ from .analytic import (
     FFTLogComponent, FFTLogCoefficientCache,
     SemiAnalyticMultipoleTerm, SeparableMultipoleTerm, DirectFourierTerm,
     CompositeSemiAnalyticBispectrumMultipole3D, TreeBispectrumMultipole3D,
+    QuadraticBiasBispectrumMultipole3D, TidalBiasBispectrumMultipole3D,
+    LinearCombinationBispectrumMultipole3D, TracerBias,
+    SPTMultiTracerBispectrumMultipole3D, SPTGalaxyBispectrumMultipole3D,
 )
 
 from .presets import (
@@ -61,6 +64,9 @@ __all__ = [
     "FFTLogComponent", "FFTLogCoefficientCache",
     "SemiAnalyticMultipoleTerm", "SeparableMultipoleTerm", "DirectFourierTerm",
     "CompositeSemiAnalyticBispectrumMultipole3D", "TreeBispectrumMultipole3D",
+    "QuadraticBiasBispectrumMultipole3D", "TidalBiasBispectrumMultipole3D",
+    "LinearCombinationBispectrumMultipole3D", "TracerBias",
+    "SPTMultiTracerBispectrumMultipole3D", "SPTGalaxyBispectrumMultipole3D",
     "OneHaloProductBispectrum3D", "NFWOneHaloBispectrum3D",
     "default_wmap_like_cosmology", "simple_linear_growth",
     "simple_debug_pklin", "eisenstein_hu_like_pklin",

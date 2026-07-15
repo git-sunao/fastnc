@@ -1001,3 +1001,431 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
 
         inverse = np.searchsorted(work_modes, np.abs(modes))
         return result[inverse]
+
+# -----------------------------------------------------------------------------
+# Predefined physical models: quadratic and tidal galaxy-bias contributions
+# -----------------------------------------------------------------------------
+
+def _value_at_z(value, z):
+    """Evaluate a scalar bias/coefficient or a callable ``value(z)``."""
+    return value(z) if callable(value) else value
+
+
+def _pair_coefficients(coefficients):
+    """Normalize pair coefficients to the ordered tuple ``(12, 23, 31)``."""
+    if isinstance(coefficients, Mapping):
+        unknown = set(coefficients) - {"12", "23", "31"}
+        if unknown:
+            raise ValueError(f"Unknown pair coefficient(s): {sorted(unknown)}")
+        return tuple(coefficients.get(pair, 0.0) for pair in ("12", "23", "31"))
+    values = tuple(coefficients)
+    if len(values) != 3:
+        raise ValueError("pair_coefficients must contain (C12, C23, C31)")
+    return values
+
+
+def _bias12_direct_coefficient(mode, linear_power, coefficient, fourier_factor):
+    target = abs(int(mode))
+
+    def evaluate(requested_mode, k1, k2, z):
+        if abs(int(requested_mode)) != target:
+            return np.zeros(np.broadcast(k1, k2).shape, dtype=float)
+        return (
+            _value_at_z(coefficient, z)
+            * fourier_factor
+            * linear_power(k1, z)
+            * linear_power(k2, z)
+        )
+
+    return evaluate
+
+
+def _t23(p, x1, x2):
+    r"""Coefficient in ``S23=sum_p T23^(p) s^p``.
+
+    Here ``x_i=k_i/sqrt(k1**2+k2**2)`` and ``p in {+2,0,-2}``.
+    """
+    if p == 2:
+        return 1.0 / (4.0 * x2**2)
+    if p == 0:
+        return (x2**2 - 3.0 * x1**2) / (6.0 * x2**2)
+    if p == -2:
+        return (x1**2 - x2**2) ** 2 / (4.0 * x2**2)
+    raise ValueError("tidal shifts are p=0,+/-2")
+
+
+class QuadraticBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
+    r"""Semi-analytic multipoles of the local quadratic-bias contribution.
+
+    The represented bispectrum is
+
+    .. math::
+       B_{b_2}=C_{12}P_1P_2+C_{23}P_2P_3+C_{31}P_3P_1.
+
+    The coefficients may be scalars or callables ``C_ij(z)``.  They include
+    every physical prefactor, such as ``b2`` and the linear-bias factors on the
+    two first-order legs.  This class intentionally contains no matter-tree or
+    tidal contribution, so it can be tested and combined independently.
+    """
+
+    def __init__(self, linear_power, k_grid, *, pair_coefficients=(0.0, 0.0, 0.0),
+                 fftlog_config: PowerLawFFTLogConfig | None = None,
+                 angular_kernel_config: PowerLawAngularKernelTableConfig | None = None):
+        c12, c23, c31 = _pair_coefficients(pair_coefficients)
+        component = FFTLogComponent(
+            name="linear_power_quadratic_bias",
+            k_grid=np.asarray(k_grid, dtype=float),
+            evaluator=linear_power,
+            fftlog_config=fftlog_config or PowerLawFFTLogConfig(),
+        )
+        terms = [
+            DirectFourierTerm(
+                "quadratic-bias-12-L0",
+                _bias12_direct_coefficient(0, linear_power, c12, 1.0),
+            ),
+            SeparableMultipoleTerm(
+                "quadratic-bias-23",
+                component,
+                0,
+                lambda x1, x2: np.ones(np.broadcast(x1, x2).shape),
+                lambda k1, k2, z: _value_at_z(c23, z) * linear_power(k2, z),
+            ),
+            SeparableMultipoleTerm(
+                "quadratic-bias-31",
+                component,
+                0,
+                lambda x1, x2: np.ones(np.broadcast(x1, x2).shape),
+                lambda k1, k2, z: _value_at_z(c31, z) * linear_power(k1, z),
+            ),
+        ]
+        super().__init__(terms, angular_kernel_config=angular_kernel_config)
+        self.linear_power = linear_power
+        self.k_grid = np.asarray(k_grid, dtype=float)
+        self.pair_coefficients = (c12, c23, c31)
+
+
+class TidalBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
+    r"""Semi-analytic multipoles of the tidal-bias contribution.
+
+    The represented bispectrum is
+
+    .. math::
+       B_{K^2}=C_{12}S_{12}P_1P_2
+                +C_{23}S_{23}P_2P_3
+                +C_{31}S_{31}P_3P_1.
+
+    ``C_ij`` contains the complete physical prefactor, conventionally
+    ``2 b_K2`` times the linear-bias factors on the first-order legs.
+    """
+
+    def __init__(self, linear_power, k_grid, *, pair_coefficients=(0.0, 0.0, 0.0),
+                 fftlog_config: PowerLawFFTLogConfig | None = None,
+                 angular_kernel_config: PowerLawAngularKernelTableConfig | None = None):
+        c12, c23, c31 = _pair_coefficients(pair_coefficients)
+        component = FFTLogComponent(
+            name="linear_power_tidal_bias",
+            k_grid=np.asarray(k_grid, dtype=float),
+            evaluator=linear_power,
+            fftlog_config=fftlog_config or PowerLawFFTLogConfig(),
+        )
+        terms = [
+            DirectFourierTerm(
+                "tidal-bias-12-L0",
+                _bias12_direct_coefficient(0, linear_power, c12, 1.0 / 6.0),
+            ),
+            DirectFourierTerm(
+                "tidal-bias-12-L2",
+                _bias12_direct_coefficient(2, linear_power, c12, 1.0 / 4.0),
+            ),
+        ]
+        for pair, coefficient, swap, power_leg in (
+            ("23", c23, False, 2),
+            ("31", c31, True, 1),
+        ):
+            for shift in (0, 2, -2):
+                if swap:
+                    u = lambda x1, x2, p=shift: _t23(p, x2, x1)
+                else:
+                    u = lambda x1, x2, p=shift: _t23(p, x1, x2)
+                if power_leg == 2:
+                    v = lambda k1, k2, z, c=coefficient: _value_at_z(c, z) * linear_power(k2, z)
+                else:
+                    v = lambda k1, k2, z, c=coefficient: _value_at_z(c, z) * linear_power(k1, z)
+                terms.append(SeparableMultipoleTerm(
+                    f"tidal-bias-{pair}-p{shift:+d}", component, shift, u, v
+                ))
+        super().__init__(terms, angular_kernel_config=angular_kernel_config)
+        self.linear_power = linear_power
+        self.k_grid = np.asarray(k_grid, dtype=float)
+        self.pair_coefficients = (c12, c23, c31)
+
+
+class LinearCombinationBispectrumMultipole3D(BispectrumMultipole3D):
+    """Weighted sum of independently defined 3D multipole models."""
+
+    basis = "fourier"
+
+    def __init__(self, components):
+        normalized = []
+        for item in components:
+            if len(item) != 2:
+                raise ValueError("Each component must be a (weight, model) pair")
+            weight, model = item
+            normalized.append((weight, model))
+        if not normalized:
+            raise ValueError("At least one component is required")
+        self.components = tuple(normalized)
+
+    def evaluate(self, mode, k1, k2, z, **params):
+        total = 0.0
+        for weight, model in self.components:
+            total = total + _value_at_z(weight, z) * model.evaluate(mode, k1, k2, z, **params)
+        return total
+
+    def evaluate_modes(self, modes, k1, k2, z, **params):
+        total = None
+        for weight, model in self.components:
+            if hasattr(model, "evaluate_modes"):
+                value = model.evaluate_modes(modes, k1, k2, z, **params)
+            else:
+                value = np.asarray([model.evaluate(mode, k1, k2, z, **params) for mode in modes])
+            value = _value_at_z(weight, z) * value
+            total = value if total is None else total + value
+        return total
+
+    def evaluate_modes_grid(self, modes, k1_axis=None, k2_axis=None, z=None, *, geometry=None, **params):
+        if z is None:
+            raise ValueError("z is required")
+        total = None
+        for weight, model in self.components:
+            if hasattr(model, "evaluate_modes_grid"):
+                value = model.evaluate_modes_grid(
+                    modes, k1_axis, k2_axis, z, geometry=geometry, **params
+                )
+            else:
+                if geometry is not None:
+                    k1 = geometry.k1_axis[:, None]
+                    k2 = geometry.k2_axis[None, :]
+                else:
+                    k1 = np.asarray(k1_axis)[:, None]
+                    k2 = np.asarray(k2_axis)[None, :]
+                value = model.evaluate_modes(modes, k1, k2, z, **params)
+            value = _value_at_z(weight, z) * value
+            total = value if total is None else total + value
+        return total
+
+    def prepare_grid(self, k1_axis, k2_axis):
+        for _, model in self.components:
+            if hasattr(model, "prepare_grid"):
+                return model.prepare_grid(k1_axis, k2_axis)
+        return TensorProductGeometryCache.from_axes(k1_axis, k2_axis)
+
+    def warm_cache(self, *, z, modes, shifts=None):
+        for _, model in self.components:
+            if hasattr(model, "warm_cache"):
+                model.warm_cache(z=z, modes=modes, shifts=shifts)
+        return self
+
+    def clear_cache(self):
+        for _, model in self.components:
+            if hasattr(model, "clear_cache"):
+                model.clear_cache()
+
+
+@dataclass(frozen=True)
+class TracerBias:
+    r"""Eulerian bias parameters for one deterministic LSS tracer.
+
+    Each entry may be either a scalar or a callable ``value(z)``.  Different
+    tracer labels may therefore carry independent, redshift-dependent bias
+    functions while sharing the same underlying linear matter spectrum.
+    """
+
+    b1: object
+    b2: object = 0.0
+    bK2: object = 0.0
+
+
+def _coerce_tracer_bias(name, value):
+    """Return a :class:`TracerBias` from a dataclass or mapping input."""
+    if isinstance(value, TracerBias):
+        return value
+    if isinstance(value, Mapping):
+        unknown = set(value) - {"b1", "b2", "bK2", "bs2"}
+        if unknown:
+            raise ValueError(
+                f"Unknown bias parameter(s) for tracer {name!r}: {sorted(unknown)}"
+            )
+        if "b1" not in value:
+            raise ValueError(f"Tracer {name!r} requires a 'b1' entry")
+        if "bK2" in value and "bs2" in value:
+            raise ValueError(
+                f"Tracer {name!r} specifies both 'bK2' and its alias 'bs2'"
+            )
+        return TracerBias(
+            b1=value["b1"],
+            b2=value.get("b2", 0.0),
+            bK2=value.get("bK2", value.get("bs2", 0.0)),
+        )
+    raise TypeError(
+        f"Bias definition for tracer {name!r} must be TracerBias or a mapping"
+    )
+
+
+def _is_matter_field(field):
+    return str(field).lower() in {"m", "matter"}
+
+
+class SPTMultiTracerBispectrumMultipole3D(LinearCombinationBispectrumMultipole3D):
+    r"""Tree-level real-space SPT multipoles for an ordered multi-tracer triple.
+
+    Parameters
+    ----------
+    field_order : sequence of str
+        Tracer identity assigned to ``(k1, k2, k3)``.  Matter may be written as
+        ``"m"`` or ``"matter"``.  Every other entry must be a key of
+        ``tracer_biases``.  For example,
+        ``("LOWZ", "CMASS", "matter")`` represents
+        :math:`B_{g_{\rm LOWZ}g_{\rm CMASS}m}` with that vertex ordering.
+    tracer_biases : mapping
+        Mapping from tracer label to :class:`TracerBias`, or to a mapping with
+        entries ``b1``, ``b2`` and ``bK2`` (``bs2`` is accepted as an alias).
+
+    Notes
+    -----
+    The model is assembled from independently reusable components,
+
+    .. math::
+       B_{A_1A_2A_3}^{\rm tree}
+       = C_F B_{mmm}^{\rm tree} + B_{b_2} + B_{K^2}.
+
+    The pair coefficient for ``ij`` is the product of the two linear biases on
+    legs ``i,j`` and the second-order bias of the remaining vertex.  Thus the
+    ordering of ``field_order`` is physically meaningful.
+    """
+
+    def __init__(
+        self,
+        linear_power,
+        k_grid,
+        *,
+        field_order,
+        tracer_biases,
+        fftlog_config: PowerLawFFTLogConfig | None = None,
+        angular_kernel_config: PowerLawAngularKernelTableConfig | None = None,
+        regularize_squeezed: bool = True,
+    ):
+        fields = tuple(str(field) for field in field_order)
+        if len(fields) != 3:
+            raise ValueError("field_order must contain exactly three vertex labels")
+
+        raw_biases = dict(tracer_biases)
+        for name in raw_biases:
+            if _is_matter_field(name):
+                raise ValueError(
+                    f"{name!r} is reserved for the matter field and must not "
+                    "appear in tracer_biases"
+                )
+        biases = {
+            str(name): _coerce_tracer_bias(str(name), value)
+            for name, value in raw_biases.items()
+        }
+        missing = sorted({field for field in fields if not _is_matter_field(field)} - set(biases))
+        if missing:
+            raise ValueError(
+                "Missing tracer_biases entries for field_order label(s): "
+                + ", ".join(repr(name) for name in missing)
+            )
+
+        def bias(index):
+            field = fields[index]
+            return None if _is_matter_field(field) else biases[field]
+
+        def lam(index, z):
+            tracer = bias(index)
+            return 1.0 if tracer is None else _value_at_z(tracer.b1, z)
+
+        def second_order(index, parameter, z):
+            tracer = bias(index)
+            if tracer is None:
+                return 0.0
+            return _value_at_z(getattr(tracer, parameter), z)
+
+        cf = lambda z: lam(0, z) * lam(1, z) * lam(2, z)
+
+        # Pair ij means that the remaining vertex is evaluated to second order.
+        c12_b2 = lambda z: lam(0, z) * lam(1, z) * second_order(2, "b2", z)
+        c23_b2 = lambda z: lam(1, z) * lam(2, z) * second_order(0, "b2", z)
+        c31_b2 = lambda z: lam(2, z) * lam(0, z) * second_order(1, "b2", z)
+
+        c12_k2 = lambda z: 2.0 * lam(0, z) * lam(1, z) * second_order(2, "bK2", z)
+        c23_k2 = lambda z: 2.0 * lam(1, z) * lam(2, z) * second_order(0, "bK2", z)
+        c31_k2 = lambda z: 2.0 * lam(2, z) * lam(0, z) * second_order(1, "bK2", z)
+
+        tree = TreeBispectrumMultipole3D(
+            linear_power,
+            k_grid,
+            fftlog_config=fftlog_config,
+            angular_kernel_config=angular_kernel_config,
+            regularize_squeezed=regularize_squeezed,
+        )
+        quadratic = QuadraticBiasBispectrumMultipole3D(
+            linear_power,
+            k_grid,
+            pair_coefficients=(c12_b2, c23_b2, c31_b2),
+            fftlog_config=fftlog_config,
+            angular_kernel_config=angular_kernel_config,
+        )
+        tidal = TidalBiasBispectrumMultipole3D(
+            linear_power,
+            k_grid,
+            pair_coefficients=(c12_k2, c23_k2, c31_k2),
+            fftlog_config=fftlog_config,
+            angular_kernel_config=angular_kernel_config,
+        )
+        super().__init__(((cf, tree), (1.0, quadratic), (1.0, tidal)))
+
+        self.field_order = fields
+        self.tracer_biases = biases
+        self.tree_coefficient = cf
+        self.tree_matter = tree
+        self.quadratic_bias = quadratic
+        self.tidal_bias = tidal
+        self.linear_power = linear_power
+        self.k_grid = np.asarray(k_grid, dtype=float)
+
+
+class SPTGalaxyBispectrumMultipole3D(SPTMultiTracerBispectrumMultipole3D):
+    r"""Backward-compatible single-galaxy-tracer SPT model.
+
+    ``field_order`` uses the legacy labels ``"g"`` and ``"m"``.  Internally
+    this is a thin wrapper around :class:`SPTMultiTracerBispectrumMultipole3D`
+    with one tracer named ``"galaxy"``.
+    """
+
+    def __init__(self, linear_power, k_grid, *, field_order=("g", "g", "g"),
+                 b1=1.0, b2=0.0, bK2=0.0,
+                 fftlog_config: PowerLawFFTLogConfig | None = None,
+                 angular_kernel_config: PowerLawAngularKernelTableConfig | None = None,
+                 regularize_squeezed: bool = True):
+        legacy_fields = tuple(str(field).lower() for field in field_order)
+        if len(legacy_fields) != 3 or any(field not in {"g", "m"} for field in legacy_fields):
+            raise ValueError(
+                "field_order must be a length-three tuple containing only 'g' and 'm'"
+            )
+        fields = tuple("galaxy" if field == "g" else "matter" for field in legacy_fields)
+        super().__init__(
+            linear_power,
+            k_grid,
+            field_order=fields,
+            tracer_biases={"galaxy": TracerBias(b1=b1, b2=b2, bK2=bK2)},
+            fftlog_config=fftlog_config,
+            angular_kernel_config=angular_kernel_config,
+            regularize_squeezed=regularize_squeezed,
+        )
+        # Preserve the public attributes and legacy field labels.
+        self.field_order = legacy_fields
+        self.b1 = b1
+        self.b2 = b2
+        self.bK2 = bK2
+
