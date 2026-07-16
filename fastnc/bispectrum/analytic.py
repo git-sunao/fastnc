@@ -734,10 +734,9 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
     def evaluate_modes(self, modes, k1, k2, z, *, chunk_size=4096, **params):
         """Evaluate many Fourier modes while sharing FFTLog contractions.
 
-        The expensive contraction
-        ``sum_n w_n k**nu_n K_L^(nu_n+p)`` is evaluated once for each
-        unique ``(FFTLog component, p)`` pair.  All terms referring to that
-        pair subsequently differ only by their inexpensive ``U*V`` prefactor.
+        ``z`` may be scalar or array-like.  Array-valued redshifts are grouped
+        by their distinct values and each group is delegated to the scalar
+        implementation :meth:`_evaluate_modes_scalar`.
 
         Parameters
         ----------
@@ -746,12 +745,72 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         k1, k2
             Broadcast-compatible Fourier-mode arrays.
         z
-            Redshift.
+            Scalar or broadcast-compatible array of redshifts.
         chunk_size
             Number of flattened ``(k1,k2)`` points processed at once.  Set to
             ``None`` to process the entire input in one contraction.
         """
         modes = np.atleast_1d(np.asarray(modes, dtype=int))
+        z_array = np.asarray(z, dtype=float)
+
+        if z_array.ndim == 0:
+            return self._evaluate_modes_scalar(
+                modes,
+                k1,
+                k2,
+                float(z_array),
+                chunk_size=chunk_size,
+                **params,
+            )
+
+        # LOS projection evaluates k1, k2, and z on a common redshift grid.
+        # Group equal redshifts so each FFTLog coefficient vector is obtained
+        # once and evaluated through the explicit scalar fast path.
+        k1_array, k2_array, z_array = np.broadcast_arrays(
+            np.asarray(k1, dtype=float),
+            np.asarray(k2, dtype=float),
+            z_array,
+        )
+        output_shape = k1_array.shape
+        flat_k1 = k1_array.ravel()
+        flat_k2 = k2_array.ravel()
+        flat_z = z_array.ravel()
+        result = np.empty((modes.size, flat_z.size), dtype=complex)
+
+        unique_z, inverse = np.unique(flat_z, return_inverse=True)
+        for i_z, z_value in enumerate(unique_z):
+            select = inverse == i_z
+            values = self._evaluate_modes_scalar(
+                modes,
+                flat_k1[select],
+                flat_k2[select],
+                float(z_value),
+                chunk_size=chunk_size,
+                **params,
+            )
+            result[:, select] = np.asarray(values, dtype=complex).reshape(
+                modes.size, -1
+            )
+
+        return result.reshape((modes.size,) + output_shape)
+
+    def _evaluate_modes_scalar(
+        self,
+        modes,
+        k1,
+        k2,
+        z,
+        *,
+        chunk_size=4096,
+        **params,
+    ):
+        """Evaluate Fourier modes at one scalar redshift."""
+        modes = np.atleast_1d(np.asarray(modes, dtype=int))
+        z_array = np.asarray(z, dtype=float)
+        if z_array.ndim != 0:
+            raise ValueError("_evaluate_modes_scalar requires scalar z")
+        z = float(z_array)
+
         k1, k2 = np.broadcast_arrays(np.asarray(k1, dtype=float), np.asarray(k2, dtype=float))
         if np.any(k1 <= 0.0) or np.any(k2 <= 0.0):
             raise ValueError("k1 and k2 must be strictly positive")
