@@ -710,6 +710,15 @@ class MultipoleLineOfSightProjector(LOSProjectorBase):
             )
 
     def project(self, multipole3d, sample_combination=None, modes=None, mode_max=None):
+        # Semi-analytic models own their coefficient-level projector.  This
+        # dispatch avoids the generic route that evaluates B_L(k1,k2,z) first.
+        from .analytic import CompositeSemiAnalyticBispectrumMultipole3D
+        if isinstance(multipole3d, CompositeSemiAnalyticBispectrumMultipole3D):
+            return multipole3d.project_los(
+                self, sample_combination=sample_combination,
+                modes=modes, mode_max=mode_max,
+            )
+
         from .multipole import BispectrumMultipole2D
         if modes is None and mode_max is not None:
             mode_max = int(mode_max)

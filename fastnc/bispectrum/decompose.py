@@ -12,7 +12,7 @@ from scipy.special import eval_legendre
 
 
 class MultipoleBase:
-    def __init__(self, x, max_mode: int, method: str = "gauss-legendre", verbose: bool = False):
+    def __init__(self, x, max_mode: int, method: str = "gauss-legendre"):
         self.x = np.asarray(x, dtype=float)
         if self.x.ndim != 1 or self.x.size < 2:
             raise ValueError("x must be a one-dimensional grid with at least two points")
@@ -20,7 +20,6 @@ class MultipoleBase:
             raise ValueError("x must be strictly increasing")
         self.max_mode = int(max_mode)
         self.method = method
-        self.verbose = verbose
         self._init_basis_function()
 
     def _init_basis_function(self):

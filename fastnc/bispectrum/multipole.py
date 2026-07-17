@@ -136,38 +136,6 @@ class BispectrumMultipole2D:
             raise NotImplementedError
         return self._evaluator(mode, ell2, ell3)
 
-    def warm(self, modes=None):
-        """Warm caches needed by this lazy 2D multipole object.
-
-        For LOS-projected semi-analytic multipoles, this precomputes the
-        underlying 3D FFTLog coefficients on the projector redshift grid and
-        the angular-kernel tables for the requested modes.  The projected LOS
-        integral itself is not tabulated or memoized.
-
-        Parameters
-        ----------
-        modes : array-like of int, optional
-            Modes to prepare.  By default, use the modes stored on this object.
-
-        Returns
-        -------
-        BispectrumMultipole2D
-            ``self``, allowing ``project_los(...).warm()`` chaining.
-        """
-        if modes is None:
-            modes = self.available_modes()
-        else:
-            modes = np.atleast_1d(np.asarray(modes, dtype=int))
-
-        evaluator = getattr(self, "_evaluator", None)
-        warm = getattr(evaluator, "warm", None)
-        if warm is None:
-            raise TypeError(
-                f"{type(self).__name__} does not expose a warmable evaluator"
-            )
-        warm(modes=modes)
-        return self
-
     def available_modes(self, mode_max=None):
         if self.modes is None:
             if mode_max is None:

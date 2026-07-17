@@ -15,7 +15,7 @@ import numpy as np
 from scipy.integrate import quad
 
 from .base import Bispectrum3D
-from .multipole import BispectrumMultipole3D
+from .multipole import BispectrumMultipole2D, BispectrumMultipole3D
 from .support import Support3D
 from fastnc.hankel.wrapper import PowerLawFFTLogConfig, power_law_fftlog_coefficients
 
@@ -515,6 +515,148 @@ class DirectFourierTerm(SemiAnalyticMultipoleTerm):
         return np.asarray(value).item() if np.asarray(value).shape == () else value
 
 
+
+
+class _SemiAnalyticMultipoleLineOfSightProjector:
+    """Coefficient-level LOS projector for semi-analytic multipoles.
+
+    For a separable term, this object evaluates the appendix-B coefficient
+
+        d_n(ell1, ell2) = int dchi W(chi) V(ell1/chi, ell2/chi; z)
+                         w_n(z) / chi**nu_n
+
+    before contracting it with ``ell**nu_n K_L^(nu_n+p)(r)``.  It therefore
+    never evaluates ``B_L(k1,k2,z)`` on a three-dimensional LOS grid.
+    """
+
+    def __init__(self, projector, sample_combination=None):
+        self.z = np.asarray(projector.z, dtype=float)
+        self.chi = np.asarray(projector.chi, dtype=float)
+        self.weight = np.asarray(
+            projector.los_weight(sample_combination), dtype=float
+        )
+        self.sample_combination = (
+            tuple(sample_combination) if sample_combination is not None else None
+        )
+        if getattr(projector, "l_shift", 0.0) != 0.0:
+            raise NotImplementedError(
+                "Coefficient-level semi-analytic projection requires l_shift=0"
+            )
+
+    @staticmethod
+    def _as_los_values(value, n_point, n_chi):
+        value = np.asarray(value)
+        try:
+            return np.broadcast_to(value, (n_point, n_chi))
+        except ValueError as error:
+            raise ValueError(
+                "A semi-analytic term prefactor must broadcast to "
+                "(n_ell_point, n_chi) during LOS projection"
+            ) from error
+
+    def evaluate(self, multipole3d, mode, ell1, ell2):
+        modes = np.atleast_1d(np.asarray(mode, dtype=int))
+        scalar_mode = np.isscalar(mode)
+        ell1, ell2 = np.broadcast_arrays(
+            np.asarray(ell1, dtype=float), np.asarray(ell2, dtype=float)
+        )
+        if np.any(ell1 <= 0.0) or np.any(ell2 <= 0.0):
+            raise ValueError("ell1 and ell2 must be strictly positive")
+        shape = ell1.shape
+        e1 = ell1.ravel()
+        e2 = ell2.ravel()
+        n_point = e1.size
+        n_chi = self.chi.size
+        ell = np.hypot(e1, e2)
+        x1 = e1 / ell
+        x2 = e2 / ell
+        r = np.minimum(e1, e2) / ell
+        k1 = e1[:, None] / self.chi[None, :]
+        k2 = e2[:, None] / self.chi[None, :]
+        z = self.z[None, :]
+        los_weight = self.weight[None, :]
+        result = np.zeros((modes.size, n_point), dtype=complex)
+
+        for term in multipole3d.terms:
+            if isinstance(term, DirectFourierTerm):
+                for i_mode, requested_mode in enumerate(modes):
+                    value = term.coefficient(
+                        int(requested_mode), k1, k2, z
+                    )
+                    value = self._as_los_values(value, n_point, n_chi)
+                    result[i_mode] += term.amplitude * np.trapezoid(
+                        los_weight * value, self.chi, axis=1
+                    )
+                continue
+
+            if not isinstance(term, SeparableMultipoleTerm):
+                raise TypeError(
+                    f"Unsupported semi-analytic term type: {type(term).__name__}"
+                )
+
+            coeff, nu = multipole3d.coefficient_cache.get_many(
+                term.component, self.z
+            )
+            table = multipole3d._ensure_kernel_table(term.component)
+            kernels = table.evaluate_modes(
+                modes, r, shift=int(term.p), unique=True
+            )
+            v = self._as_los_values(
+                term.v(k1, k2, z), n_point, n_chi
+            )
+            chi_power = self.chi[:, None] ** (-nu[None, :])
+            # Shape: (n_point, n_nu).  These are the projected d_n
+            # coefficients of Eq. (B11), including the model-specific V.
+            d_n = np.trapezoid(
+                (los_weight * v)[:, :, None]
+                * coeff[None, :, :]
+                * chi_power[None, :, :],
+                self.chi,
+                axis=1,
+            )
+            ell_power = ell[:, None] ** nu[None, :]
+            core = np.einsum(
+                "pn,pn,lnp->lp", d_n, ell_power, kernels, optimize=True
+            )
+            prefactor = (
+                term.amplitude
+                * np.asarray(term.u(x1, x2))
+            )
+            result += prefactor[None, :] * core
+
+        result = result.reshape((modes.size,) + shape)
+        return result[0] if scalar_mode else result
+
+
+class CompositeSemiAnalyticBispectrumMultipole2D(BispectrumMultipole2D):
+    """LOS-projected counterpart of
+    :class:`CompositeSemiAnalyticBispectrumMultipole3D`.
+
+    Projection is performed on the FFTLog coefficients ``w_n(z)`` to form
+    the angular coefficients ``d_n(ell1,ell2)`` before the universal angular
+    kernels are contracted.
+    """
+
+    def __init__(self, multipole3d, projector, sample_combination=None, modes=None):
+        super().__init__(evaluator=None, basis=multipole3d.basis, modes=modes)
+        self.multipole3d = multipole3d
+        self.projector = _SemiAnalyticMultipoleLineOfSightProjector(
+            projector, sample_combination=sample_combination
+        )
+        self.sample_combination = self.projector.sample_combination
+
+    def evaluate(self, mode, ell1, ell2):
+        return self.projector.evaluate(self.multipole3d, mode, ell1, ell2)
+
+    def warm(self, modes=None):
+        """Warm FFTLog coefficients and angular kernels used by projection."""
+        if modes is None:
+            modes = self.available_modes()
+        modes = np.atleast_1d(np.asarray(modes, dtype=int))
+        self.multipole3d.warm_cache(z=self.projector.z, modes=modes)
+        return self
+
+
 class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
     """Composable 3D multipole model built from a fixed list of terms.
 
@@ -524,6 +666,14 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
     """
 
     basis = "fourier"
+
+    def project_los(self, projector, sample_combination=None, modes=None, mode_max=None):
+        if modes is None and mode_max is not None:
+            mode_max = int(mode_max)
+            modes = np.arange(-mode_max, mode_max + 1)
+        return CompositeSemiAnalyticBispectrumMultipole2D(
+            self, projector, sample_combination=sample_combination, modes=modes
+        )
 
     def __init__(self, terms, *, angular_kernel_config: PowerLawAngularKernelTableConfig | None = None):
         self.terms = tuple(terms)

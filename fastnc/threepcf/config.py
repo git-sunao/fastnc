@@ -57,7 +57,6 @@ class ThreePCFConfig:
     xy: float = 1.0
     bin_width_logtheta: float | None = None
     hankel: DoubleHankelConfig = field(default_factory=DoubleHankelConfig)
-    verbose: bool = False
     timing: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 

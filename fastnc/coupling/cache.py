@@ -6,6 +6,8 @@ so integer and half-integer q are both represented exactly.
 """
 from __future__ import annotations
 
+import logging
+
 import os
 import sys
 from dataclasses import dataclass
@@ -51,6 +53,8 @@ def resolve_coupling_cache_file(filename: str | Path | None) -> Path:
         return default_coupling_cache_file()
     return Path(filename).expanduser()
 
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class BCacheKey:
@@ -159,19 +163,19 @@ class CouplingCache:
 
     def describe(self) -> None:
         if not self.filename.exists():
-            print(f"Cache file does not exist: {self.filename}")
+            logger.info("Cache file does not exist: %s", self.filename)
             return
         with h5py.File(self.filename, "r") as h5:
             for k, v in h5.attrs.items():
-                print(f"@{k} = {v}")
+                logger.info("@%s = %s", k, v)
             def visit(name: str, obj):
                 indent = "  " * name.count("/")
                 if isinstance(obj, h5py.Dataset):
-                    print(f"{indent}{name}: dataset shape={obj.shape}, dtype={obj.dtype}")
+                    logger.info("%s%s: dataset shape=%s, dtype=%s", indent, name, obj.shape, obj.dtype)
                 elif isinstance(obj, h5py.Group):
-                    print(f"{indent}{name}/")
+                    logger.info("%s%s/", indent, name)
                     for k, v in obj.attrs.items():
-                        print(f"{indent}  @{k} = {v}")
+                        logger.info("%s  @%s = %s", indent, k, v)
             h5.visititems(visit)
 class CouplingCacheSession:
     """Read-through memory cache for b_p^(q)(psi) HDF5 blocks.

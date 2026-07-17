@@ -1,8 +1,6 @@
 """Public high-level 3PCF API."""
 from __future__ import annotations
 
-import logging
-
 from ..bispectrum import BispectrumMultipole2DConfig
 from .bmultipole_grid import BMultipoleGrid
 from .calculator import ThreePCFCalculator
@@ -34,9 +32,6 @@ class ThreePCF:
         multipole_basis: str = "fourier-even",
         regulator=None,
         multipole_kwargs: dict | None = None,
-        log: bool = False,
-        log_level: int | str = logging.INFO,
-        logger: logging.Logger | None = None,
     ):
         self.bispectrum = bispectrum
         self.config = config or ThreePCFConfig()
@@ -45,9 +40,6 @@ class ThreePCF:
         self.multipole_basis = multipole_basis
         self.regulator = regulator
         self.multipole_kwargs = dict(multipole_kwargs or {})
-        self.log = bool(log)
-        self.log_level = log_level
-        self.logger = logger
 
         self.bmultipole = None
         self.calculator: ThreePCFCalculator | None = None
@@ -114,9 +106,6 @@ class ThreePCF:
                 self.bmultipole,
                 config=self.config,
                 coupling_kwargs=self.coupling_kwargs,
-                log=self.log,
-                log_level=self.log_level,
-                logger=self.logger,
             )
         return self.calculator
 

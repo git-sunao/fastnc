@@ -597,7 +597,7 @@ class Halofit:
         kmax_safe = np.where(physical, np.minimum(kmax, kmin + kmid), kmax)
         return physical, kmax_safe
 
-    def get_bihalofit(self, k1, k2, k3, z, verbose=False, which=['Bh3', 'Bh1'], squeezed_safe=True, eps_sq=1.0e-4):
+    def get_bihalofit(self, k1, k2, k3, z, which=['Bh3', 'Bh1'], squeezed_safe=True, eps_sq=1.0e-4):
         """
         Returns the bihalofit prediction of matter bispectrum.
 
@@ -606,7 +606,6 @@ class Halofit:
             k2           (np.ndarray): array of comoving Fourier modes in h/Mpc unit
             k3           (np.ndarray): array of comoving Fourier modes in h/Mpc unit
             z            (np.ndarray): array of redshifts
-            verbose      (bool)      : if True, print the progress
             which        (str or list): which part of bispectrum to calculate
         """
         if isinstance(which, str):

@@ -7,8 +7,12 @@ import logging
 import time
 import numpy as np
 
+from .._logging import log
+
 from .grid import FFTGrid
 
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class BMultipoleGrid:
@@ -55,7 +59,6 @@ class BMultipoleGrid:
     Lmin: int = None
     basis: str = "fourier-even"
     values: np.ndarray | None = None
-    logger: logging.Logger | None = field(default=None, repr=False, compare=False)
     L_values: np.ndarray = field(init=False)
     _legendre_fourier_cache: dict[int, np.ndarray] | None = field(
         init=False,
@@ -163,8 +166,8 @@ class BMultipoleGrid:
         for L in self.L_values:
             t0 = time.perf_counter()
             vals.append(bmultipole(int(L), self.ell2, self.ell3))
-            if self.logger is not None:
-                self.logger.debug("3PCF bmultipoles L=%+d finished in %.3f s", int(L), time.perf_counter() - t0)
+            if logger.isEnabledFor(logging.DEBUG):
+                log(logger, logging.DEBUG, "[BMultipoleGrid.compute] L=%+d finished in %.3f s", int(L), time.perf_counter() - t0)
         self.values = np.asarray(vals)
         self._validate_values()
         return self

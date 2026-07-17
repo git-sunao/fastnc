@@ -7,12 +7,16 @@ import logging
 import time
 import numpy as np
 
+from .._logging import log
+
 from ..hankel.wrapper import DoubleHankelConfig, double_hankel_transform
 from .grid import FFTGrid
 from .hkernel_grid import HKernelGrid, HKernel, HKernelKey
 from .spin import EffectiveSpinTriple, SpinSpec, as_effective_spin_triple
 from .zeta_grid import ZetaGrid
 
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ZetaKKey:
@@ -96,7 +100,6 @@ class ZetaKGrid:
     modes: dict[ZetaKKey, ZetaKMode] = field(default_factory=dict)
     aliases: dict[tuple[tuple[int, int, int], int], ZetaKKey] = field(default_factory=dict)
     active_epsilons: tuple[tuple[int, int, int], ...] = field(default_factory=tuple)
-    logger: logging.Logger | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         self.spin = tuple(int(x) for x in self.spin)
@@ -214,8 +217,8 @@ class ZetaKGrid:
                     hankel_config=hankel_config,
                     bin_width_logtheta=bin_width_logtheta,
                 )
-                if self.logger is not None:
-                    self.logger.debug("3PCF zetak epsilon=%s k=%+.1f FFTLog finished in %.3f s", eps, float(k), time.perf_counter() - t_k)
+                if logger.isEnabledFor(logging.DEBUG):
+                    log(logger, logging.DEBUG, "[ZetaKGrid.compute_epsilon] epsilon=%s k=%+.1f FFTLog finished in %.3f s", eps, float(k), time.perf_counter() - t_k)
             self.aliases[alias] = key
             out.append(self.modes[key])
         return out

@@ -35,6 +35,8 @@ The expensive radial FFTLog tasks and, optionally, the real-space
 """
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass
 import multiprocessing as mp
 from typing import Any, Callable, Mapping, Literal
@@ -48,6 +50,8 @@ from .spin import SpinSpec
 
 ArrayLike = np.ndarray | list[float] | tuple[float, ...]
 
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class BruteForce3PCFConfig:
@@ -163,7 +167,6 @@ class BruteForce3PCFConfig:
     parallel_prepare: bool = True
     parallel_compute: bool = True
 
-    verbose: bool = False
 
     def validate(self) -> "BruteForce3PCFConfig":
         if not (0.0 < self.ell_min < self.ell_max):
@@ -832,11 +835,11 @@ class BruteForceX3PCF:
                 "vertices 2 and 3. Use the full angular domain instead."
             )
         self._reduced_domain_exchange_validated = True
-        if cfg.verbose:
-            print(
-                "[BruteForceX3PCF] reduced-domain 2<->3 exchange symmetry verified: "
-                f"max normalized difference={max_norm:.3e}"
-            )
+        logger.info(
+            "[BruteForceX3PCF._validate_reduce_domain_exchange_symmetry] "
+            "2<->3 exchange symmetry verified: max normalized difference=%.3e",
+            max_norm,
+        )
 
     def _radial_worker_state(self, ell: np.ndarray) -> _RadialWorkerState:
         cfg = self.config
@@ -906,10 +909,16 @@ class BruteForceX3PCF:
             assert table is not None
             phase_beta_bar[ipsi, idb] = phase
             table[ipsi, idb] = transformed
-            if cfg.verbose and (count == 1 or count % max(1, total // 20) == 0 or count == total):
-                print(
-                    "[BruteForceX3PCF] radial FFTLog "
-                    f"{count}/{total} (n_psi={n_psi}, n_delta_beta={n_delta_beta})"
+            if logger.isEnabledFor(logging.DEBUG) and (
+                count == 1 or count % max(1, total // 20) == 0 or count == total
+            ):
+                logger.debug(
+                    "[BruteForceX3PCF._prepare_angular_grid] radial FFTLog "
+                    "%d/%d (n_psi=%d, n_delta_beta=%d)",
+                    count,
+                    total,
+                    n_psi,
+                    n_delta_beta,
                 )
 
         use_parallel = bool(cfg.parallel_prepare) and int(cfg.n_processes) > 1 and total > 1
@@ -1157,12 +1166,16 @@ class BruteForceX3PCF:
             )
             if cfg.adaptive_store_trials == "all":
                 trials.append(trial)
-            if cfg.verbose:
-                print(
-                    "[BruteForceX3PCF] angular refinement "
-                    f"{refinement}: n_psi={next_n_psi}, n_delta_beta={next_n_delta_beta}, "
-                    f"max normalized change={last_norm:.3e}, max abs change={last_abs:.3e}"
-                )
+            logger.info(
+                "[BruteForceX3PCF._compute_adaptive] angular refinement %d: "
+                "n_psi=%d, n_delta_beta=%d, max normalized change=%.3e, "
+                "max abs change=%.3e",
+                refinement,
+                next_n_psi,
+                next_n_delta_beta,
+                last_norm,
+                last_abs,
+            )
             if last_norm <= 1.0:
                 if cfg.adaptive_store_trials == "last":
                     trials = [trial]
