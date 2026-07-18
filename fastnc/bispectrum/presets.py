@@ -12,8 +12,6 @@ from typing import Callable, Mapping
 import numpy as np
 
 from .base import Bispectrum3D
-from .multipole import BispectrumMultipole3D
-from .los import LineOfSightProjector
 from .support import Support3D
 from .halofit import Halofit
 

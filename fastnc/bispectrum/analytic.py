@@ -8,7 +8,7 @@ fast scalar and grid evaluation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping
 
 import numpy as np
@@ -344,12 +344,13 @@ class TensorProductGeometryCache:
 
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class FFTLogComponent:
     """A named reusable FFTLog target :math:`W(k;z)`.
 
-    ``name`` is descriptive only.  Cache sharing is keyed by object identity,
-    the FFTLog configuration, and the supplied logarithmic grid.
+    ``name`` is descriptive only.  Instances are hashable by identity, so
+    coefficient and angular-kernel caches are shared only when terms reference
+    the same :class:`FFTLogComponent` object.
     """
     name: str
     k_grid: np.ndarray
@@ -378,7 +379,7 @@ class FFTLogCoefficientCache:
     """
 
     def __init__(self):
-        self._coefficients: dict[tuple[int, float], tuple[np.ndarray, np.ndarray]] = {}
+        self._coefficients: dict[tuple[FFTLogComponent, float], tuple[np.ndarray, np.ndarray]] = {}
 
     @staticmethod
     def _scalar_redshift(z):
@@ -392,7 +393,7 @@ class FFTLogCoefficientCache:
 
     def get(self, component: FFTLogComponent, z):
         z_value = self._scalar_redshift(z)
-        key = (id(component), z_value)
+        key = (component, z_value)
         cached = self._coefficients.get(key)
         if cached is None:
             values = np.asarray(
@@ -466,11 +467,37 @@ class FFTLogCoefficientCache:
         self._coefficients.clear()
 
 
+@dataclass(frozen=True, kw_only=True)
 class SemiAnalyticMultipoleTerm:
-    """Base class for one additive contribution to a semi-analytic multipole."""
+    """Base class for one additive contribution to a semi-analytic multipole.
+
+    ``weight`` is a scalar or a callable ``weight(z)``.  It is deliberately
+    kept separate from the FFTLog component so scaling a term does not create
+    a new coefficient or angular-kernel cache entry.
+    """
+
+    weight: object = 1.0
+
+    def scaled_by(self, weight):
+        """Return an immutable copy multiplied by an additional weight."""
+        return replace(self, weight=_multiply_term_weights(self.weight, weight))
 
     def evaluate(self, mode, k2, k3, z, *, cache, kernel_tables):
         raise NotImplementedError
+
+
+def _term_weight_value(weight, z):
+    return weight(z) if callable(weight) else weight
+
+
+def _multiply_term_weights(left, right):
+    if not callable(left) and not callable(right):
+        return left * right
+
+    def combined(z):
+        return _term_weight_value(left, z) * _term_weight_value(right, z)
+
+    return combined
 
 
 @dataclass(frozen=True)
@@ -498,7 +525,13 @@ class SeparableMultipoleTerm(SemiAnalyticMultipoleTerm):
         kernel = table.evaluate(int(mode), r, shift=int(self.p))
         powers = k.reshape((1,) + k.shape) ** nu.reshape((-1,) + (1,) * k.ndim)
         result = np.sum(coeff.reshape((-1,) + (1,) * k.ndim) * powers * kernel, axis=0)
-        result = self.amplitude * self.u(x2, x3) * self.v(k2, k3, z) * result
+        result = (
+            _term_weight_value(self.weight, z)
+            * self.amplitude
+            * self.u(x2, x3)
+            * self.v(k2, k3, z)
+            * result
+        )
         return result.item() if result.shape == () else result
 
 
@@ -511,7 +544,11 @@ class DirectFourierTerm(SemiAnalyticMultipoleTerm):
     amplitude: complex = 1.0
 
     def evaluate(self, mode, k2, k3, z, *, cache, kernel_tables):
-        value = self.amplitude * self.coefficient(int(mode), k2, k3, z)
+        value = (
+            _term_weight_value(self.weight, z)
+            * self.amplitude
+            * self.coefficient(int(mode), k2, k3, z)
+        )
         return np.asarray(value).item() if np.asarray(value).shape == () else value
 
 
@@ -584,8 +621,11 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
                         int(requested_mode), k2, k3, z
                     )
                     value = self._as_los_values(value, n_point, n_chi)
+                    term_weight = self._as_los_values(
+                        _term_weight_value(term.weight, z), n_point, n_chi
+                    )
                     result[i_mode] += term.amplitude * np.trapezoid(
-                        los_weight * value, self.chi, axis=1
+                        los_weight * term_weight * value, self.chi, axis=1
                     )
                 continue
 
@@ -607,8 +647,11 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
             chi_power = self.chi[:, None] ** (-nu[None, :])
             # Shape: (n_point, n_nu).  These are the projected d_n
             # coefficients of Eq. (B11), including the model-specific V.
+            term_weight = self._as_los_values(
+                _term_weight_value(term.weight, z), n_point, n_chi
+            )
             d_n = np.trapezoid(
-                (los_weight * v)[:, :, None]
+                (los_weight * term_weight * v)[:, :, None]
                 * coeff[None, :, :]
                 * chi_power[None, :, :],
                 self.chi,
@@ -676,19 +719,66 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         )
 
     def __init__(self, terms, *, angular_kernel_config: PowerLawAngularKernelTableConfig | None = None):
-        self.terms = tuple(terms)
+        normalized = tuple(terms)
+        if not normalized:
+            raise ValueError("At least one semi-analytic term is required")
+        if not all(isinstance(term, SemiAnalyticMultipoleTerm) for term in normalized):
+            raise TypeError("terms must contain only SemiAnalyticMultipoleTerm instances")
+        self._terms = normalized
         self.angular_kernel_config = angular_kernel_config or PowerLawAngularKernelTableConfig()
         self.coefficient_cache = FFTLogCoefficientCache()
-        self._kernel_tables: dict[int, PowerLawAngularKernelTable] = {}
-        for term in self.terms:
+        self._kernel_tables: dict[FFTLogComponent, PowerLawAngularKernelTable] = {}
+        for term in self._terms:
             component = getattr(term, "component", None)
             if component is None:
                 continue
-            key = id(component)
-            if key not in self._kernel_tables:
+            if component not in self._kernel_tables:
                 # Exponents are component-specific but independent of z.
                 _, nu = self.coefficient_cache.get(component, 0.0)
-                self._kernel_tables[key] = PowerLawAngularKernelTable(nu, self.angular_kernel_config)
+                self._kernel_tables[component] = PowerLawAngularKernelTable(
+                    nu, self.angular_kernel_config
+                )
+
+    @classmethod
+    def from_terms(cls, terms, *, angular_kernel_config=None):
+        """Construct a composite from an unweighted sequence of terms."""
+        return cls(terms, angular_kernel_config=angular_kernel_config)
+
+    @classmethod
+    def from_weighted_terms(cls, weighted_terms, *, angular_kernel_config=None):
+        """Construct a composite from ``(weight, term)`` pairs."""
+        terms = []
+        for item in weighted_terms:
+            if len(item) != 2:
+                raise ValueError("Each weighted term must be a (weight, term) pair")
+            weight, term = item
+            if not isinstance(term, SemiAnalyticMultipoleTerm):
+                raise TypeError("weighted_terms must contain semi-analytic terms")
+            terms.append(term.scaled_by(weight))
+        return cls.from_terms(terms, angular_kernel_config=angular_kernel_config)
+
+    @classmethod
+    def from_composites(cls, weighted_composites, *, angular_kernel_config=None):
+        """Flatten weighted semi-analytic composites into one term list."""
+        terms = []
+        for item in weighted_composites:
+            if len(item) != 2:
+                raise ValueError(
+                    "Each weighted composite must be a (weight, composite) pair"
+                )
+            weight, composite = item
+            if not isinstance(composite, CompositeSemiAnalyticBispectrumMultipole3D):
+                raise TypeError(
+                    "from_composites accepts only "
+                    "CompositeSemiAnalyticBispectrumMultipole3D instances"
+                )
+            terms.extend(term.scaled_by(weight) for term in composite.terms)
+        return cls.from_terms(terms, angular_kernel_config=angular_kernel_config)
+
+    @property
+    def terms(self):
+        """Immutable flattened term sequence defining this model."""
+        return self._terms
 
     @property
     def components(self):
@@ -696,14 +786,14 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         seen = set()
         for term in self.terms:
             component = getattr(term, "component", None)
-            if component is not None and id(component) not in seen:
+            if component is not None and component not in seen:
                 out.append(component)
-                seen.add(id(component))
+                seen.add(component)
         return tuple(out)
 
     def _ensure_kernel_table(self, component):
         """Return the shared angular-kernel table for ``component``."""
-        key = id(component)
+        key = component
         table = self._kernel_tables.get(key)
         if table is None:
             _, nu = self.coefficient_cache.get(component, 0.0)
@@ -979,7 +1069,7 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         separable_groups = {}
         for term in self.terms:
             if isinstance(term, SeparableMultipoleTerm):
-                separable_groups.setdefault((id(term.component), int(term.p)), []).append(term)
+                separable_groups.setdefault((term.component, int(term.p)), []).append(term)
 
         # Direct Fourier terms are inexpensive and generally have only a few
         # non-zero modes.
@@ -1040,7 +1130,8 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
 
                 for term in terms:
                     prefactor = (
-                        term.amplitude
+                        _term_weight_value(term.weight, z)
+                        * term.amplitude
                         * np.asarray(term.u(x2, x3))
                         * np.asarray(term.v(k1_chunk, k2_chunk, z))
                     )
@@ -1458,78 +1549,6 @@ class TidalBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D)
         self.pair_coefficients = (c12, c23, c31)
 
 
-class LinearCombinationBispectrumMultipole3D(BispectrumMultipole3D):
-    """Weighted sum of independently defined 3D multipole models."""
-
-    basis = "fourier"
-
-    def __init__(self, components):
-        normalized = []
-        for item in components:
-            if len(item) != 2:
-                raise ValueError("Each component must be a (weight, model) pair")
-            weight, model = item
-            normalized.append((weight, model))
-        if not normalized:
-            raise ValueError("At least one component is required")
-        self.components = tuple(normalized)
-
-    def evaluate(self, mode, k2, k3, z, **params):
-        total = 0.0
-        for weight, model in self.components:
-            total = total + _value_at_z(weight, z) * model.evaluate(mode, k2, k3, z, **params)
-        return total
-
-    def evaluate_modes(self, modes, k2, k3, z, **params):
-        total = None
-        for weight, model in self.components:
-            if hasattr(model, "evaluate_modes"):
-                value = model.evaluate_modes(modes, k2, k3, z, **params)
-            else:
-                value = np.asarray([model.evaluate(mode, k2, k3, z, **params) for mode in modes])
-            value = _value_at_z(weight, z) * value
-            total = value if total is None else total + value
-        return total
-
-    def evaluate_modes_grid(self, modes, k2_axis=None, k3_axis=None, z=None, *, geometry=None, **params):
-        if z is None:
-            raise ValueError("z is required")
-        total = None
-        for weight, model in self.components:
-            if hasattr(model, "evaluate_modes_grid"):
-                value = model.evaluate_modes_grid(
-                    modes, k2_axis, k3_axis, z, geometry=geometry, **params
-                )
-            else:
-                if geometry is not None:
-                    k2 = geometry.k2_axis[:, None]
-                    k3 = geometry.k3_axis[None, :]
-                else:
-                    k2 = np.asarray(k2_axis)[:, None]
-                    k3 = np.asarray(k3_axis)[None, :]
-                value = model.evaluate_modes(modes, k2, k3, z, **params)
-            value = _value_at_z(weight, z) * value
-            total = value if total is None else total + value
-        return total
-
-    def prepare_grid(self, k2_axis, k3_axis):
-        for _, model in self.components:
-            if hasattr(model, "prepare_grid"):
-                return model.prepare_grid(k2_axis, k3_axis)
-        return TensorProductGeometryCache.from_axes(k2_axis, k3_axis)
-
-    def warm_cache(self, *, z, modes, shifts=None):
-        for _, model in self.components:
-            if hasattr(model, "warm_cache"):
-                model.warm_cache(z=z, modes=modes, shifts=shifts)
-        return self
-
-    def clear_cache(self):
-        for _, model in self.components:
-            if hasattr(model, "clear_cache"):
-                model.clear_cache()
-
-
 @dataclass(frozen=True)
 class TracerBias:
     r"""Eulerian bias parameters for one deterministic LSS tracer.
@@ -1574,7 +1593,7 @@ def _is_matter_field(field):
     return str(field).lower() in {"m", "matter"}
 
 
-class SPTMultiTracerBispectrumMultipole3D(LinearCombinationBispectrumMultipole3D):
+class SPTMultiTracerBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
     r"""Tree-level real-space SPT multipoles for an ordered multi-tracer triple.
 
     Parameters
@@ -1681,7 +1700,20 @@ class SPTMultiTracerBispectrumMultipole3D(LinearCombinationBispectrumMultipole3D
             fftlog_config=fftlog_config,
             angular_kernel_config=angular_kernel_config,
         )
-        super().__init__(((cf, tree), (1.0, quadratic), (1.0, tidal)))
+        # All three pieces use the same linear-power FFTLog expansion.  Rebind
+        # separable terms to the tree component so identity-keyed coefficient
+        # and angular-kernel caches are shared by the flattened SPT model.
+        shared_component = tree._linear_power_component
+
+        def share_component(term):
+            if isinstance(term, SeparableMultipoleTerm):
+                return replace(term, component=shared_component)
+            return term
+
+        terms = [term.scaled_by(cf) for term in tree.terms]
+        terms.extend(share_component(term) for term in quadratic.terms)
+        terms.extend(share_component(term) for term in tidal.terms)
+        super().__init__(terms, angular_kernel_config=angular_kernel_config)
 
         self.field_order = fields
         self.tracer_biases = biases

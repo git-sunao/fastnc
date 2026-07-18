@@ -25,3 +25,13 @@ Tutorial notebook is available at [tutorial.ipynb](docs/tutorial.ipynb).
 ## Note on cache
 This package create cache. The directory is at ~/.fastnc by default.
 This can be changed by setting an environment variable `FASTNC_CACHE_DIR`. 
+
+
+# Expected Features:
+- logging, depth aware
+- ia
+- semi-analytic ia
+- sample_combinations -> sample_combo
+- semi-analytic bispectrum, k2, k3 expansion (ell2, 2ll3 expansion).
+- check how the redshift dependent FFTLog cache is saved in semi-analytic approach
+- how should we update the model for varying model parameters, without instanciating the semi-analytic bispectrum model from scrach, to avoid remaking cache.

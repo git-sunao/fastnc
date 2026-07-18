@@ -31,8 +31,7 @@ from .analytic import (
     CompositeSemiAnalyticBispectrumMultipole2D,
     CompositeSemiAnalyticBispectrumMultipole3D, TreeBispectrumMultipole3D,
     QuadraticBiasBispectrumMultipole3D, TidalBiasBispectrumMultipole3D,
-    LinearCombinationBispectrumMultipole3D, TracerBias,
-    SPTMultiTracerBispectrumMultipole3D, SPTGalaxyBispectrumMultipole3D,
+    TracerBias, SPTMultiTracerBispectrumMultipole3D, SPTGalaxyBispectrumMultipole3D,
 )
 
 from .presets import (
