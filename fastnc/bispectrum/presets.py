@@ -14,6 +14,11 @@ import numpy as np
 from .base import Bispectrum3D
 from .support import Support3D
 from .halofit import Halofit
+from .analytic import (
+    BiHalofitBispectrumMultipole3D,
+    PowerLawAngularKernelTableConfig,
+)
+from fastnc.hankel.wrapper import PowerLawFFTLogConfig
 
 
 
@@ -217,6 +222,59 @@ class BiHalofitBispectrum3D(Bispectrum3D):
                 "BiHalofitBispectrum3D.from_cosmology(...)."
             )
         return self.halofit.get_bihalofit(k1, k2, k3, z, **params)
+
+    def fourier_multipole(
+        self,
+        *,
+        r1: float = 0.5,
+        r2: float = 0.0,
+        k_grid=None,
+        fftlog_config: PowerLawFFTLogConfig | None = None,
+        angular_kernel_config: PowerLawAngularKernelTableConfig | None = None,
+    ):
+        """Return semi-analytic multipoles of the complete BiHalofit model.
+
+        The one-halo fitting shape parameters are fixed to ``r1`` and ``r2``,
+        making the one-halo product separable.  The complete three-halo term
+        is included in the same composite object.
+        """
+        if not self.ready:
+            raise RuntimeError("Configure cosmology, pklin, and growth first.")
+        return BiHalofitBispectrumMultipole3D(
+            self.halofit,
+            r1=r1,
+            r2=r2,
+            k_grid=k_grid,
+            fftlog_config=fftlog_config,
+            angular_kernel_config=angular_kernel_config,
+        )
+
+    def projected_fourier_multipole(
+        self,
+        projector,
+        *,
+        sample_combination=None,
+        modes=None,
+        mode_max=None,
+        r1: float = 0.5,
+        r2: float = 0.0,
+        k_grid=None,
+        fftlog_config: PowerLawFFTLogConfig | None = None,
+        angular_kernel_config: PowerLawAngularKernelTableConfig | None = None,
+    ):
+        """Return the coefficient-level LOS projection of the multipoles."""
+        return self.fourier_multipole(
+            r1=r1,
+            r2=r2,
+            k_grid=k_grid,
+            fftlog_config=fftlog_config,
+            angular_kernel_config=angular_kernel_config,
+        ).project_los(
+            projector,
+            sample_combination=sample_combination,
+            modes=modes,
+            mode_max=mode_max,
+        )
 
 
 class OneHaloProductBispectrum3D(Bispectrum3D):

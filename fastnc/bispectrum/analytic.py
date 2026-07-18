@@ -510,12 +510,20 @@ class SeparableMultipoleTerm(SemiAnalyticMultipoleTerm):
     u: object
     v: object
     amplitude: complex = 1.0
+    modes: tuple[int, ...] | None = None
+
+    def supports_mode(self, mode: int) -> bool:
+        return self.modes is None or int(mode) in self.modes
 
     @property
     def kernel_shifts(self):
         return (int(self.p),)
 
     def evaluate(self, mode, k2, k3, z, *, cache, kernel_tables):
+        if not self.supports_mode(int(mode)):
+            shape = np.broadcast(np.asarray(k2), np.asarray(k3)).shape
+            value = np.zeros(shape, dtype=complex)
+            return value.item() if value.shape == () else value
         k2, k3 = np.broadcast_arrays(np.asarray(k2, dtype=float), np.asarray(k3, dtype=float))
         k = np.hypot(k2, k3)
         x2, x3 = k2 / k, k3 / k
@@ -665,7 +673,11 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
                 term.amplitude
                 * np.asarray(term.u(x2, x3))
             )
-            result += prefactor[None, :] * core
+            if term.modes is None:
+                result += prefactor[None, :] * core
+            else:
+                active = np.isin(modes, np.asarray(term.modes, dtype=int))
+                result[active] += prefactor[None, :] * core[active]
 
         result = result.reshape((modes.size,) + shape)
         return result[0] if scalar_mode else result
@@ -1135,7 +1147,11 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
                         * np.asarray(term.u(x2, x3))
                         * np.asarray(term.v(k1_chunk, k2_chunk, z))
                     )
-                    result[:, start:stop] += prefactor[None, :] * core
+                    if term.modes is None:
+                        result[:, start:stop] += prefactor[None, :] * core
+                    else:
+                        active = np.isin(modes, np.asarray(term.modes, dtype=int))
+                        result[active, start:stop] += prefactor[None, :] * core[active]
 
         result = result.reshape((modes.size,) + shape)
         if shape == ():
@@ -1441,6 +1457,208 @@ def _t31(p, x2, x3):
     if p == -2:
         return (x2**2 - x3**2) ** 2 / (4.0 * x3**2)
     raise ValueError("tidal shifts are p=0,+/-2")
+
+
+
+class BiHalofitBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
+    r"""Semi-analytic full-Fourier multipoles of the complete BiHalofit model.
+
+    The three-halo term is decomposed into separable FFTLog contributions.
+    The one-halo shape variables are fixed to the constructor values
+    ``r1`` and ``r2``, making that contribution exactly separable:
+
+    .. math::
+       B_{1h}^{\rm fixed}=H(k_1;z,r_1,r_2)H(k_2;z,r_1,r_2)
+                           H(k_3;z,r_1,r_2).
+
+    One- and three-halo contributions are combined in this single model.
+    """
+
+    def __init__(
+        self,
+        halofit,
+        *,
+        r1: float = 0.5,
+        r2: float = 0.0,
+        k_grid=None,
+        fftlog_config: PowerLawFFTLogConfig | None = None,
+        angular_kernel_config: PowerLawAngularKernelTableConfig | None = None,
+    ):
+        r1 = float(r1)
+        r2 = float(r2)
+        if not np.isfinite(r1) or not 0.0 <= r1 <= 1.0:
+            raise ValueError("r1 must be finite and lie in [0, 1]")
+        if not np.isfinite(r2) or not 0.0 <= r2 <= 1.0:
+            raise ValueError("r2 must be finite and lie in [0, 1]")
+
+        halofit.update()
+        k_grid = np.asarray(halofit.k if k_grid is None else k_grid, dtype=float)
+        if k_grid.ndim != 1 or k_grid.size < 2 or np.any(k_grid <= 0.0):
+            raise ValueError("k_grid must be a one-dimensional positive grid")
+        fftlog_config = fftlog_config or PowerLawFFTLogConfig()
+        ns = float(halofit.cosmo["ns"])
+
+        def coeffs(z):
+            return halofit.get_bihalofit_coeffs(np.asarray(z, dtype=float))
+
+        def q_and_coeff(k, z):
+            c = coeffs(z)
+            q = np.maximum(np.asarray(k, dtype=float) * c["r_sigma"], 1.0e-100)
+            return q, c
+
+        def damping(k, z):
+            q, c = q_and_coeff(k, z)
+            return 1.0 / (1.0 + c["en"] * q)
+
+        def effective_power(k, z):
+            q, c = q_and_coeff(k, z)
+            pl = halofit.get_interpolated_pklin(np.asarray(k, dtype=float), z)
+            return (
+                (1.0 + c["fn"] * q**2)
+                / (1.0 + c["gn"] * q + c["hn"] * q**2)
+                * pl
+                + 1.0
+                / (c["mn"] * q**c["mun"] + c["nn"] * q**c["nun"])
+                / (1.0 + (c["pn"] * q) ** -3)
+            )
+
+        def dressed_power(k, z):
+            return damping(k, z) * effective_power(k, z)
+
+        def one_halo_profile(k, z):
+            q, c = q_and_coeff(k, z)
+            an = 10.0 ** (c["log10an1"] + c["log10an2"] * r1 ** c["gan"])
+            aln = 10.0 ** (c["log10aln1"] + c["log10aln2"] * r2**2)
+            aln = np.minimum(aln, 1.0 - (2.0 / 3.0) * ns)
+            ben = 10.0 ** (c["log10ben1"] + c["log10ben2"] * r2)
+            return (
+                1.0 / (an * q**aln + c["bn"] * q**ben)
+                / (1.0 + 1.0 / (c["cn"] * q))
+            )
+
+        component_i = FFTLogComponent("bihalofit-I", k_grid, damping, fftlog_config)
+        component_h = FFTLogComponent("bihalofit-IPE", k_grid, dressed_power, fftlog_config)
+        component_1h = FFTLogComponent(
+            f"bihalofit-1h-r1={r1:g}-r2={r2:g}",
+            k_grid,
+            one_halo_profile,
+            fftlog_config,
+        )
+
+        def one(x2, x3):
+            return np.ones(np.broadcast(x2, x3).shape, dtype=float)
+
+        def v_1h(k2, k3, z):
+            return one_halo_profile(k2, z) * one_halo_profile(k3, z)
+
+        def v_23(k2, k3, z):
+            return dressed_power(k2, z) * dressed_power(k3, z)
+
+        def v_31(k2, k3, z):
+            return damping(k2, z) * dressed_power(k3, z)
+
+        def v_12(k2, k3, z):
+            return dressed_power(k2, z) * damping(k3, z)
+
+        def f23_u(mode_abs):
+            if mode_abs == 0:
+                return lambda x2, x3: np.full(np.broadcast(x2, x3).shape, 12.0 / 7.0)
+            if mode_abs == 1:
+                return lambda x2, x3: 0.5 * (x2 / x3 + x3 / x2)
+            if mode_abs == 2:
+                return lambda x2, x3: np.full(np.broadcast(x2, x3).shape, 1.0 / 7.0)
+            raise ValueError("F2 23 has only |L|=0,1,2")
+
+        terms = [
+            SeparableMultipoleTerm(
+                "bihalofit-1h-fixed-shape", component_1h, 0, one, v_1h
+            )
+        ]
+
+        for mode_abs in (0, 1, 2):
+            active_modes = (0,) if mode_abs == 0 else (-mode_abs, mode_abs)
+            terms.append(
+                SeparableMultipoleTerm(
+                    f"bihalofit-3h-23-F2-L{mode_abs}",
+                    component_i,
+                    0,
+                    f23_u(mode_abs),
+                    v_23,
+                    modes=active_modes,
+                )
+            )
+
+        for p in (-2, 0, 2):
+            terms.extend(
+                [
+                    SeparableMultipoleTerm(
+                        f"bihalofit-3h-31-F2-p{p}",
+                        component_h,
+                        p,
+                        lambda x2, x3, p=p: 2.0 * _a31(p, x2, x3),
+                        v_31,
+                    ),
+                    SeparableMultipoleTerm(
+                        f"bihalofit-3h-12-F2-p{p}",
+                        component_h,
+                        p,
+                        lambda x2, x3, p=p: 2.0 * _a31(p, x3, x2),
+                        v_12,
+                    ),
+                ]
+            )
+
+        def v_dn23(k2, k3, z):
+            c = coeffs(z)
+            k = np.hypot(k2, k3)
+            return 2.0 * c["dn"] * c["r_sigma"] * k * v_23(k2, k3, z)
+
+        def v_dn31(k2, k3, z):
+            c = coeffs(z)
+            return (
+                2.0
+                * c["dn"]
+                * c["r_sigma"]
+                * k3
+                * damping(k2, z)
+                * dressed_power(k3, z)
+            )
+
+        def v_dn12(k2, k3, z):
+            c = coeffs(z)
+            return (
+                2.0
+                * c["dn"]
+                * c["r_sigma"]
+                * k2
+                * dressed_power(k2, z)
+                * damping(k3, z)
+            )
+
+        terms.extend(
+            [
+                SeparableMultipoleTerm(
+                    "bihalofit-3h-23-dnq1", component_i, 1, one, v_dn23
+                ),
+                SeparableMultipoleTerm(
+                    "bihalofit-3h-31-dnq3", component_h, 0, one, v_dn31
+                ),
+                SeparableMultipoleTerm(
+                    "bihalofit-3h-12-dnq2", component_h, 0, one, v_dn12
+                ),
+            ]
+        )
+
+        super().__init__(terms, angular_kernel_config=angular_kernel_config)
+        self.halofit = halofit
+        self.r1 = r1
+        self.r2 = r2
+        self.k_grid = k_grid
+        self.fftlog_config = fftlog_config
+        self._damping = damping
+        self._effective_power = effective_power
+        self._dressed_power = dressed_power
+        self._one_halo_profile = one_halo_profile
 
 
 class QuadraticBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
