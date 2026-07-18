@@ -117,7 +117,7 @@ class PowerLawAngularKernelTableConfig:
     """Numerical table configuration for the kernel in Eq. (app_kernel_def).
 
     The geometry convention is fixed to
-    ``r=min(k1,k2)/sqrt(k1**2+k2**2)`` and
+    ``r=min(k2,k3)/sqrt(k2**2+k3**2)`` and
     ``s**2=1+2*r*sqrt(1-r**2)*cos(phi)``.
     """
     n_r: int = 256
@@ -232,7 +232,7 @@ class PowerLawAngularKernelTable:
 
 @dataclass(frozen=True)
 class TensorProductGeometryCache:
-    r"""Geometry shared by evaluations on a tensor-product ``(k1, k2)`` grid.
+    r"""Geometry shared by evaluations on a tensor-product ``(k2, k3)`` grid.
 
     The cache is independent of redshift and of the physical bispectrum model.
     It stores the full geometric quantities that cannot generally be compressed,
@@ -251,11 +251,11 @@ class TensorProductGeometryCache:
     for repeated redshift or mode evaluations.
     """
 
-    k1_axis: np.ndarray
     k2_axis: np.ndarray
+    k3_axis: np.ndarray
     k: np.ndarray
-    x1: np.ndarray
     x2: np.ndarray
+    x3: np.ndarray
     r: np.ndarray
     r_unique: np.ndarray | None
     r_inverse: np.ndarray | None
@@ -263,32 +263,32 @@ class TensorProductGeometryCache:
     has_exact_ratio_groups: bool
 
     @classmethod
-    def from_axes(cls, k1_axis, k2_axis):
-        k1_axis = np.asarray(k1_axis, dtype=float)
+    def from_axes(cls, k2_axis, k3_axis):
         k2_axis = np.asarray(k2_axis, dtype=float)
-        if k1_axis.ndim != 1 or k2_axis.ndim != 1:
-            raise ValueError("k1_axis and k2_axis must be one-dimensional")
-        if k1_axis.size == 0 or k2_axis.size == 0:
-            raise ValueError("k1_axis and k2_axis must be non-empty")
-        if np.any(k1_axis <= 0.0) or np.any(k2_axis <= 0.0):
+        k3_axis = np.asarray(k3_axis, dtype=float)
+        if k2_axis.ndim != 1 or k3_axis.ndim != 1:
+            raise ValueError("k2_axis and k3_axis must be one-dimensional")
+        if k2_axis.size == 0 or k3_axis.size == 0:
+            raise ValueError("k2_axis and k3_axis must be non-empty")
+        if np.any(k2_axis <= 0.0) or np.any(k3_axis <= 0.0):
             raise ValueError("tensor-product axes must be strictly positive")
-        if np.any(np.diff(k1_axis) <= 0.0) or np.any(np.diff(k2_axis) <= 0.0):
+        if np.any(np.diff(k2_axis) <= 0.0) or np.any(np.diff(k3_axis) <= 0.0):
             raise ValueError("tensor-product axes must be strictly increasing")
 
-        k1 = k1_axis[:, None]
-        k2 = k2_axis[None, :]
-        k = np.hypot(k1, k2)
-        x1 = k1 / k
+        k2 = k2_axis[:, None]
+        k3 = k3_axis[None, :]
+        k = np.hypot(k2, k3)
         x2 = k2 / k
+        x3 = k3 / k
 
         same_axis = (
-            k1_axis.shape == k2_axis.shape
-            and np.array_equal(k1_axis, k2_axis)
+            k2_axis.shape == k3_axis.shape
+            and np.array_equal(k2_axis, k3_axis)
         )
         is_log_uniform = False
         dln = None
-        if same_axis and k1_axis.size > 1:
-            log_axis = np.log(k1_axis)
+        if same_axis and k2_axis.size > 1:
+            log_axis = np.log(k2_axis)
             dln_values = np.diff(log_axis)
             is_log_uniform = np.allclose(
                 dln_values,
@@ -304,7 +304,7 @@ class TensorProductGeometryCache:
             # r_ij=[1+exp(2 |i-j| Delta)]^{-1/2}.  This construction is
             # exact at the level of the grid definition, avoiding fragile
             # floating-point equality grouping of the full r array.
-            n_axis = k1_axis.size
+            n_axis = k2_axis.size
             separation = np.abs(
                 np.arange(n_axis)[:, None] - np.arange(n_axis)[None, :]
             )
@@ -319,18 +319,18 @@ class TensorProductGeometryCache:
             )
             has_exact_ratio_groups = True
         else:
-            r = np.minimum(k1, k2) / k
+            r = np.minimum(k2, k3) / k
             r_unique = None
             r_inverse = None
             r_groups = None
             has_exact_ratio_groups = False
 
         return cls(
-            k1_axis=k1_axis,
             k2_axis=k2_axis,
+            k3_axis=k3_axis,
             k=k,
-            x1=x1,
             x2=x2,
+            x3=x3,
             r=r,
             r_unique=r_unique,
             r_inverse=r_inverse,
@@ -469,7 +469,7 @@ class FFTLogCoefficientCache:
 class SemiAnalyticMultipoleTerm:
     """Base class for one additive contribution to a semi-analytic multipole."""
 
-    def evaluate(self, mode, k1, k2, z, *, cache, kernel_tables):
+    def evaluate(self, mode, k2, k3, z, *, cache, kernel_tables):
         raise NotImplementedError
 
 
@@ -488,17 +488,17 @@ class SeparableMultipoleTerm(SemiAnalyticMultipoleTerm):
     def kernel_shifts(self):
         return (int(self.p),)
 
-    def evaluate(self, mode, k1, k2, z, *, cache, kernel_tables):
-        k1, k2 = np.broadcast_arrays(np.asarray(k1, dtype=float), np.asarray(k2, dtype=float))
-        k = np.hypot(k1, k2)
-        x1, x2 = k1 / k, k2 / k
-        r = np.minimum(k1, k2) / k
+    def evaluate(self, mode, k2, k3, z, *, cache, kernel_tables):
+        k2, k3 = np.broadcast_arrays(np.asarray(k2, dtype=float), np.asarray(k3, dtype=float))
+        k = np.hypot(k2, k3)
+        x2, x3 = k2 / k, k3 / k
+        r = np.minimum(k2, k3) / k
         coeff, nu = cache.get(self.component, z)
         table = kernel_tables[id(self.component)]
         kernel = table.evaluate(int(mode), r, shift=int(self.p))
         powers = k.reshape((1,) + k.shape) ** nu.reshape((-1,) + (1,) * k.ndim)
         result = np.sum(coeff.reshape((-1,) + (1,) * k.ndim) * powers * kernel, axis=0)
-        result = self.amplitude * self.u(x1, x2) * self.v(k1, k2, z) * result
+        result = self.amplitude * self.u(x2, x3) * self.v(k2, k3, z) * result
         return result.item() if result.shape == () else result
 
 
@@ -510,8 +510,8 @@ class DirectFourierTerm(SemiAnalyticMultipoleTerm):
     coefficient: object
     amplitude: complex = 1.0
 
-    def evaluate(self, mode, k1, k2, z, *, cache, kernel_tables):
-        value = self.amplitude * self.coefficient(int(mode), k1, k2, z)
+    def evaluate(self, mode, k2, k3, z, *, cache, kernel_tables):
+        value = self.amplitude * self.coefficient(int(mode), k2, k3, z)
         return np.asarray(value).item() if np.asarray(value).shape == () else value
 
 
@@ -522,11 +522,11 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
 
     For a separable term, this object evaluates the appendix-B coefficient
 
-        d_n(ell1, ell2) = int dchi W(chi) V(ell1/chi, ell2/chi; z)
+        d_n(ell2, ell3) = int dchi W(chi) V(ell2/chi, ell3/chi; z)
                          w_n(z) / chi**nu_n
 
     before contracting it with ``ell**nu_n K_L^(nu_n+p)(r)``.  It therefore
-    never evaluates ``B_L(k1,k2,z)`` on a three-dimensional LOS grid.
+    never evaluates ``B_L(k2,k3,z)`` on a three-dimensional LOS grid.
     """
 
     def __init__(self, projector, sample_combination=None):
@@ -554,25 +554,25 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
                 "(n_ell_point, n_chi) during LOS projection"
             ) from error
 
-    def evaluate(self, multipole3d, mode, ell1, ell2):
+    def evaluate(self, multipole3d, mode, ell2, ell3):
         modes = np.atleast_1d(np.asarray(mode, dtype=int))
         scalar_mode = np.isscalar(mode)
-        ell1, ell2 = np.broadcast_arrays(
-            np.asarray(ell1, dtype=float), np.asarray(ell2, dtype=float)
+        ell2, ell3 = np.broadcast_arrays(
+            np.asarray(ell2, dtype=float), np.asarray(ell3, dtype=float)
         )
-        if np.any(ell1 <= 0.0) or np.any(ell2 <= 0.0):
-            raise ValueError("ell1 and ell2 must be strictly positive")
-        shape = ell1.shape
-        e1 = ell1.ravel()
-        e2 = ell2.ravel()
+        if np.any(ell2 <= 0.0) or np.any(ell3 <= 0.0):
+            raise ValueError("ell2 and ell3 must be strictly positive")
+        shape = ell2.shape
+        e1 = ell2.ravel()
+        e2 = ell3.ravel()
         n_point = e1.size
         n_chi = self.chi.size
         ell = np.hypot(e1, e2)
-        x1 = e1 / ell
-        x2 = e2 / ell
+        x2 = e1 / ell
+        x3 = e2 / ell
         r = np.minimum(e1, e2) / ell
-        k1 = e1[:, None] / self.chi[None, :]
-        k2 = e2[:, None] / self.chi[None, :]
+        k2 = e1[:, None] / self.chi[None, :]
+        k3 = e2[:, None] / self.chi[None, :]
         z = self.z[None, :]
         los_weight = self.weight[None, :]
         result = np.zeros((modes.size, n_point), dtype=complex)
@@ -581,7 +581,7 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
             if isinstance(term, DirectFourierTerm):
                 for i_mode, requested_mode in enumerate(modes):
                     value = term.coefficient(
-                        int(requested_mode), k1, k2, z
+                        int(requested_mode), k2, k3, z
                     )
                     value = self._as_los_values(value, n_point, n_chi)
                     result[i_mode] += term.amplitude * np.trapezoid(
@@ -602,7 +602,7 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
                 modes, r, shift=int(term.p), unique=True
             )
             v = self._as_los_values(
-                term.v(k1, k2, z), n_point, n_chi
+                term.v(k2, k3, z), n_point, n_chi
             )
             chi_power = self.chi[:, None] ** (-nu[None, :])
             # Shape: (n_point, n_nu).  These are the projected d_n
@@ -620,7 +620,7 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
             )
             prefactor = (
                 term.amplitude
-                * np.asarray(term.u(x1, x2))
+                * np.asarray(term.u(x2, x3))
             )
             result += prefactor[None, :] * core
 
@@ -633,7 +633,7 @@ class CompositeSemiAnalyticBispectrumMultipole2D(BispectrumMultipole2D):
     :class:`CompositeSemiAnalyticBispectrumMultipole3D`.
 
     Projection is performed on the FFTLog coefficients ``w_n(z)`` to form
-    the angular coefficients ``d_n(ell1,ell2)`` before the universal angular
+    the angular coefficients ``d_n(ell2,ell3)`` before the universal angular
     kernels are contracted.
     """
 
@@ -645,8 +645,8 @@ class CompositeSemiAnalyticBispectrumMultipole2D(BispectrumMultipole2D):
         )
         self.sample_combination = self.projector.sample_combination
 
-    def evaluate(self, mode, ell1, ell2):
-        return self.projector.evaluate(self.multipole3d, mode, ell1, ell2)
+    def evaluate(self, mode, ell2, ell3):
+        return self.projector.evaluate(self.multipole3d, mode, ell2, ell3)
 
     def warm(self, modes=None):
         """Warm FFTLog coefficients and angular kernels used by projection."""
@@ -715,40 +715,40 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         self.coefficient_cache.clear()
         self._kernel_tables.clear()
 
-    def prepare_grid(self, k1_axis, k2_axis):
+    def prepare_grid(self, k2_axis, k3_axis):
         """Prepare reusable geometry for a tensor-product Fourier grid.
 
         The returned :class:`TensorProductGeometryCache` is redshift
         independent.  It should be reused when evaluating the same axes at
         multiple redshifts or for several physical models.
         """
-        return TensorProductGeometryCache.from_axes(k1_axis, k2_axis)
+        return TensorProductGeometryCache.from_axes(k2_axis, k3_axis)
 
     @staticmethod
-    def _resolve_grid_geometry(k1_axis, k2_axis, geometry):
+    def _resolve_grid_geometry(k2_axis, k3_axis, geometry):
         if geometry is None:
-            if k1_axis is None or k2_axis is None:
+            if k2_axis is None or k3_axis is None:
                 raise ValueError(
-                    "k1_axis and k2_axis are required when geometry is not supplied"
+                    "k2_axis and k3_axis are required when geometry is not supplied"
                 )
-            return TensorProductGeometryCache.from_axes(k1_axis, k2_axis)
+            return TensorProductGeometryCache.from_axes(k2_axis, k3_axis)
         if not isinstance(geometry, TensorProductGeometryCache):
             raise TypeError("geometry must be a TensorProductGeometryCache")
-        if k1_axis is not None and not np.array_equal(
-            np.asarray(k1_axis, dtype=float), geometry.k1_axis
-        ):
-            raise ValueError("k1_axis does not match the supplied geometry")
         if k2_axis is not None and not np.array_equal(
             np.asarray(k2_axis, dtype=float), geometry.k2_axis
         ):
             raise ValueError("k2_axis does not match the supplied geometry")
+        if k3_axis is not None and not np.array_equal(
+            np.asarray(k3_axis, dtype=float), geometry.k3_axis
+        ):
+            raise ValueError("k3_axis does not match the supplied geometry")
         return geometry
 
     def evaluate_modes_grid(
         self,
         modes,
-        k1_axis=None,
         k2_axis=None,
+        k3_axis=None,
         z=None,
         *,
         geometry: TensorProductGeometryCache | None = None,
@@ -765,11 +765,11 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         """
         if z is None:
             raise ValueError("z is required")
-        geometry = self._resolve_grid_geometry(k1_axis, k2_axis, geometry)
+        geometry = self._resolve_grid_geometry(k2_axis, k3_axis, geometry)
         return self.evaluate_modes(
             modes,
-            geometry.k1_axis[:, None],
-            geometry.k2_axis[None, :],
+            geometry.k2_axis[:, None],
+            geometry.k3_axis[None, :],
             z,
             chunk_size=chunk_size,
             **params,
@@ -877,11 +877,11 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
                     table._build(int(mode), int(shift))
         return self
 
-    def evaluate(self, mode, k1, k2, z, **params):
-        values = self.evaluate_modes(np.atleast_1d(np.asarray(mode, dtype=int)), k1, k2, z, **params)
+    def evaluate(self, mode, k2, k3, z, **params):
+        values = self.evaluate_modes(np.atleast_1d(np.asarray(mode, dtype=int)), k2, k3, z, **params)
         return values[0] if np.isscalar(mode) else values
 
-    def evaluate_modes(self, modes, k1, k2, z, *, chunk_size=4096, **params):
+    def evaluate_modes(self, modes, k2, k3, z, *, chunk_size=4096, **params):
         """Evaluate many Fourier modes while sharing FFTLog contractions.
 
         ``z`` may be scalar or array-like.  Array-valued redshifts are grouped
@@ -892,12 +892,12 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         ----------
         modes
             Integer Fourier modes.
-        k1, k2
+        k2, k3
             Broadcast-compatible Fourier-mode arrays.
         z
             Scalar or broadcast-compatible array of redshifts.
         chunk_size
-            Number of flattened ``(k1,k2)`` points processed at once.  Set to
+            Number of flattened ``(k2,k3)`` points processed at once.  Set to
             ``None`` to process the entire input in one contraction.
         """
         modes = np.atleast_1d(np.asarray(modes, dtype=int))
@@ -906,19 +906,19 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
         if z_array.ndim == 0:
             return self._evaluate_modes_scalar(
                 modes,
-                k1,
                 k2,
+                k3,
                 float(z_array),
                 chunk_size=chunk_size,
                 **params,
             )
 
-        # LOS projection evaluates k1, k2, and z on a common redshift grid.
+        # LOS projection evaluates k2, k3, and z on a common redshift grid.
         # Group equal redshifts so each FFTLog coefficient vector is obtained
         # once and evaluated through the explicit scalar fast path.
         k1_array, k2_array, z_array = np.broadcast_arrays(
-            np.asarray(k1, dtype=float),
             np.asarray(k2, dtype=float),
+            np.asarray(k3, dtype=float),
             z_array,
         )
         output_shape = k1_array.shape
@@ -947,8 +947,8 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
     def _evaluate_modes_scalar(
         self,
         modes,
-        k1,
         k2,
+        k3,
         z,
         *,
         chunk_size=4096,
@@ -961,13 +961,13 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
             raise ValueError("_evaluate_modes_scalar requires scalar z")
         z = float(z_array)
 
-        k1, k2 = np.broadcast_arrays(np.asarray(k1, dtype=float), np.asarray(k2, dtype=float))
-        if np.any(k1 <= 0.0) or np.any(k2 <= 0.0):
-            raise ValueError("k1 and k2 must be strictly positive")
+        k2, k3 = np.broadcast_arrays(np.asarray(k2, dtype=float), np.asarray(k3, dtype=float))
+        if np.any(k2 <= 0.0) or np.any(k3 <= 0.0):
+            raise ValueError("k2 and k3 must be strictly positive")
 
-        shape = k1.shape
-        flat_k1 = k1.ravel()
-        flat_k2 = k2.ravel()
+        shape = k2.shape
+        flat_k1 = k2.ravel()
+        flat_k2 = k3.ravel()
         n_point = flat_k1.size
         if chunk_size is None:
             chunk_size = n_point
@@ -1014,8 +1014,8 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
             table = self._ensure_kernel_table(component)
 
             for start, stop, k1_chunk, k2_chunk, k, r, unique_r, r_inverse in geometry_chunks:
-                x1 = k1_chunk / k
-                x2 = k2_chunk / k
+                x2 = k1_chunk / k
+                x3 = k2_chunk / k
 
                 # ``unique=True`` evaluates the interpolation at unique r
                 # values and restores the original chunk ordering.  The
@@ -1041,7 +1041,7 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
                 for term in terms:
                     prefactor = (
                         term.amplitude
-                        * np.asarray(term.u(x1, x2))
+                        * np.asarray(term.u(x2, x3))
                         * np.asarray(term.v(k1_chunk, k2_chunk, z))
                     )
                     result[:, start:stop] += prefactor[None, :] * core
@@ -1056,34 +1056,34 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
 # Predefined physical model: tree-level matter bispectrum
 # -----------------------------------------------------------------------------
 
-def _a23(p, x1, x2):
+def _a31(p, x2, x3):
     if p == 2:
-        return -5.0 / (28.0 * x2**2)
+        return -5.0 / (28.0 * x3**2)
     if p == 0:
-        return (10.0 * x2**2 + 3.0 * x1**2) / (28.0 * x2**2)
+        return (10.0 * x3**2 + 3.0 * x2**2) / (28.0 * x3**2)
     if p == -2:
-        return (2.0 * x1**4 + 3.0 * x1**2 * x2**2 - 5.0 * x2**4) / (28.0 * x2**2)
+        return (2.0 * x2**4 + 3.0 * x2**2 * x3**2 - 5.0 * x3**4) / (28.0 * x3**2)
     raise ValueError("tree F2 shifts are p=0,+/-2")
 
 
-def _tree12_coefficient(mode, linear_power):
+def _tree23_coefficient(mode, linear_power):
     abs_mode = abs(int(mode))
 
-    def coefficient(requested_mode, k1, k2, z):
+    def coefficient(requested_mode, k2, k3, z):
         if abs(int(requested_mode)) != abs_mode:
-            return np.zeros(np.broadcast(k1, k2).shape, dtype=float)
+            return np.zeros(np.broadcast(k2, k3).shape, dtype=float)
 
-        p1 = linear_power(k1, z)
-        p2 = linear_power(k2, z)
+        p1 = linear_power(k2, z)
+        p2 = linear_power(k3, z)
 
         if abs_mode == 0:
             prefactor = 12.0 / 7.0
         elif abs_mode == 1:
-            prefactor = 0.5 * (k1 / k2 + k2 / k1)
+            prefactor = 0.5 * (k2 / k3 + k3 / k2)
         elif abs_mode == 2:
             prefactor = 1.0 / 7.0
         else:
-            raise ValueError(f"Unsupported tree 12 mode: {mode}")
+            raise ValueError(f"Unsupported tree 23 mode: {mode}")
 
         return prefactor * p1 * p2
 
@@ -1108,50 +1108,50 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
             fftlog_config=fftlog_config or PowerLawFFTLogConfig(),
         )
         terms = [
-            DirectFourierTerm("tree-12-F2", _tree12_coefficient(0, linear_power)),
-            DirectFourierTerm("tree-12-F2", _tree12_coefficient(1, linear_power)),
-            DirectFourierTerm("tree-12-F2", _tree12_coefficient(2, linear_power)),
-            SeparableMultipoleTerm("tree-23-F2-p0", component, 0,
-                                   lambda x1, x2: 2.0 * _a23(0, x1, x2),
-                                   lambda k1, k2, z: linear_power(k2, z)),
-            SeparableMultipoleTerm("tree-23-F2-p2", component, 2,
-                                   lambda x1, x2: 2.0 * _a23(2, x1, x2),
-                                   lambda k1, k2, z: linear_power(k2, z)),
+            DirectFourierTerm("tree-23-F2", _tree23_coefficient(0, linear_power)),
+            DirectFourierTerm("tree-23-F2", _tree23_coefficient(1, linear_power)),
+            DirectFourierTerm("tree-23-F2", _tree23_coefficient(2, linear_power)),
             SeparableMultipoleTerm("tree-31-F2-p0", component, 0,
-                                   lambda x1, x2: 2.0 * _a23(0, x2, x1),
-                                   lambda k1, k2, z: linear_power(k1, z)),
+                                   lambda x2, x3: 2.0 * _a31(0, x2, x3),
+                                   lambda k2, k3, z: linear_power(k3, z)),
             SeparableMultipoleTerm("tree-31-F2-p2", component, 2,
-                                   lambda x1, x2: 2.0 * _a23(2, x2, x1),
-                                   lambda k1, k2, z: linear_power(k1, z)),
+                                   lambda x2, x3: 2.0 * _a31(2, x2, x3),
+                                   lambda k2, k3, z: linear_power(k3, z)),
+            SeparableMultipoleTerm("tree-12-F2-p0", component, 0,
+                                   lambda x2, x3: 2.0 * _a31(0, x3, x2),
+                                   lambda k2, k3, z: linear_power(k2, z)),
+            SeparableMultipoleTerm("tree-12-F2-p2", component, 2,
+                                   lambda x2, x3: 2.0 * _a31(2, x3, x2),
+                                   lambda k2, k3, z: linear_power(k2, z)),
         ]
         if regularize_squeezed:
-            def ureg(x1, x2):
-                return (x1*x1 - x2*x2)**2 / (14.0*x1*x1*x2*x2)
-            def vreg(k1, k2, z):
-                p1, p2 = linear_power(k1, z), linear_power(k2, z)
-                ksq = k1*k1 + k2*k2
+            def ureg(x2, x3):
+                return (x2*x2 - x3*x3)**2 / (14.0*x2*x2*x3*x3)
+            def vreg(k2, k3, z):
+                p1, p2 = linear_power(k2, z), linear_power(k3, z)
+                ksq = k2*k2 + k3*k3
                 pbar = 0.5*(p1 + p2)
-                denom = k1*k1 - k2*k2
+                denom = k2*k2 - k3*k3
                 # Stable local derivative on the diagonal.
                 with np.errstate(divide="ignore", invalid="ignore"):
                     dp = (p1 - p2) / denom
-                diagonal = np.isclose(k1, k2, rtol=1.0e-8, atol=0.0)
+                diagonal = np.isclose(k2, k3, rtol=1.0e-8, atol=0.0)
                 if np.any(diagonal):
                     eps = 1.0e-4
-                    kp = k1 * np.exp(eps)
-                    km = k1 * np.exp(-eps)
+                    kp = k2 * np.exp(eps)
+                    km = k2 * np.exp(-eps)
                     deriv = (linear_power(kp, z) - linear_power(km, z)) / (kp - km)
-                    dp = np.where(diagonal, deriv / (2.0*k1), dp)
-                return 2.0*pbar - (k1**4 + 5.0*k1*k1*k2*k2 + k2**4) / ksq * dp
-            terms.append(SeparableMultipoleTerm("tree-23plus31-regularized", component, -2, ureg, vreg))
+                    dp = np.where(diagonal, deriv / (2.0*k2), dp)
+                return 2.0*pbar - (k2**4 + 5.0*k2*k2*k3*k3 + k3**4) / ksq * dp
+            terms.append(SeparableMultipoleTerm("tree-31plus12-regularized", component, -2, ureg, vreg))
         else:
             terms.extend([
-                SeparableMultipoleTerm("tree-23-F2-pminus2", component, -2,
-                                       lambda x1, x2: 2.0 * _a23(-2, x1, x2),
-                                       lambda k1, k2, z: linear_power(k2, z)),
                 SeparableMultipoleTerm("tree-31-F2-pminus2", component, -2,
-                                       lambda x1, x2: 2.0 * _a23(-2, x2, x1),
-                                       lambda k1, k2, z: linear_power(k1, z)),
+                                       lambda x2, x3: 2.0 * _a31(-2, x2, x3),
+                                       lambda k2, k3, z: linear_power(k3, z)),
+                SeparableMultipoleTerm("tree-12-F2-pminus2", component, -2,
+                                       lambda x2, x3: 2.0 * _a31(-2, x3, x2),
+                                       lambda k2, k3, z: linear_power(k2, z)),
             ])
         super().__init__(terms, angular_kernel_config=angular_kernel_config)
         self.linear_power = linear_power
@@ -1165,14 +1165,14 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
         modes = np.unique(np.abs(np.atleast_1d(np.asarray(modes, dtype=int))))
         return super().warm_cache(z=z, modes=modes, shifts=shifts)
 
-    def evaluate_modes(self, modes, k1, k2, z, *, chunk_size=4096, **params):
+    def evaluate_modes(self, modes, k2, k3, z, *, chunk_size=4096, **params):
         """Generic-array evaluation exploiting ``B_{-L}=B_L`` for tree level."""
         modes = np.atleast_1d(np.asarray(modes, dtype=int))
         work_modes = np.unique(np.abs(modes))
         work = super().evaluate_modes(
             work_modes,
-            k1,
             k2,
+            k3,
             z,
             chunk_size=chunk_size,
             **params,
@@ -1192,36 +1192,36 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
         return np.asarray(values)
 
     def _axis_divided_difference(self, geometry, p1_axis, p2_axis, z):
-        """Return ``[P(k1)-P(k2)]/(k1^2-k2^2)`` on the prepared grid."""
-        k1 = geometry.k1_axis[:, None]
-        k2 = geometry.k2_axis[None, :]
+        """Return ``[P(k2)-P(k3)]/(k2^2-k3^2)`` on the prepared grid."""
+        k2 = geometry.k2_axis[:, None]
+        k3 = geometry.k3_axis[None, :]
         p1 = p1_axis[:, None]
         p2 = p2_axis[None, :]
-        denominator = k1 * k1 - k2 * k2
+        denominator = k2 * k2 - k3 * k3
         with np.errstate(divide="ignore", invalid="ignore"):
             divided = (p1 - p2) / denominator
 
-        diagonal = np.isclose(k1, k2, rtol=1.0e-12, atol=0.0)
+        diagonal = np.isclose(k2, k3, rtol=1.0e-12, atol=0.0)
         if np.any(diagonal):
             # This is the continuous diagonal limit
             # D_P(k,k) = [2k]^{-1} dP/dk.  The derivative is evaluated only
-            # once on the k1 axis, rather than once per diagonal grid point.
+            # once on the k2 axis, rather than once per diagonal grid point.
             eps = 1.0e-4
-            kp = geometry.k1_axis * np.exp(eps)
-            km = geometry.k1_axis * np.exp(-eps)
+            kp = geometry.k2_axis * np.exp(eps)
+            km = geometry.k2_axis * np.exp(-eps)
             derivative = (
                 self._axis_values(self.linear_power, kp, z)
                 - self._axis_values(self.linear_power, km, z)
             ) / (kp - km)
-            diagonal_limit = derivative[:, None] / (2.0 * k1)
+            diagonal_limit = derivative[:, None] / (2.0 * k2)
             divided = np.where(diagonal, diagonal_limit, divided)
         return divided
 
     def evaluate_modes_grid(
         self,
         modes,
-        k1_axis=None,
         k2_axis=None,
+        k3_axis=None,
         z=None,
         *,
         geometry: TensorProductGeometryCache | None = None,
@@ -1229,20 +1229,20 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
     ):
         """Fast tree-level evaluation on a tensor-product Fourier grid.
 
-        The method evaluates ``P(k1;z)`` and ``P(k2;z)`` only on their
+        The method evaluates ``P(k2;z)`` and ``P(k3;z)`` only on their
         one-dimensional axes, reuses the exact ratio grouping for identical
         logarithmic axes, and assembles the hard-coded tree terms in a fused
         expression.  It returns an array with shape
-        ``(len(modes), len(k1_axis), len(k2_axis))``.
+        ``(len(modes), len(k2_axis), len(k3_axis))``.
         """
         if z is None:
             raise ValueError("z is required")
-        geometry = self._resolve_grid_geometry(k1_axis, k2_axis, geometry)
+        geometry = self._resolve_grid_geometry(k2_axis, k3_axis, geometry)
         modes = np.atleast_1d(np.asarray(modes, dtype=int))
         work_modes = np.unique(np.abs(modes))
 
-        p1_axis = self._axis_values(self.linear_power, geometry.k1_axis, z)
-        p2_axis = self._axis_values(self.linear_power, geometry.k2_axis, z)
+        p1_axis = self._axis_values(self.linear_power, geometry.k2_axis, z)
+        p2_axis = self._axis_values(self.linear_power, geometry.k3_axis, z)
         p1 = p1_axis[:, None]
         p2 = p2_axis[None, :]
         n_mode = work_modes.size
@@ -1252,9 +1252,9 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
         # require no FFTLog expansion and are assembled directly from the
         # axis-cached power spectra.
         p12 = p1 * p2
-        k1 = geometry.k1_axis[:, None]
-        k2 = geometry.k2_axis[None, :]
-        ratio = k1 / k2
+        k2 = geometry.k2_axis[:, None]
+        k3 = geometry.k3_axis[None, :]
+        ratio = k2 / k3
         abs_modes = np.abs(work_modes)
         result[abs_modes == 0] += (12.0 / 7.0) * p12
         result[abs_modes == 1] += 0.5 * (ratio + 1.0 / ratio) * p12
@@ -1272,28 +1272,28 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
         # The p=0,+2 23 and 31 pieces share the same core for a fixed p.
         for shift in (0, 2):
             prefactor = (
-                2.0 * _a23(shift, geometry.x1, geometry.x2) * p2
-                + 2.0 * _a23(shift, geometry.x2, geometry.x1) * p1
+                2.0 * _a31(shift, geometry.x2, geometry.x3) * p2
+                + 2.0 * _a31(shift, geometry.x3, geometry.x2) * p1
             )
             result += prefactor[None, :, :] * cores[shift]
 
         if self.regularize_squeezed:
             ureg = (
-                (geometry.x1 * geometry.x1 - geometry.x2 * geometry.x2) ** 2
-                / (14.0 * geometry.x1 * geometry.x1 * geometry.x2 * geometry.x2)
+                (geometry.x2 * geometry.x2 - geometry.x3 * geometry.x3) ** 2
+                / (14.0 * geometry.x2 * geometry.x2 * geometry.x3 * geometry.x3)
             )
             dp = self._axis_divided_difference(geometry, p1_axis, p2_axis, z)
             pbar = 0.5 * (p1 + p2)
-            k1sq = k1 * k1
-            k2sq = k2 * k2
+            k1sq = k2 * k2
+            k2sq = k3 * k3
             vreg = 2.0 * pbar - (
                 k1sq * k1sq + 5.0 * k1sq * k2sq + k2sq * k2sq
             ) / (geometry.k * geometry.k) * dp
             result += (ureg * vreg)[None, :, :] * cores[-2]
         else:
             prefactor = (
-                2.0 * _a23(-2, geometry.x1, geometry.x2) * p2
-                + 2.0 * _a23(-2, geometry.x2, geometry.x1) * p1
+                2.0 * _a31(-2, geometry.x2, geometry.x3) * p2
+                + 2.0 * _a31(-2, geometry.x3, geometry.x2) * p1
             )
             result += prefactor[None, :, :] * cores[-2]
 
@@ -1322,33 +1322,33 @@ def _pair_coefficients(coefficients):
     return values
 
 
-def _bias12_direct_coefficient(mode, linear_power, coefficient, fourier_factor):
+def _bias23_direct_coefficient(mode, linear_power, coefficient, fourier_factor):
     target = abs(int(mode))
 
-    def evaluate(requested_mode, k1, k2, z):
+    def evaluate(requested_mode, k2, k3, z):
         if abs(int(requested_mode)) != target:
-            return np.zeros(np.broadcast(k1, k2).shape, dtype=float)
+            return np.zeros(np.broadcast(k2, k3).shape, dtype=float)
         return (
             _value_at_z(coefficient, z)
             * fourier_factor
-            * linear_power(k1, z)
             * linear_power(k2, z)
+            * linear_power(k3, z)
         )
 
     return evaluate
 
 
-def _t23(p, x1, x2):
-    r"""Coefficient in ``S23=sum_p T23^(p) s^p``.
+def _t31(p, x2, x3):
+    r"""Coefficient in ``S31=sum_p T31^(p) s^p``.
 
-    Here ``x_i=k_i/sqrt(k1**2+k2**2)`` and ``p in {+2,0,-2}``.
+    Here ``x_i=k_i/sqrt(k2**2+k3**2)`` and ``p in {+2,0,-2}``.
     """
     if p == 2:
-        return 1.0 / (4.0 * x2**2)
+        return 1.0 / (4.0 * x3**2)
     if p == 0:
-        return (x2**2 - 3.0 * x1**2) / (6.0 * x2**2)
+        return (x3**2 - 3.0 * x2**2) / (6.0 * x3**2)
     if p == -2:
-        return (x1**2 - x2**2) ** 2 / (4.0 * x2**2)
+        return (x2**2 - x3**2) ** 2 / (4.0 * x3**2)
     raise ValueError("tidal shifts are p=0,+/-2")
 
 
@@ -1378,22 +1378,22 @@ class QuadraticBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipol
         )
         terms = [
             DirectFourierTerm(
-                "quadratic-bias-12-L0",
-                _bias12_direct_coefficient(0, linear_power, c12, 1.0),
-            ),
-            SeparableMultipoleTerm(
-                "quadratic-bias-23",
-                component,
-                0,
-                lambda x1, x2: np.ones(np.broadcast(x1, x2).shape),
-                lambda k1, k2, z: _value_at_z(c23, z) * linear_power(k2, z),
+                "quadratic-bias-23-L0",
+                _bias23_direct_coefficient(0, linear_power, c23, 1.0),
             ),
             SeparableMultipoleTerm(
                 "quadratic-bias-31",
                 component,
                 0,
-                lambda x1, x2: np.ones(np.broadcast(x1, x2).shape),
-                lambda k1, k2, z: _value_at_z(c31, z) * linear_power(k1, z),
+                lambda x2, x3: np.ones(np.broadcast(x2, x3).shape),
+                lambda k2, k3, z: _value_at_z(c31, z) * linear_power(k3, z),
+            ),
+            SeparableMultipoleTerm(
+                "quadratic-bias-12",
+                component,
+                0,
+                lambda x2, x3: np.ones(np.broadcast(x2, x3).shape),
+                lambda k2, k3, z: _value_at_z(c12, z) * linear_power(k2, z),
             ),
         ]
         super().__init__(terms, angular_kernel_config=angular_kernel_config)
@@ -1428,27 +1428,27 @@ class TidalBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D)
         )
         terms = [
             DirectFourierTerm(
-                "tidal-bias-12-L0",
-                _bias12_direct_coefficient(0, linear_power, c12, 1.0 / 6.0),
+                "tidal-bias-23-L0",
+                _bias23_direct_coefficient(0, linear_power, c23, 1.0 / 6.0),
             ),
             DirectFourierTerm(
-                "tidal-bias-12-L2",
-                _bias12_direct_coefficient(2, linear_power, c12, 1.0 / 4.0),
+                "tidal-bias-23-L2",
+                _bias23_direct_coefficient(2, linear_power, c23, 1.0 / 4.0),
             ),
         ]
         for pair, coefficient, swap, power_leg in (
-            ("23", c23, False, 2),
-            ("31", c31, True, 1),
+            ("31", c31, False, 3),
+            ("12", c12, True, 2),
         ):
             for shift in (0, 2, -2):
                 if swap:
-                    u = lambda x1, x2, p=shift: _t23(p, x2, x1)
+                    u = lambda x2, x3, p=shift: _t31(p, x3, x2)
                 else:
-                    u = lambda x1, x2, p=shift: _t23(p, x1, x2)
-                if power_leg == 2:
-                    v = lambda k1, k2, z, c=coefficient: _value_at_z(c, z) * linear_power(k2, z)
+                    u = lambda x2, x3, p=shift: _t31(p, x2, x3)
+                if power_leg == 3:
+                    v = lambda k2, k3, z, c=coefficient: _value_at_z(c, z) * linear_power(k3, z)
                 else:
-                    v = lambda k1, k2, z, c=coefficient: _value_at_z(c, z) * linear_power(k1, z)
+                    v = lambda k2, k3, z, c=coefficient: _value_at_z(c, z) * linear_power(k2, z)
                 terms.append(SeparableMultipoleTerm(
                     f"tidal-bias-{pair}-p{shift:+d}", component, shift, u, v
                 ))
@@ -1474,49 +1474,49 @@ class LinearCombinationBispectrumMultipole3D(BispectrumMultipole3D):
             raise ValueError("At least one component is required")
         self.components = tuple(normalized)
 
-    def evaluate(self, mode, k1, k2, z, **params):
+    def evaluate(self, mode, k2, k3, z, **params):
         total = 0.0
         for weight, model in self.components:
-            total = total + _value_at_z(weight, z) * model.evaluate(mode, k1, k2, z, **params)
+            total = total + _value_at_z(weight, z) * model.evaluate(mode, k2, k3, z, **params)
         return total
 
-    def evaluate_modes(self, modes, k1, k2, z, **params):
+    def evaluate_modes(self, modes, k2, k3, z, **params):
         total = None
         for weight, model in self.components:
             if hasattr(model, "evaluate_modes"):
-                value = model.evaluate_modes(modes, k1, k2, z, **params)
+                value = model.evaluate_modes(modes, k2, k3, z, **params)
             else:
-                value = np.asarray([model.evaluate(mode, k1, k2, z, **params) for mode in modes])
+                value = np.asarray([model.evaluate(mode, k2, k3, z, **params) for mode in modes])
             value = _value_at_z(weight, z) * value
             total = value if total is None else total + value
         return total
 
-    def evaluate_modes_grid(self, modes, k1_axis=None, k2_axis=None, z=None, *, geometry=None, **params):
+    def evaluate_modes_grid(self, modes, k2_axis=None, k3_axis=None, z=None, *, geometry=None, **params):
         if z is None:
             raise ValueError("z is required")
         total = None
         for weight, model in self.components:
             if hasattr(model, "evaluate_modes_grid"):
                 value = model.evaluate_modes_grid(
-                    modes, k1_axis, k2_axis, z, geometry=geometry, **params
+                    modes, k2_axis, k3_axis, z, geometry=geometry, **params
                 )
             else:
                 if geometry is not None:
-                    k1 = geometry.k1_axis[:, None]
-                    k2 = geometry.k2_axis[None, :]
+                    k2 = geometry.k2_axis[:, None]
+                    k3 = geometry.k3_axis[None, :]
                 else:
-                    k1 = np.asarray(k1_axis)[:, None]
-                    k2 = np.asarray(k2_axis)[None, :]
-                value = model.evaluate_modes(modes, k1, k2, z, **params)
+                    k2 = np.asarray(k2_axis)[:, None]
+                    k3 = np.asarray(k3_axis)[None, :]
+                value = model.evaluate_modes(modes, k2, k3, z, **params)
             value = _value_at_z(weight, z) * value
             total = value if total is None else total + value
         return total
 
-    def prepare_grid(self, k1_axis, k2_axis):
+    def prepare_grid(self, k2_axis, k3_axis):
         for _, model in self.components:
             if hasattr(model, "prepare_grid"):
-                return model.prepare_grid(k1_axis, k2_axis)
-        return TensorProductGeometryCache.from_axes(k1_axis, k2_axis)
+                return model.prepare_grid(k2_axis, k3_axis)
+        return TensorProductGeometryCache.from_axes(k2_axis, k3_axis)
 
     def warm_cache(self, *, z, modes, shifts=None):
         for _, model in self.components:
@@ -1580,7 +1580,7 @@ class SPTMultiTracerBispectrumMultipole3D(LinearCombinationBispectrumMultipole3D
     Parameters
     ----------
     field_order : sequence of str
-        Tracer identity assigned to ``(k1, k2, k3)``.  Matter may be written as
+        Tracer identity assigned to ``(k2, k3, k3)``.  Matter may be written as
         ``"m"`` or ``"matter"``.  Every other entry must be a key of
         ``tracer_biases``.  For example,
         ``("LOWZ", "CMASS", "matter")`` represents

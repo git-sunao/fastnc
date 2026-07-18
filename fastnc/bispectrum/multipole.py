@@ -217,7 +217,7 @@ class BispectrumMultipole2D:
 
 
 class BispectrumMultipole3D:
-    """Base object for a 3D bispectrum multipole ``B_L(k1,k2,z)``.
+    """Base object for a 3D bispectrum multipole ``B_L(k2,k3,z)``.
 
     This class represents the result of a multipole expansion performed before
     line-of-sight projection.  A projected angular multipole is obtained by
@@ -228,10 +228,10 @@ class BispectrumMultipole3D:
     basis: str = "fourier-even"
     support = None
 
-    def __call__(self, mode, k1, k2, z, **params):
-        return self.evaluate(mode, k1, k2, z, **params)
+    def __call__(self, mode, k2, k3, z, **params):
+        return self.evaluate(mode, k2, k3, z, **params)
 
-    def evaluate(self, mode, k1, k2, z, **params):
+    def evaluate(self, mode, k2, k3, z, **params):
         raise NotImplementedError
 
     def interpolate(self, config, **params):
@@ -281,13 +281,13 @@ class _LoSBispectrumMultipole2DEvaluator:
             modes=np.atleast_1d(np.asarray(modes, dtype=int)),
         )
 
-    def __call__(self, mode, ell1, ell2):
+    def __call__(self, mode, ell2, ell3):
         if np.isscalar(mode):
             return self.projector.evaluate(
                 self.multipole3d,
                 mode,
-                ell1,
                 ell2,
+                ell3,
                 sample_combination=self.sample_combination,
             )
 
@@ -296,8 +296,8 @@ class _LoSBispectrumMultipole2DEvaluator:
             self.projector.evaluate(
                 self.multipole3d,
                 int(m),
-                ell1,
                 ell2,
+                ell3,
                 sample_combination=self.sample_combination,
             )
             for m in modes
