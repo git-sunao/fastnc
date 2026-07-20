@@ -344,6 +344,33 @@ class TensorProductGeometryCache:
 
 
 
+class _MutablePhysicalCallable:
+    """Stable callable identity whose physical evaluator can be replaced.
+
+    Semi-analytic terms and FFTLog components keep a reference to this proxy,
+    so updating the underlying power spectrum does not rebuild the term graph
+    or the redshift-independent angular-kernel tables.
+    """
+
+    def __init__(self, evaluator):
+        if not callable(evaluator):
+            raise TypeError("physical evaluator must be callable")
+        self._evaluator = evaluator
+
+    @property
+    def evaluator(self):
+        return self._evaluator
+
+    def update(self, evaluator):
+        if not callable(evaluator):
+            raise TypeError("physical evaluator must be callable")
+        self._evaluator = evaluator
+        return self
+
+    def __call__(self, *args, **kwargs):
+        return self._evaluator(*args, **kwargs)
+
+
 @dataclass(frozen=True, eq=False)
 class FFTLogComponent:
     """A named reusable FFTLog target :math:`W(k;z)`.
@@ -463,8 +490,27 @@ class FFTLogCoefficientCache:
         self.get_many(component, z_values)
         return self
 
+    def discard(self, component: FFTLogComponent):
+        """Discard coefficients for one component at every redshift."""
+        keys = [key for key in self._coefficients if key[0] is component]
+        for key in keys:
+            del self._coefficients[key]
+        return self
+
+    def discard_many(self, components):
+        """Discard coefficients for selected components only."""
+        component_ids = {id(component) for component in components}
+        keys = [
+            key for key in self._coefficients
+            if id(key[0]) in component_ids
+        ]
+        for key in keys:
+            del self._coefficients[key]
+        return self
+
     def clear(self):
         self._coefficients.clear()
+        return self
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -813,9 +859,32 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
             self._kernel_tables[key] = table
         return table
 
-    def clear_cache(self):
+    def invalidate_components(self, components):
+        """Invalidate physical FFTLog coefficients, preserving kernels.
+
+        The angular tables depend on the FFTLog exponent grid and geometry,
+        not on the sampled values of the physical spectrum.
+        """
+        self.coefficient_cache.discard_many(components)
+        return self
+
+    def clear_coefficient_cache(self):
         self.coefficient_cache.clear()
+        return self
+
+    def clear_kernel_cache(self):
         self._kernel_tables.clear()
+        return self
+
+    def clear_cache(self):
+        self.clear_coefficient_cache()
+        self.clear_kernel_cache()
+        return self
+
+    def update_physics(self, **changes):
+        raise NotImplementedError(
+            f"{type(self).__name__} does not define physical-state updates"
+        )
 
     def prepare_grid(self, k2_axis, k3_axis):
         """Prepare reusable geometry for a tensor-product Fourier grid.
@@ -1208,6 +1277,8 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
     def __init__(self, linear_power, k_grid, *, fftlog_config: PowerLawFFTLogConfig | None = None,
                  angular_kernel_config: PowerLawAngularKernelTableConfig | None = None,
                  regularize_squeezed: bool = True):
+        linear_power = (linear_power if isinstance(linear_power, _MutablePhysicalCallable)
+                        else _MutablePhysicalCallable(linear_power))
         component = FFTLogComponent(
             name="linear_power",
             k_grid=np.asarray(k_grid, dtype=float),
@@ -1266,6 +1337,12 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
         self.regularize_squeezed = bool(regularize_squeezed)
 
         self._linear_power_component = component
+
+    def update_physics(self, *, linear_power):
+        """Replace the linear spectrum without rebuilding model structure."""
+        self.linear_power.update(linear_power)
+        self.invalidate_components((self._linear_power_component,))
+        return self
 
     def warm_cache(self, *, z, modes, shifts=None):
         """Warm only non-negative modes for the parity-even tree model."""
@@ -1492,14 +1569,13 @@ class BiHalofitBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D)
             raise ValueError("r2 must be finite and lie in [0, 1]")
 
         halofit.update()
+        state = {"halofit": halofit}
         k_grid = np.asarray(halofit.k if k_grid is None else k_grid, dtype=float)
         if k_grid.ndim != 1 or k_grid.size < 2 or np.any(k_grid <= 0.0):
             raise ValueError("k_grid must be a one-dimensional positive grid")
         fftlog_config = fftlog_config or PowerLawFFTLogConfig()
-        ns = float(halofit.cosmo["ns"])
-
         def coeffs(z):
-            return halofit.get_bihalofit_coeffs(np.asarray(z, dtype=float))
+            return state["halofit"].get_bihalofit_coeffs(np.asarray(z, dtype=float))
 
         def q_and_coeff(k, z):
             c = coeffs(z)
@@ -1512,7 +1588,7 @@ class BiHalofitBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D)
 
         def effective_power(k, z):
             q, c = q_and_coeff(k, z)
-            pl = halofit.get_interpolated_pklin(np.asarray(k, dtype=float), z)
+            pl = state["halofit"].get_interpolated_pklin(np.asarray(k, dtype=float), z)
             return (
                 (1.0 + c["fn"] * q**2)
                 / (1.0 + c["gn"] * q + c["hn"] * q**2)
@@ -1529,6 +1605,7 @@ class BiHalofitBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D)
             q, c = q_and_coeff(k, z)
             an = 10.0 ** (c["log10an1"] + c["log10an2"] * r1 ** c["gan"])
             aln = 10.0 ** (c["log10aln1"] + c["log10aln2"] * r2**2)
+            ns = float(state["halofit"].cosmo["ns"])
             aln = np.minimum(aln, 1.0 - (2.0 / 3.0) * ns)
             ben = 10.0 ** (c["log10ben1"] + c["log10ben2"] * r2)
             return (
@@ -1659,6 +1736,16 @@ class BiHalofitBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D)
         self._effective_power = effective_power
         self._dressed_power = dressed_power
         self._one_halo_profile = one_halo_profile
+        self._physical_state = state
+        self._physical_components = (component_i, component_h, component_1h)
+
+    def update_physics(self, *, halofit):
+        """Replace the Halofit state while retaining angular kernels."""
+        halofit.update()
+        self._physical_state["halofit"] = halofit
+        self.halofit = halofit
+        self.invalidate_components(self._physical_components)
+        return self
 
 
 class QuadraticBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
@@ -1678,6 +1765,8 @@ class QuadraticBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipol
     def __init__(self, linear_power, k_grid, *, pair_coefficients=(0.0, 0.0, 0.0),
                  fftlog_config: PowerLawFFTLogConfig | None = None,
                  angular_kernel_config: PowerLawAngularKernelTableConfig | None = None):
+        linear_power = (linear_power if isinstance(linear_power, _MutablePhysicalCallable)
+                        else _MutablePhysicalCallable(linear_power))
         c12, c23, c31 = _pair_coefficients(pair_coefficients)
         component = FFTLogComponent(
             name="linear_power_quadratic_bias",
@@ -1709,6 +1798,12 @@ class QuadraticBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipol
         self.linear_power = linear_power
         self.k_grid = np.asarray(k_grid, dtype=float)
         self.pair_coefficients = (c12, c23, c31)
+        self._linear_power_component = component
+
+    def update_physics(self, *, linear_power):
+        self.linear_power.update(linear_power)
+        self.invalidate_components((self._linear_power_component,))
+        return self
 
 
 class TidalBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
@@ -1728,6 +1823,8 @@ class TidalBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D)
     def __init__(self, linear_power, k_grid, *, pair_coefficients=(0.0, 0.0, 0.0),
                  fftlog_config: PowerLawFFTLogConfig | None = None,
                  angular_kernel_config: PowerLawAngularKernelTableConfig | None = None):
+        linear_power = (linear_power if isinstance(linear_power, _MutablePhysicalCallable)
+                        else _MutablePhysicalCallable(linear_power))
         c12, c23, c31 = _pair_coefficients(pair_coefficients)
         component = FFTLogComponent(
             name="linear_power_tidal_bias",
@@ -1765,6 +1862,12 @@ class TidalBiasBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D)
         self.linear_power = linear_power
         self.k_grid = np.asarray(k_grid, dtype=float)
         self.pair_coefficients = (c12, c23, c31)
+        self._linear_power_component = component
+
+    def update_physics(self, *, linear_power):
+        self.linear_power.update(linear_power)
+        self.invalidate_components((self._linear_power_component,))
+        return self
 
 
 @dataclass(frozen=True)
@@ -1897,6 +2000,9 @@ class SPTMultiTracerBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipo
         c23_k2 = lambda z: 2.0 * lam(1, z) * lam(2, z) * second_order(0, "bK2", z)
         c31_k2 = lambda z: 2.0 * lam(2, z) * lam(0, z) * second_order(1, "bK2", z)
 
+        linear_power = (linear_power if isinstance(linear_power, _MutablePhysicalCallable)
+                        else _MutablePhysicalCallable(linear_power))
+
         tree = TreeBispectrumMultipole3D(
             linear_power,
             k_grid,
@@ -1934,6 +2040,7 @@ class SPTMultiTracerBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipo
         super().__init__(terms, angular_kernel_config=angular_kernel_config)
 
         self.field_order = fields
+        self._physical_field_order = fields
         self.tracer_biases = biases
         self.tree_coefficient = cf
         self.tree_matter = tree
@@ -1941,6 +2048,46 @@ class SPTMultiTracerBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipo
         self.tidal_bias = tidal
         self.linear_power = linear_power
         self.k_grid = np.asarray(k_grid, dtype=float)
+        self._linear_power_component = shared_component
+
+    def update_physics(self, *, linear_power=None, tracer_biases=None):
+        """Atomically update spectrum and/or tracer-bias state.
+
+        Bias-only updates retain every cache entry.  A spectrum update removes
+        only FFTLog coefficients for the shared power component; the expensive
+        angular-kernel table is preserved.
+        """
+        if linear_power is None and tracer_biases is None:
+            raise ValueError("at least one physical-state change is required")
+
+        if tracer_biases is not None:
+            raw = dict(tracer_biases)
+            for name in raw:
+                if _is_matter_field(name):
+                    raise ValueError(
+                        f"{name!r} is reserved for the matter field and must not "
+                        "appear in tracer_biases"
+                    )
+            updated = {
+                str(name): _coerce_tracer_bias(str(name), value)
+                for name, value in raw.items()
+            }
+            required = {
+                field for field in self._physical_field_order if not _is_matter_field(field)
+            }
+            missing = sorted(required - set(updated))
+            if missing:
+                raise ValueError(
+                    "Missing tracer_biases entries for field_order label(s): "
+                    + ", ".join(repr(name) for name in missing)
+                )
+            self.tracer_biases.clear()
+            self.tracer_biases.update(updated)
+
+        if linear_power is not None:
+            self.linear_power.update(linear_power)
+            self.invalidate_components((self._linear_power_component,))
+        return self
 
 
 class SPTGalaxyBispectrumMultipole3D(SPTMultiTracerBispectrumMultipole3D):
@@ -1977,3 +2124,28 @@ class SPTGalaxyBispectrumMultipole3D(SPTMultiTracerBispectrumMultipole3D):
         self.b2 = b2
         self.bK2 = bK2
 
+    def update_physics(
+        self,
+        *,
+        linear_power=None,
+        b1=None,
+        b2=None,
+        bK2=None,
+    ):
+        current = self.tracer_biases["galaxy"]
+        bias_changed = any(value is not None for value in (b1, b2, bK2))
+        biases = None
+        if bias_changed:
+            updated = TracerBias(
+                b1=current.b1 if b1 is None else b1,
+                b2=current.b2 if b2 is None else b2,
+                bK2=current.bK2 if bK2 is None else bK2,
+            )
+            biases = {"galaxy": updated}
+        super().update_physics(
+            linear_power=linear_power,
+            tracer_biases=biases,
+        )
+        updated = self.tracer_biases["galaxy"]
+        self.b1, self.b2, self.bK2 = updated.b1, updated.b2, updated.bK2
+        return self
