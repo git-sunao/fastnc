@@ -394,6 +394,9 @@ def _normalize_combo(combo):
     return tuple(combo)
 
 
+_PROJECTOR_STATE_UNSET = object()
+
+
 def _normalize_prefactor(prefactor):
     """Return a callable LOS prefactor.
 
@@ -434,6 +437,47 @@ class LOSProjectorBase:
         self.prefactor = _normalize_prefactor(prefactor)
         self.l_shift = float(l_shift)
         self.support_policy = support_policy
+
+    def update_state(
+        self,
+        *,
+        z=_PROJECTOR_STATE_UNSET,
+        chi=_PROJECTOR_STATE_UNSET,
+        kernels=_PROJECTOR_STATE_UNSET,
+        prefactor=_PROJECTOR_STATE_UNSET,
+        l_shift=_PROJECTOR_STATE_UNSET,
+        support_policy=_PROJECTOR_STATE_UNSET,
+    ):
+        """Update the LOS-projection state in place.
+
+        Omitted arguments retain their current values.  Passing ``None`` for
+        ``kernels`` removes sample-dependent kernels, while passing ``None``
+        for ``prefactor`` restores the default geometrical prefactor.
+
+        Existing projected objects that copied this projector state must call
+        their ``update_projection()`` method to refresh that snapshot.
+        """
+        new_z = self.z if z is _PROJECTOR_STATE_UNSET else np.asarray(z, dtype=float)
+        new_chi = self.chi if chi is _PROJECTOR_STATE_UNSET else np.asarray(chi, dtype=float)
+        if new_z.shape != new_chi.shape:
+            raise ValueError("z and chi must have the same shape")
+
+        new_l_shift = self.l_shift if l_shift is _PROJECTOR_STATE_UNSET else float(l_shift)
+        if isinstance(self, MultipoleLineOfSightProjector) and new_l_shift != 0.0:
+            raise NotImplementedError(
+                "Multipole LOS projection currently supports only l_shift=0"
+            )
+
+        self.z = new_z
+        self.chi = new_chi
+        if kernels is not _PROJECTOR_STATE_UNSET:
+            self.kernels = kernels
+        if prefactor is not _PROJECTOR_STATE_UNSET:
+            self.prefactor = _normalize_prefactor(prefactor)
+        self.l_shift = new_l_shift
+        if support_policy is not _PROJECTOR_STATE_UNSET:
+            self.support_policy = support_policy
+        return self
 
     def kernel_product(self, sample_combination=None):
         if self.kernels is not None and sample_combination is not None:

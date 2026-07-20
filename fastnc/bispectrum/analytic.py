@@ -606,6 +606,7 @@ class DirectFourierTerm(SemiAnalyticMultipoleTerm):
         return np.asarray(value).item() if np.asarray(value).shape == () else value
 
 
+_PROJECTED_STATE_UNSET = object()
 
 
 class _SemiAnalyticMultipoleLineOfSightProjector:
@@ -741,6 +742,7 @@ class CompositeSemiAnalyticBispectrumMultipole2D(BispectrumMultipole2D):
     def __init__(self, multipole3d, projector, sample_combination=None, modes=None):
         super().__init__(evaluator=None, basis=multipole3d.basis, modes=modes)
         self.multipole3d = multipole3d
+        self._source_projector = projector
         self.projector = _SemiAnalyticMultipoleLineOfSightProjector(
             projector, sample_combination=sample_combination
         )
@@ -748,6 +750,55 @@ class CompositeSemiAnalyticBispectrumMultipole2D(BispectrumMultipole2D):
 
     def evaluate(self, mode, ell2, ell3):
         return self.projector.evaluate(self.multipole3d, mode, ell2, ell3)
+
+    def update_physics(self, **changes):
+        """Forward physical-state updates to the underlying 3D model.
+
+        Physical FFTLog coefficients are invalidated by the 3D model while
+        universal angular-kernel tables and the LOS-projection state are kept.
+        """
+        self.multipole3d.update_physics(**changes)
+        return self
+
+    def update_projection(
+        self,
+        projector=None,
+        *,
+        sample_combination=_PROJECTED_STATE_UNSET,
+        **projector_changes,
+    ):
+        """Refresh or replace the LOS-projector state.
+
+        When ``projector`` is omitted, ``projector_changes`` are applied to
+        the source projector through ``update_state()`` and the internal
+        coefficient-level snapshot is rebuilt.  With no changes, this simply
+        refreshes the snapshot after an external projector update.
+
+        This operation does not invalidate 3D FFTLog coefficients or angular
+        kernels.  A changed LOS redshift grid is warmed lazily unless
+        :meth:`warm` is called explicitly afterwards.
+        """
+        if projector is not None and projector_changes:
+            raise TypeError(
+                "Pass either a replacement projector or projector state changes, not both"
+            )
+        if projector is not None:
+            self._source_projector = projector
+        elif projector_changes:
+            update_state = getattr(self._source_projector, "update_state", None)
+            if update_state is None:
+                raise TypeError(
+                    "The source projector does not provide update_state()"
+                )
+            update_state(**projector_changes)
+
+        if sample_combination is _PROJECTED_STATE_UNSET:
+            sample_combination = self.sample_combination
+        self.projector = _SemiAnalyticMultipoleLineOfSightProjector(
+            self._source_projector, sample_combination=sample_combination
+        )
+        self.sample_combination = self.projector.sample_combination
+        return self
 
     def warm(self, modes=None):
         """Warm FFTLog coefficients and angular kernels used by projection."""
