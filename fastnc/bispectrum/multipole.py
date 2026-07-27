@@ -136,6 +136,52 @@ class BispectrumMultipole2D:
             raise NotImplementedError
         return self._evaluator(mode, ell2, ell3)
 
+    def prepare_grid(self, ell2_axis, ell3_axis):
+        """Prepare optional reusable state for a tensor-product grid.
+
+        The base implementation has no model-specific geometry to prepare and
+        therefore returns ``None``.  Specialised multipole models may override
+        this method and pass the returned object back to
+        :meth:`evaluate_modes_grid`.
+        """
+        ell2_axis = np.asarray(ell2_axis, dtype=float)
+        ell3_axis = np.asarray(ell3_axis, dtype=float)
+        if ell2_axis.ndim != 1 or ell3_axis.ndim != 1:
+            raise ValueError("ell2_axis and ell3_axis must be one-dimensional")
+        if np.any(ell2_axis <= 0.0) or np.any(ell3_axis <= 0.0):
+            raise ValueError("ell2_axis and ell3_axis must be strictly positive")
+        return None
+
+    def evaluate_modes_grid(
+        self,
+        modes,
+        ell2_axis,
+        ell3_axis,
+        *,
+        geometry=None,
+    ):
+        """Evaluate multipoles on a tensor-product ``(ell2, ell3)`` grid.
+
+        This compatibility implementation evaluates one mode at a time using
+        :meth:`evaluate`.  Models with a vectorised tensor-product algorithm
+        should override this method.  The returned shape is always
+        ``(n_mode, n_ell2, n_ell3)``.
+        """
+        modes = np.atleast_1d(np.asarray(modes, dtype=int))
+        ell2_axis = np.asarray(ell2_axis, dtype=float)
+        ell3_axis = np.asarray(ell3_axis, dtype=float)
+        self.prepare_grid(ell2_axis, ell3_axis)
+        if geometry is not None:
+            raise TypeError(
+                f"{type(self).__name__}.evaluate_modes_grid() does not use "
+                "a prepared geometry object"
+            )
+        ell2, ell3 = np.meshgrid(ell2_axis, ell3_axis, indexing="ij")
+        return np.asarray([
+            self.evaluate(int(mode), ell2, ell3)
+            for mode in modes
+        ])
+
     def available_modes(self, mode_max=None):
         if self.modes is None:
             if mode_max is None:

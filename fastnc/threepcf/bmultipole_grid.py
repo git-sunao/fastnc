@@ -162,13 +162,27 @@ class BMultipoleGrid:
 
         self._set_basis(getattr(bmultipole, "basis", self.basis))
 
-        vals = []
-        for L in self.L_values:
-            t0 = time.perf_counter()
-            vals.append(bmultipole(int(L), self.ell2, self.ell3))
-            if logger.isEnabledFor(logging.DEBUG):
-                log(logger, logging.DEBUG, "[BMultipoleGrid.compute] L=%+d finished in %.3f s", int(L), time.perf_counter() - t0)
-        self.values = np.asarray(vals)
+        t0 = time.perf_counter()
+        geometry = bmultipole.prepare_grid(self.grid.ell, self.grid.ell)
+        self.values = np.asarray(
+            bmultipole.evaluate_modes_grid(
+                self.L_values,
+                self.grid.ell,
+                self.grid.ell,
+                geometry=geometry,
+            )
+        )
+        if logger.isEnabledFor(logging.DEBUG):
+            log(
+                logger,
+                logging.DEBUG,
+                "[BMultipoleGrid.compute] %d modes on %dx%d tensor grid "
+                "finished in %.3f s",
+                self.L_values.size,
+                self.grid.ell.size,
+                self.grid.ell.size,
+                time.perf_counter() - t0,
+            )
         self._validate_values()
         return self
 

@@ -751,6 +751,48 @@ class CompositeSemiAnalyticBispectrumMultipole2D(BispectrumMultipole2D):
     def evaluate(self, mode, ell2, ell3):
         return self.projector.evaluate(self.multipole3d, mode, ell2, ell3)
 
+    def prepare_grid(self, ell2_axis, ell3_axis):
+        """Validate tensor-product angular axes.
+
+        The coefficient-level LOS projector already shares all geometry and
+        projected FFTLog contractions across the requested modes, so no
+        additional persistent geometry object is required here.
+        """
+        ell2_axis = np.asarray(ell2_axis, dtype=float)
+        ell3_axis = np.asarray(ell3_axis, dtype=float)
+        if ell2_axis.ndim != 1 or ell3_axis.ndim != 1:
+            raise ValueError("ell2_axis and ell3_axis must be one-dimensional")
+        if np.any(ell2_axis <= 0.0) or np.any(ell3_axis <= 0.0):
+            raise ValueError("ell2_axis and ell3_axis must be strictly positive")
+        return None
+
+    def evaluate_modes_grid(
+        self,
+        modes,
+        ell2_axis,
+        ell3_axis,
+        *,
+        geometry=None,
+    ):
+        """Evaluate all modes in one coefficient-level LOS projection.
+
+        In contrast to the base-class fallback, this method passes the full
+        mode vector to the semi-analytic projector.  Mode-independent LOS
+        geometry, FFTLog coefficients, projected ``d_n`` coefficients, and
+        term prefactors are therefore constructed only once per grid.
+        """
+        modes = np.atleast_1d(np.asarray(modes, dtype=int))
+        ell2_axis = np.asarray(ell2_axis, dtype=float)
+        ell3_axis = np.asarray(ell3_axis, dtype=float)
+        self.prepare_grid(ell2_axis, ell3_axis)
+        if geometry is not None:
+            raise TypeError(
+                "CompositeSemiAnalyticBispectrumMultipole2D does not require "
+                "an external geometry object"
+            )
+        ell2, ell3 = np.meshgrid(ell2_axis, ell3_axis, indexing="ij")
+        return self.projector.evaluate(self.multipole3d, modes, ell2, ell3)
+
     def update_physics(self, **changes):
         """Forward physical-state updates to the underlying 3D model.
 
