@@ -1,5 +1,5 @@
 """Analytic and semi-analytic bispectrum building blocks."""
-from .cosmology import standard_linear_growth, eisenstein_hu_no_wiggle_pklin
+from fastnc.utils.cosmology import standard_linear_growth, eisenstein_hu_no_wiggle_pklin
 from .angular import (
     fourier_power_kernel, PowerLawAngularKernelTableConfig,
     PowerLawAngularKernelTable, TensorProductGeometryCache,

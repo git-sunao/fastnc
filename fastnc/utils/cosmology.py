@@ -1,9 +1,27 @@
+"""Small cosmology helpers used by examples, presets, and validation code.
+
+The bundled power-spectrum approximations are intended for diagnostics and
+examples, not as replacements for physically normalized CAMB/CLASS spectra.
+"""
 from __future__ import annotations
 
 from typing import Mapping
 
 import numpy as np
 from scipy.integrate import quad
+
+
+_DEFAULT_COSMO_WMAP_LIKE = {
+    "Om0": 0.279,
+    "Ode0": 0.721,
+    "ns": 0.972,
+    "w0": -1.0,
+    "wa": 0.0,
+    "fnu0": 0.0,
+    "sigma8": 0.82,
+    "h": 0.70,
+    "Ob0": 0.046,
+}
 
 def standard_linear_growth(z, cosmo: Mapping[str, float] | None = None):
     r"""Linear growth factor for a flat constant-``w`` background.
@@ -71,3 +89,49 @@ def eisenstein_hu_no_wiggle_pklin(
     return float(amplitude) * k**ns * transfer**2
 
 
+
+def simple_linear_growth(z, cosmo: Mapping[str, float] | None = None):
+    """Simple debug growth factor, normalized to D(0)=1."""
+    z = np.asarray(z, dtype=float)
+    return 1.0 / (1.0 + z)
+
+
+def simple_debug_pklin(
+    k,
+    cosmo: Mapping[str, float] | None = None,
+    amplitude: float = 1.0e4,
+    k_eq: float = 2.0e-2,
+    transfer_power: float = 1.5,
+):
+    """Smooth positive debug linear power spectrum.
+
+    This is EH/BBKS-like in spirit but intentionally chosen with a stable
+    high-k tail for the bundled Halofit implementation.
+    """
+    cosmo = _DEFAULT_COSMO_WMAP_LIKE if cosmo is None else cosmo
+    ns = float(cosmo.get("ns", 0.97))
+    k = np.asarray(k, dtype=float)
+    return amplitude * k**ns / (1.0 + (k / k_eq) ** 2) ** transfer_power
+
+
+def eisenstein_hu_like_pklin(
+    k,
+    cosmo: Mapping[str, float] | None = None,
+    amplitude: float = 1.0e4,
+):
+    """Crude Eisenstein-Hu/BBKS-like no-wiggle spectrum for diagnostics.
+
+    This is not a replacement for CAMB/CLASS.  It is provided only as a
+    convenient preset for debugging code paths.
+    """
+    cosmo = _DEFAULT_COSMO_WMAP_LIKE if cosmo is None else cosmo
+    ns = float(cosmo.get("ns", 0.97))
+    Om0 = float(cosmo.get("Om0", 0.279))
+    h = float(cosmo.get("h", 0.70))
+    theta = 2.7255 / 2.7
+    gamma_eff = Om0 * h / theta**2
+    q = np.asarray(k, dtype=float) / gamma_eff
+    L0 = np.log(2.0 * np.e + 1.8 * q)
+    C0 = 14.2 + 731.0 / (1.0 + 62.5 * q)
+    T = L0 / (L0 + C0 * q**2)
+    return amplitude * np.asarray(k, dtype=float) ** ns * T**2

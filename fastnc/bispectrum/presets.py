@@ -19,6 +19,11 @@ from .analytic import (
     PowerLawAngularKernelTableConfig,
 )
 from fastnc.hankel.wrapper import PowerLawFFTLogConfig
+from fastnc.utils.cosmology import (
+    eisenstein_hu_like_pklin,
+    simple_debug_pklin,
+    simple_linear_growth,
+)
 
 
 
@@ -378,50 +383,3 @@ class NFWOneHaloBispectrum3D(OneHaloProductBispectrum3D):
         ks = self._ks(z)
         x = np.maximum(k / ks, 0.0)
         return (1.0 + x ** self.slope) ** (-self.amplitude_power / self.slope)
-
-
-def simple_linear_growth(z, cosmo: Mapping[str, float] | None = None):
-    """Simple debug growth factor, normalized to D(0)=1."""
-    z = np.asarray(z, dtype=float)
-    return 1.0 / (1.0 + z)
-
-
-def simple_debug_pklin(
-    k,
-    cosmo: Mapping[str, float] | None = None,
-    amplitude: float = 1.0e4,
-    k_eq: float = 2.0e-2,
-    transfer_power: float = 1.5,
-):
-    """Smooth positive debug linear power spectrum.
-
-    This is EH/BBKS-like in spirit but intentionally chosen with a stable
-    high-k tail for the bundled Halofit implementation.
-    """
-    cosmo = _DEFAULT_COSMO_WMAP_LIKE if cosmo is None else cosmo
-    ns = float(cosmo.get("ns", 0.97))
-    k = np.asarray(k, dtype=float)
-    return amplitude * k**ns / (1.0 + (k / k_eq) ** 2) ** transfer_power
-
-
-def eisenstein_hu_like_pklin(
-    k,
-    cosmo: Mapping[str, float] | None = None,
-    amplitude: float = 1.0e4,
-):
-    """Crude Eisenstein-Hu/BBKS-like no-wiggle spectrum for diagnostics.
-
-    This is not a replacement for CAMB/CLASS.  It is provided only as a
-    convenient preset for debugging code paths.
-    """
-    cosmo = _DEFAULT_COSMO_WMAP_LIKE if cosmo is None else cosmo
-    ns = float(cosmo.get("ns", 0.97))
-    Om0 = float(cosmo.get("Om0", 0.279))
-    h = float(cosmo.get("h", 0.70))
-    theta = 2.7255 / 2.7
-    gamma_eff = Om0 * h / theta**2
-    q = np.asarray(k, dtype=float) / gamma_eff
-    L0 = np.log(2.0 * np.e + 1.8 * q)
-    C0 = 14.2 + 731.0 / (1.0 + 62.5 * q)
-    T = L0 / (L0 + C0 * q**2)
-    return amplitude * np.asarray(k, dtype=float) ** ns * T**2
