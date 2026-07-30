@@ -288,7 +288,7 @@ def x2cent_factor(
         + sig[1] * (alpha2 - alpha_x2)
         + sig[2] * (alpha3 - alpha_x3)
     )
-    return np.exp(1j * phase)
+    return np.exp(-1j * phase)
 
 
 def projection_factor(
