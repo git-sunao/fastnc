@@ -5,7 +5,7 @@ by Xiao Fang
 Feb 22, 2020
 
 Modified by Sunao Sugiyama
-Last edit  : 2024/03/21 15:52:38
+Last edit  : 2026/07/30 23:53:01
 """
 
 import numpy as np
@@ -95,7 +95,7 @@ class two_sph_bessel(object):
 		c_window_array1 = c_window(m, int(self.c_window_width*self.N1//2.) )
 		c_window_array2 = c_window(n, int(self.c_window_width*self.N2//2.) )
 		c_mn_filter = ((c_mn*c_window_array2).T*c_window_array1).T
-		return m, n, c_mn
+		return m, n, c_mn_filter
 
 	def _adjust_fftmat(self, mat):
 		"""
