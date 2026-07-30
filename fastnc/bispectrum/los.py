@@ -405,7 +405,7 @@ def _normalize_prefactor(prefactor):
     delta-like kernel.
     """
     if prefactor is None:
-        return lambda z, chi: (1.0 + z) ** 3 / chi
+        return lambda z, chi: chi**-4
     if callable(prefactor):
         return prefactor
     value = float(prefactor)
