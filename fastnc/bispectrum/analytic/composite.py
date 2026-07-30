@@ -10,6 +10,28 @@ from .fftlog import FFTLogCoefficientCache, FFTLogComponent
 from .projection import CompositeSemiAnalyticBispectrumMultipole2D
 from .terms import DirectFourierTerm, SemiAnalyticMultipoleTerm, SeparableMultipoleTerm, _term_weight_value
 
+
+
+def _safe_prefactor_core_product(prefactor, core):
+    """Multiply a scalar-grid prefactor by a mode-grid core safely.
+
+    Negative FFTLog shifts can make the angular core non-finite exactly at
+    ``k2 == k3`` even when the analytic prefactor vanishes there.  The full
+    term has a removable zero, but ordinary floating-point multiplication
+    evaluates it as ``0 * inf -> NaN``.
+    """
+    prefactor = np.asarray(prefactor)
+    core = np.asarray(core)
+    contribution = np.zeros_like(core)
+    nonzero = prefactor != 0
+    np.multiply(
+        core,
+        prefactor[None, ...],
+        out=contribution,
+        where=nonzero[None, ...],
+    )
+    return contribution
+
 class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
     """Composable 3D multipole model built from a fixed list of terms.
 
@@ -469,10 +491,14 @@ class CompositeSemiAnalyticBispectrumMultipole3D(BispectrumMultipole3D):
                         * np.asarray(term.v(k1_chunk, k2_chunk, z))
                     )
                     if term.modes is None:
-                        result[:, start:stop] += prefactor[None, :] * core
+                        result[:, start:stop] += _safe_prefactor_core_product(
+                            prefactor, core
+                        )
                     else:
                         active = np.isin(modes, np.asarray(term.modes, dtype=int))
-                        result[active, start:stop] += prefactor[None, :] * core[active]
+                        result[active, start:stop] += _safe_prefactor_core_product(
+                            prefactor, core[active]
+                        )
 
         result = result.reshape((modes.size,) + shape)
         if shape == ():

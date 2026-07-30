@@ -4,7 +4,10 @@ import numpy as np
 
 from fastnc.hankel.wrapper import PowerLawFFTLogConfig
 from ..angular import PowerLawAngularKernelTableConfig, _a31
-from ..composite import CompositeSemiAnalyticBispectrumMultipole3D
+from ..composite import (
+    CompositeSemiAnalyticBispectrumMultipole3D,
+    _safe_prefactor_core_product,
+)
 from ..fftlog import FFTLogComponent, _MutablePhysicalCallable
 from ..terms import (DirectFourierTerm, LowRankVFunction, ProductVFunction, LeftVFunction, RightVFunction, SeparableMultipoleTerm)
 
@@ -225,7 +228,7 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
                 2.0 * _a31(shift, geometry.x2, geometry.x3) * p2
                 + 2.0 * _a31(shift, geometry.x3, geometry.x2) * p1
             )
-            result += prefactor[None, :, :] * cores[shift]
+            result += _safe_prefactor_core_product(prefactor, cores[shift])
 
         if self.regularize_squeezed:
             ureg = (
@@ -239,13 +242,13 @@ class TreeBispectrumMultipole3D(CompositeSemiAnalyticBispectrumMultipole3D):
             vreg = 2.0 * pbar - (
                 k1sq * k1sq + 5.0 * k1sq * k2sq + k2sq * k2sq
             ) / (geometry.k * geometry.k) * dp
-            result += (ureg * vreg)[None, :, :] * cores[-2]
+            result += _safe_prefactor_core_product(ureg * vreg, cores[-2])
         else:
             prefactor = (
                 2.0 * _a31(-2, geometry.x2, geometry.x3) * p2
                 + 2.0 * _a31(-2, geometry.x3, geometry.x2) * p1
             )
-            result += prefactor[None, :, :] * cores[-2]
+            result += _safe_prefactor_core_product(prefactor, cores[-2])
 
         inverse = np.searchsorted(work_modes, np.abs(modes))
         return result[inverse]

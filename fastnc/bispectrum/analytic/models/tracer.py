@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import numpy as np
 from typing import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from .bias import QuadraticBiasBispectrumMultipole3D, TidalBiasBispectrumMultipole3D
+from .bias import (
+    QuadraticBiasBispectrumMultipole3D,
+    TidalBiasBispectrumMultipole3D,
+    _value_at_z,
+)
 from ..composite import CompositeSemiAnalyticBispectrumMultipole3D
 from ..fftlog import _MutablePhysicalCallable
+from ..terms import SeparableMultipoleTerm
 from .tree import TreeBispectrumMultipole3D
 
 @dataclass(frozen=True)
