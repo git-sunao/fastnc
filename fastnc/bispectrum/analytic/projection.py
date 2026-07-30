@@ -268,8 +268,24 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
                 d_n[:, :, i_n] += weighted_left[i_rank] @ right[i_rank].T
         return d_n
 
-    def evaluate_grid(self, multipole3d, mode, ell2_axis, ell3_axis):
-        """Evaluate on a tensor-product grid, using low-rank V when declared."""
+    def evaluate_grid(
+        self,
+        multipole3d,
+        mode,
+        ell2_axis,
+        ell3_axis,
+        *,
+        geometry=None,
+    ):
+        """Evaluate on a tensor-product grid, using low-rank V when declared.
+
+        Parameters
+        ----------
+        geometry : dict, optional
+            Geometry returned by :meth:`prepare_grid` for the same angular
+            axes.  Supplying it avoids a redundant cache lookup and preserves
+            the common ``prepare_grid``/``evaluate_modes_grid`` contract.
+        """
         modes = np.atleast_1d(np.asarray(mode, dtype=int))
         scalar_mode = np.isscalar(mode)
         ell2_axis = np.asarray(ell2_axis, dtype=float)
@@ -279,7 +295,32 @@ class _SemiAnalyticMultipoleLineOfSightProjector:
         if np.any(ell2_axis <= 0.0) or np.any(ell3_axis <= 0.0):
             raise ValueError("ell2_axis and ell3_axis must be strictly positive")
 
-        geometry = self.prepare_grid(ell2_axis, ell3_axis, modes=modes)
+        if geometry is None:
+            geometry = self.prepare_grid(ell2_axis, ell3_axis, modes=modes)
+        else:
+            if not isinstance(geometry, dict):
+                raise TypeError("geometry must be returned by prepare_grid()")
+            try:
+                prepared_ell2_axis = np.asarray(
+                    geometry["ell2_axis"], dtype=float
+                )
+                prepared_ell3_axis = np.asarray(
+                    geometry["ell3_axis"], dtype=float
+                )
+            except KeyError as error:
+                raise ValueError(
+                    "geometry is missing tensor-product axis metadata"
+                ) from error
+            if (
+                prepared_ell2_axis.shape != ell2_axis.shape
+                or prepared_ell3_axis.shape != ell3_axis.shape
+                or not np.array_equal(prepared_ell2_axis, ell2_axis)
+                or not np.array_equal(prepared_ell3_axis, ell3_axis)
+            ):
+                raise ValueError(
+                    "geometry was prepared for different ell2/ell3 axes"
+                )
+
         ell2 = geometry["ell2"]
         ell3 = geometry["ell3"]
         shape = ell2.shape
@@ -397,12 +438,7 @@ class CompositeSemiAnalyticBispectrumMultipole2D(BispectrumMultipole2D):
         return self.projector.evaluate(self.multipole3d, mode, ell2, ell3)
 
     def prepare_grid(self, ell2_axis, ell3_axis):
-        """Validate tensor-product angular axes.
-
-        The coefficient-level LOS projector already shares all geometry and
-        projected FFTLog contractions across the requested modes, so no
-        additional persistent geometry object is required here.
-        """
+        """Return reusable tensor-product geometry for the angular axes."""
         return self.projector.prepare_grid(ell2_axis, ell3_axis, modes=self.modes)
 
     def evaluate_modes_grid(
@@ -423,14 +459,14 @@ class CompositeSemiAnalyticBispectrumMultipole2D(BispectrumMultipole2D):
         modes = np.atleast_1d(np.asarray(modes, dtype=int))
         ell2_axis = np.asarray(ell2_axis, dtype=float)
         ell3_axis = np.asarray(ell3_axis, dtype=float)
-        self.prepare_grid(ell2_axis, ell3_axis)
-        if geometry is not None:
-            raise TypeError(
-                "CompositeSemiAnalyticBispectrumMultipole2D does not require "
-                "an external geometry object"
-            )
+        if geometry is None:
+            geometry = self.prepare_grid(ell2_axis, ell3_axis)
         return self.projector.evaluate_grid(
-            self.multipole3d, modes, ell2_axis, ell3_axis
+            self.multipole3d,
+            modes,
+            ell2_axis,
+            ell3_axis,
+            geometry=geometry,
         )
 
     def update_physics(self, **changes):
