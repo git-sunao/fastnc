@@ -288,11 +288,11 @@ def coupling_G_quad(L: int, k: Number, sigma: Iterable[int], psi: float) -> floa
     idx = coupling_index(k, sigma)
     if not idx.integer_orders:
         return 0.0
-    s3 = _as_sigma(sigma)[2]
+    s1 = _as_sigma(sigma)[0]
     delta = float(L) - idx.nu
 
     def integrand(x: float) -> float:
-        return float(np.real(np.exp(1j * delta * x + 1j * s3 * bar_beta(psi, x))))
+        return float(np.real(np.exp(1j * delta * x + 1j * s1 * bar_beta(psi, x))))
 
     val, _ = quad(integrand, 0.0, 2 * pi, epsabs=1e-10, epsrel=1e-10, limit=300)
     return float(0.0 if abs(val) < 1e-14 else val)
