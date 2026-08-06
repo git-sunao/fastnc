@@ -2,13 +2,60 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import wraps
 from typing import Callable, Optional
 import numpy as np
 
 from .support import Support3D, Support2D
 
+class _BispectrumBase:
+    """Mixin providing persistent default keyword arguments for evaluation.
 
-class Bispectrum3D:
+    Defaults are stored per instance.  Runtime keyword arguments always take
+    precedence and do not mutate the stored defaults.  ``__new__`` is used so
+    subclasses do not need to call ``super().__init__()`` to get an independent
+    empty dictionary.
+    """
+
+    def __new__(cls, *args, **kwargs):
+        obj = super().__new__(cls)
+        obj.default_kwargs = {}
+        return obj
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        evaluate = cls.__dict__.get("evaluate")
+        if evaluate is None or getattr(evaluate, "_fastnc_default_kwargs_wrapped", False):
+            return
+
+        @wraps(evaluate)
+        def wrapped_evaluate(self, *args, **params):
+            return evaluate(self, *args, **self._merge_default_kwargs(params))
+
+        wrapped_evaluate._fastnc_default_kwargs_wrapped = True
+        cls.evaluate = wrapped_evaluate
+
+    def set_default_kwargs(self, **kwargs):
+        """Set/update default keyword arguments used by :meth:`evaluate`.
+
+        Calling ``evaluate(..., key=value)`` overrides a stored default for that
+        call only.  The stored defaults themselves are left unchanged.
+        """
+        self.default_kwargs.update(kwargs)
+        return self
+
+    def clear_default_kwargs(self):
+        """Remove all stored evaluation defaults and return ``self``."""
+        self.default_kwargs.clear()
+        return self
+
+    def _merge_default_kwargs(self, kwargs):
+        params = dict(self.default_kwargs)
+        params.update(kwargs)
+        return params
+
+
+class Bispectrum3D(_BispectrumBase):
     """Base object for a 3D bispectrum ``B(k1,k2,k3,z)``."""
     support = Support3D()
 
@@ -23,7 +70,7 @@ class Bispectrum3D:
         return InterpolatedBispectrum3D.from_bispectrum(self, config, **params)
 
 
-class Bispectrum2D:
+class Bispectrum2D(_BispectrumBase):
     """Object for a 2D bispectrum ``B(ell1, ell2, ell3)``.
 
     In this package, 2D bispectra are angular bispectra by default, so the

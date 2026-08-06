@@ -35,7 +35,7 @@ from typing import Callable, Optional
 import numpy as np
 from scipy.special import eval_legendre
 
-from .base import Bispectrum2D
+from .base import Bispectrum2D, _BispectrumBase
 from .decompose import MultipoleLegendre, MultipoleFourier, MultipoleCosine, MultipoleSine
 from .grids import (
     MultipoleGridConfig,
@@ -78,7 +78,7 @@ class BispectrumMultipole2DConfig:
 BispectrumMultipoleConfig = BispectrumMultipole2DConfig
 
 
-class BispectrumMultipole2D:
+class BispectrumMultipole2D(_BispectrumBase):
     """Object for a 2D angular-bispectrum multipole model.
 
     This is the fiducial public object for ``B_mode(ell2, ell3)``.  Different
@@ -127,14 +127,14 @@ class BispectrumMultipole2D:
             modes=modes,
         )
 
-    def __call__(self, mode, ell2, ell3):
-        return self.evaluate(mode, ell2, ell3)
+    def __call__(self, mode, ell2, ell3, **params):
+        return self.evaluate(mode, ell2, ell3, **params)
 
-    def evaluate(self, mode, ell2, ell3):
+    def evaluate(self, mode, ell2, ell3, **params):
         """Evaluate ``B_L(ell2, ell3)`` in the X1-reference convention."""
         if getattr(self, "_evaluator", None) is None:
             raise NotImplementedError
-        return self._evaluator(mode, ell2, ell3)
+        return self._evaluator(mode, ell2, ell3, **params)
 
     def prepare_grid(self, ell2_axis, ell3_axis):
         """Prepare optional reusable state for a tensor-product grid.
@@ -262,7 +262,7 @@ class BispectrumMultipole2D:
         return self.resum(ell2, ell3, np.pi - np.asarray(alpha), mode_max=mode_max)
 
 
-class BispectrumMultipole3D:
+class BispectrumMultipole3D(_BispectrumBase):
     """Base object for a 3D bispectrum multipole ``B_L(k2,k3,z)``.
 
     This class represents the result of a multipole expansion performed before
@@ -327,7 +327,7 @@ class _LoSBispectrumMultipole2DEvaluator:
             modes=np.atleast_1d(np.asarray(modes, dtype=int)),
         )
 
-    def __call__(self, mode, ell2, ell3):
+    def __call__(self, mode, ell2, ell3, **params):
         if np.isscalar(mode):
             return self.projector.evaluate(
                 self.multipole3d,
@@ -335,6 +335,7 @@ class _LoSBispectrumMultipole2DEvaluator:
                 ell2,
                 ell3,
                 sample_combination=self.sample_combination,
+                **params,
             )
 
         modes = np.atleast_1d(np.asarray(mode, dtype=int))
@@ -345,6 +346,7 @@ class _LoSBispectrumMultipole2DEvaluator:
                 ell2,
                 ell3,
                 sample_combination=self.sample_combination,
+                **params,
             )
             for m in modes
         ])
@@ -367,14 +369,16 @@ class _Bispectrum2DMultipoleEvaluator:
             return np.arange(-c.mode_max, c.mode_max + 1)
         return np.arange(0, c.mode_max + 1)
 
-    def __call__(self, mode, ell2, ell3):
+    def __call__(self, mode, ell2, ell3, **params):
+        run_params = dict(self.params)
+        run_params.update(params)
         return self.calculator.evaluate_points(
             self.bispectrum,
             mode,
             ell2,
             ell3,
             regulator=self.regulator,
-            **self.params,
+            **run_params,
         )
 
     def interpolate(self, config=None, owner=None, **params):
