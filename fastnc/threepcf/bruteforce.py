@@ -60,8 +60,15 @@ class BruteForce3PCFConfig:
     Parameters
     ----------
     ell_min, ell_max, n_ell
-        Common-scale FFTLog grid.  The radial transform is tabulated on the
-        corresponding ``A`` grid, approximately ``[1 / ell_max, 1 / ell_min]``.
+        Physical common-scale integration grid.
+    radial_cache_padding_factor
+        Multiplicative zero-padding factor used only when constructing the
+        radial FFTLog cache.  Values larger than one extend the logarithmic
+        ``ell`` grid below ``ell_min`` and above ``ell_max`` at the same
+        ``dln(ell)`` spacing, while setting the radial source identically zero
+        outside the physical interval.  This leaves the physical integration
+        range unchanged but expands the tabulated ``A`` range approximately to
+        ``[1 / (factor * ell_max), factor / ell_min]``.
     n_psi
         Gauss--Legendre nodes per active ``psi`` interval.  This is
         ``psi in (0, pi/2)`` by default and ``psi in (0, pi/4)`` when
@@ -130,6 +137,7 @@ class BruteForce3PCFConfig:
     ell_min: float = 1.0e-1
     ell_max: float = 1.0e5
     n_ell: int = 256
+    radial_cache_padding_factor: float = 1.0
 
     n_psi: int = 32
     n_delta_beta: int = 96
@@ -173,6 +181,11 @@ class BruteForce3PCFConfig:
             raise ValueError("Require 0 < ell_min < ell_max.")
         if int(self.n_ell) < 8 or int(self.n_ell) % 2:
             raise ValueError("n_ell must be an even integer >= 8 for fastnc FFTLog.")
+        if (
+            not np.isfinite(self.radial_cache_padding_factor)
+            or self.radial_cache_padding_factor < 1.0
+        ):
+            raise ValueError("radial_cache_padding_factor must be finite and >= 1.")
         if int(self.n_psi) < 2:
             raise ValueError("n_psi must be >= 2.")
         if int(self.n_delta_beta) < 4:
@@ -273,6 +286,8 @@ class _RadialWorkerState:
     bispectrum: Callable[..., np.ndarray]
     model_kwargs: Mapping[str, Any]
     ell: np.ndarray
+    physical_start: int
+    physical_stop: int
     bessel_order: int
     fftlog_nu: float
     c_window_width: float
@@ -377,27 +392,38 @@ def _evaluate_radial_task(
     ipsi, idb, psi, delta_beta = task
     ell = state.ell
 
-    ell2 = ell * np.cos(psi)
-    ell3 = ell * np.sin(psi)
+    # The FFTLog grid may be wider than the physical integration interval.
+    # Evaluate the bispectrum only on the physical samples and set the source
+    # to zero on the cache-only extension.  This expands the reciprocal A grid
+    # without changing the Fourier integral being approximated.
+    sl = slice(int(state.physical_start), int(state.physical_stop))
+    ell_phys = ell[sl]
+    ell2 = ell_phys * np.cos(psi)
+    ell3 = ell_phys * np.sin(psi)
     ell1_sq = ell2**2 + ell3**2 + 2.0 * ell2 * ell3 * np.cos(delta_beta)
     ell1 = np.sqrt(np.maximum(ell1_sq, 0.0))
 
-    source_b = np.asarray(
+    source_phys = np.asarray(
         state.bispectrum(ell1, ell2, ell3, **dict(state.model_kwargs)),
         dtype=np.complex128,
     )
     try:
-        source_b = np.broadcast_to(source_b, ell.shape).astype(np.complex128, copy=False)
+        source_phys = np.broadcast_to(source_phys, ell_phys.shape).astype(
+            np.complex128, copy=False
+        )
     except ValueError as exc:
         raise ValueError(
-            "bispectrum must return a scalar or an array broadcastable to the FFTLog ell-grid shape."
+            "bispectrum must return a scalar or an array broadcastable to the physical FFTLog ell-grid shape."
         ) from exc
 
-    if not np.all(np.isfinite(source_b)):
+    if not np.all(np.isfinite(source_phys)):
         raise ValueError(
-            "bispectrum returned non-finite values on the FFTLog ell grid "
+            "bispectrum returned non-finite values on the physical FFTLog ell grid "
             f"at psi={psi:.6e}, Delta beta={delta_beta:.6e}."
         )
+
+    source_b = np.zeros(ell.shape, dtype=np.complex128)
+    source_b[sl] = source_phys
 
     a_grid, transformed = _one_dimensional_hankel(
         ell,
@@ -445,7 +471,8 @@ def _interpolate_radial_from_state(a: np.ndarray, state: _ComputeWorkerState) ->
                 "Required A values fall outside the cached FFTLog grid: "
                 f"requested [{found_min:.6e}, {found_max:.6e}], "
                 f"available [{state.a_min:.6e}, {state.a_max:.6e}]. "
-                "Increase ell_max and/or decrease ell_min."
+                "Increase radial_cache_padding_factor (preferred), or change "
+                "ell_max/ell_min if the physical integration range itself is insufficient."
             )
         a = np.clip(a, state.a_min, state.a_max)
 
@@ -841,12 +868,32 @@ class BruteForceX3PCF:
             max_norm,
         )
 
-    def _radial_worker_state(self, ell: np.ndarray) -> _RadialWorkerState:
+    @staticmethod
+    def _radial_fftlog_grid(
+        ell_physical: np.ndarray, padding_factor: float
+    ) -> tuple[np.ndarray, int, int]:
+        """Return a zero-padding FFTLog grid preserving the physical dln(ell)."""
+        ell_physical = np.asarray(ell_physical, dtype=float)
+        factor = float(padding_factor)
+        if factor <= 1.0:
+            return ell_physical, 0, ell_physical.size
+
+        dln = float(np.log(ell_physical[1] / ell_physical[0]))
+        n_extra = int(np.ceil(np.log(factor) / dln))
+        index = np.arange(-n_extra, ell_physical.size + n_extra, dtype=float)
+        ell_fftlog = ell_physical[0] * np.exp(dln * index)
+        return ell_fftlog, n_extra, n_extra + ell_physical.size
+
+    def _radial_worker_state(
+        self, ell: np.ndarray, physical_start: int, physical_stop: int
+    ) -> _RadialWorkerState:
         cfg = self.config
         return _RadialWorkerState(
             bispectrum=self.bispectrum,
             model_kwargs=self.model_kwargs,
             ell=ell,
+            physical_start=int(physical_start),
+            physical_stop=int(physical_stop),
             bessel_order=self.Sigma,
             fftlog_nu=cfg.fftlog_nu,
             c_window_width=cfg.c_window_width,
@@ -876,14 +923,17 @@ class BruteForceX3PCF:
             return self
 
         cfg = self.config
-        ell = np.geomspace(cfg.ell_min, cfg.ell_max, int(cfg.n_ell))
-        self._validate_reduce_domain_exchange_symmetry(ell, force=force)
+        ell_physical = np.geomspace(cfg.ell_min, cfg.ell_max, int(cfg.n_ell))
+        self._validate_reduce_domain_exchange_symmetry(ell_physical, force=force)
+        ell_fftlog, physical_start, physical_stop = self._radial_fftlog_grid(
+            ell_physical, cfg.radial_cache_padding_factor
+        )
         psi, psi_weight, delta_beta, delta_beta_weight = self._make_angular_grid(
             n_psi,
             n_delta_beta,
             reduce_domain=cfg.reduce_domain,
         )
-        state = self._radial_worker_state(ell)
+        state = self._radial_worker_state(ell_fftlog, physical_start, physical_stop)
 
         tasks = [
             (ipsi, idb, float(psi_value), float(dbeta_value))
@@ -941,7 +991,7 @@ class BruteForceX3PCF:
                 consume(_evaluate_radial_task(task, state), count)
 
         assert a_grid is not None and table is not None
-        self.ell = ell
+        self.ell = ell_physical
         self.psi = psi
         self.psi_weight = psi_weight
         self.delta_beta = delta_beta
