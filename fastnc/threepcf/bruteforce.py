@@ -92,8 +92,9 @@ class BruteForce3PCFConfig:
     reduce_domain_atol
         Size and tolerance of that exchange-symmetry check.
     angular_mode
-        ``"fixed"`` evaluates the configured angular grid once.  ``"adaptive"``
-        repeatedly refines the global grid in the selected angular directions,
+        ``"fixed"`` evaluates the configured angular grid once.  ``"adaptive"`` repeatedly refines the global grid in the selected angular directions;
+        ``"local_adaptive"`` refines only configurable neighborhoods of the
+        squeezed hotspot,
         comparing the full requested real-space 3PCF after every refinement.
     angular_rtol, angular_atol
         Convergence is accepted when every target configuration satisfies
@@ -157,8 +158,14 @@ class BruteForce3PCFConfig:
     N_pad: int = 0
 
     interpolation_bounds: str = "raise"
+    small_a_fallback: bool = True
+    small_a_terms: int = 4
 
     angular_mode: str = "fixed"
+    local_psi_center: float = 0.25 * np.pi
+    local_psi_half_width: float = 0.12
+    local_delta_beta_center: float = np.pi
+    local_delta_beta_half_width: float = 0.30
     angular_rtol: float = 1.0e-3
     angular_atol: float = 0.0
     angular_max_refinements: int | None = 4
@@ -207,8 +214,14 @@ class BruteForce3PCFConfig:
             )
         if self.interpolation_bounds not in {"raise", "clip"}:
             raise ValueError("interpolation_bounds must be 'raise' or 'clip'.")
-        if self.angular_mode not in {"fixed", "adaptive"}:
-            raise ValueError("angular_mode must be 'fixed' or 'adaptive'.")
+        if int(self.small_a_terms) < 1:
+            raise ValueError("small_a_terms must be >= 1.")
+        if self.angular_mode not in {"fixed", "adaptive", "local_adaptive"}:
+            raise ValueError("angular_mode must be 'fixed', 'adaptive', or 'local_adaptive'.")
+        if not (0.0 < self.local_psi_half_width < 0.25 * np.pi):
+            raise ValueError("local_psi_half_width must lie in (0, pi/4).")
+        if not (0.0 < self.local_delta_beta_half_width < np.pi):
+            raise ValueError("local_delta_beta_half_width must lie in (0, pi).")
         if self.angular_rtol < 0.0 or self.angular_atol < 0.0:
             raise ValueError("angular_rtol and angular_atol must be non-negative.")
         if self.angular_rtol == 0.0 and self.angular_atol == 0.0:
@@ -225,7 +238,7 @@ class BruteForce3PCFConfig:
             )
         if int(self.angular_refinement_factor) < 2:
             raise ValueError("angular_refinement_factor must be an integer >= 2.")
-        if self.angular_mode == "adaptive" and not (self.refine_psi or self.refine_delta_beta):
+        if self.angular_mode in {"adaptive", "local_adaptive"} and not (self.refine_psi or self.refine_delta_beta):
             raise ValueError("Adaptive mode requires refine_psi and/or refine_delta_beta.")
         if int(self.n_processes) < 1:
             raise ValueError("n_processes must be >= 1.")
@@ -294,6 +307,7 @@ class _RadialWorkerState:
     N_extrap_low: int
     N_extrap_high: int
     N_pad: int
+    small_a_terms: int
 
 
 @dataclass(frozen=True)
@@ -303,8 +317,9 @@ class _ComputeWorkerState:
     psi: np.ndarray
     psi_weight: np.ndarray
     delta_beta: np.ndarray
-    delta_beta_weight: float
+    delta_beta_weight: np.ndarray
     radial_transform: np.ndarray
+    small_a_moments: np.ndarray | None
     log_a_grid: np.ndarray
     a_min: float
     a_max: float
@@ -317,6 +332,7 @@ class _ComputeWorkerState:
     Sigma: int
     q_epsilon: complex
     interpolation_bounds: str
+    small_a_fallback: bool
 
 
 _RADIAL_WORKER_STATE: _RadialWorkerState | None = None
@@ -334,9 +350,17 @@ def _phase_beta_bar_array(psi: np.ndarray | float, delta_beta: np.ndarray | floa
     delta_beta = np.asarray(delta_beta, dtype=float)
     c = np.cos(psi)
     s = np.sin(psi)
-    denom_sq = 1.0 + np.sin(2.0 * psi) * np.cos(delta_beta)
-    denom = np.sqrt(np.maximum(denom_sq, np.finfo(float).tiny))
-    return -(c * np.exp(0.5j * delta_beta) + s * np.exp(-0.5j * delta_beta)) / denom
+    numerator = -(c * np.exp(0.5j * delta_beta) + s * np.exp(-0.5j * delta_beta))
+    # Compute the norm from the complex numerator itself rather than from
+    # 1 + sin(2 psi) cos(Delta beta), which suffers catastrophic cancellation
+    # near (psi, Delta beta)=(pi/4, pi).  The phase is undefined at the exact
+    # measure-zero degenerate point; assign unit phase there.
+    denom = np.abs(numerator)
+    return np.divide(
+        numerator, denom,
+        out=np.ones(np.broadcast_shapes(numerator.shape, denom.shape), dtype=np.complex128),
+        where=denom > 8.0 * np.finfo(float).eps,
+    )
 
 
 def _phase_beta_bar(psi: float, delta_beta: float) -> complex:
@@ -387,8 +411,8 @@ def _one_dimensional_hankel(
 def _evaluate_radial_task(
     task: tuple[int, int, float, float],
     state: _RadialWorkerState,
-) -> tuple[int, int, complex, np.ndarray, np.ndarray]:
-    """Evaluate one angular node's source bispectrum and radial FFTLog."""
+) -> tuple[int, int, complex, np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate one angular node's source bispectrum, radial FFTLog, and small-A moments."""
     ipsi, idb, psi, delta_beta = task
     ell = state.ell
 
@@ -425,6 +449,19 @@ def _evaluate_radial_task(
     source_b = np.zeros(ell.shape, dtype=np.complex128)
     source_b[sl] = source_phys
 
+    # Small-A Bessel-series moments.  For n=|Sigma|,
+    # J_n(x)=sum_m (-1)^m (x/2)^(n+2m)/(m! Gamma(n+m+1)).
+    # Store the corresponding physical dln(ell) moments once per angular node.
+    n = abs(int(state.bessel_order))
+    sign = -1.0 if (state.bessel_order < 0 and n % 2) else 1.0
+    lnell = np.log(ell_phys)
+    moments = np.empty(int(state.small_a_terms), dtype=np.complex128)
+    import math
+    for m in range(int(state.small_a_terms)):
+        power = 4 + n + 2 * m
+        coeff = sign * ((-1.0) ** m) / (2.0 ** (n + 2*m) * math.factorial(m) * math.gamma(n + m + 1))
+        moments[m] = coeff * np.trapezoid((ell_phys ** power) * source_phys, x=lnell)
+
     a_grid, transformed = _one_dimensional_hankel(
         ell,
         ell**4 * source_b,
@@ -435,7 +472,7 @@ def _evaluate_radial_task(
         N_extrap_high=state.N_extrap_high,
         N_pad=state.N_pad,
     )
-    return ipsi, idb, _phase_beta_bar(psi, delta_beta), a_grid, transformed
+    return ipsi, idb, _phase_beta_bar(psi, delta_beta), a_grid, transformed, moments
 
 
 def _radial_worker_initializer(state: _RadialWorkerState) -> None:
@@ -443,27 +480,31 @@ def _radial_worker_initializer(state: _RadialWorkerState) -> None:
     _RADIAL_WORKER_STATE = state
 
 
-def _radial_worker(task: tuple[int, int, float, float]) -> tuple[int, int, complex, np.ndarray, np.ndarray]:
+def _radial_worker(task: tuple[int, int, float, float]) -> tuple[int, int, complex, np.ndarray, np.ndarray, np.ndarray]:
     if _RADIAL_WORKER_STATE is None:  # pragma: no cover - defensive
         raise RuntimeError("Radial worker state was not initialized.")
     return _evaluate_radial_task(task, _RADIAL_WORKER_STATE)
 
 
 def _interpolate_radial_from_state(a: np.ndarray, state: _ComputeWorkerState) -> np.ndarray:
-    """Interpolate one cached radial-transform table linearly in ``ln A``."""
+    """Interpolate the cached radial transform in ``ln A``.
+
+    Values below the FFTLog cache are evaluated with the small-A Bessel
+    expansion when ``small_a_fallback`` is enabled.  This removes the
+    structural lower-bound failure near degenerate real-space geometry
+    (A -> 0) without clipping the physical transform.
+    """
     a = np.asarray(a, dtype=float)
     if a.ndim != 3 or a.shape[1:] != (state.psi.size, state.delta_beta.size):
         raise ValueError(
             "A must have shape (n_delta_phi, n_psi, n_delta_beta) matching the cached table."
         )
-    if np.any(~np.isfinite(a)) or np.any(a <= 0.0):
-        raise ValueError(
-            "Encountered A <= 0. Increase angular resolution or treat the isolated "
-            "degenerate geometry separately."
-        )
+    if np.any(~np.isfinite(a)) or np.any(a < 0.0):
+        raise ValueError("Encountered non-finite or negative A.")
 
-    outside = (a < state.a_min) | (a > state.a_max)
-    if np.any(outside):
+    high = a > state.a_max
+    low = a < state.a_min
+    if np.any(high) or (np.any(low) and not state.small_a_fallback):
         found_min = float(np.min(a))
         found_max = float(np.max(a))
         if state.interpolation_bounds == "raise":
@@ -471,15 +512,15 @@ def _interpolate_radial_from_state(a: np.ndarray, state: _ComputeWorkerState) ->
                 "Required A values fall outside the cached FFTLog grid: "
                 f"requested [{found_min:.6e}, {found_max:.6e}], "
                 f"available [{state.a_min:.6e}, {state.a_max:.6e}]. "
-                "Increase radial_cache_padding_factor (preferred), or change "
-                "ell_max/ell_min if the physical integration range itself is insufficient."
+                "For A below the cache enable small_a_fallback; for A above "
+                "the cache increase radial_cache_padding_factor."
             )
-        a = np.clip(a, state.a_min, state.a_max)
 
-    loga = np.log(a)
+    # Standard interpolation, clipping only for constructing safe indices.
+    a_safe = np.clip(a, state.a_min, state.a_max)
+    loga = np.log(a_safe)
     index = np.searchsorted(state.log_a_grid, loga, side="right") - 1
     index = np.clip(index, 0, state.log_a_grid.size - 2)
-
     x0 = state.log_a_grid[index]
     x1 = state.log_a_grid[index + 1]
     weight = (loga - x0) / (x1 - x0)
@@ -488,7 +529,23 @@ def _interpolate_radial_from_state(a: np.ndarray, state: _ComputeWorkerState) ->
     idb = np.arange(state.delta_beta.size)[None, None, :]
     y0 = state.radial_transform[ipsi, idb, index]
     y1 = state.radial_transform[ipsi, idb, index + 1]
-    return (1.0 - weight) * y0 + weight * y1
+    out = (1.0 - weight) * y0 + weight * y1
+
+    if np.any(low) and state.small_a_fallback:
+        if state.small_a_moments is None:
+            raise RuntimeError("small_a_fallback requested but no small-A moments were cached.")
+        series = np.zeros_like(out)
+        a2 = a * a
+        n = abs(int(state.Sigma))
+        # moments[m] already contains the Bessel-series coefficient.
+        for m in range(state.small_a_moments.shape[-1]):
+            series += state.small_a_moments[None, :, :, m] * a ** (n + 2*m)
+        out = np.where(low, series, out)
+
+    # Upper clipping remains an explicit diagnostic mode only.
+    if np.any(high) and state.interpolation_bounds == "clip":
+        pass
+    return out
 
 
 def _evaluate_theta_pair_image_from_state(
@@ -537,7 +594,7 @@ def _evaluate_theta_pair_image_from_state(
             * np.exp(0.5j * (sigma2 - sigma3) * chi)
             * np.exp(-1j * state.Sigma * alpha)
         )
-        integral = state.delta_beta_weight * np.sum(angular_weight * phase * radial, axis=(1, 2))
+        integral = np.sum(angular_weight * state.delta_beta_weight[None, None, :] * phase * radial, axis=(1, 2))
         out[start:stop] = prefactor * integral
 
     return out
@@ -674,13 +731,17 @@ class BruteForceX3PCF:
         self.psi: np.ndarray | None = None
         self.psi_weight: np.ndarray | None = None
         self.delta_beta: np.ndarray | None = None
-        self.delta_beta_weight: float | None = None
+        self.delta_beta_weight: np.ndarray | None = None
         self.a_grid: np.ndarray | None = None
         self.radial_transform: np.ndarray | None = None
+        self._small_a_moments: np.ndarray | None = None
         self._log_a_grid: np.ndarray | None = None
         self._phase_beta_bar_table: np.ndarray | None = None
         self._n_psi_current: int | None = None
         self._n_delta_beta_current: int | None = None
+        self._n_psi_base_current: int | None = None
+        self._n_delta_beta_base_current: int | None = None
+        self._local_factor_current: int = 1
         self._reduced_domain_exchange_validated = False
         self._reduced_domain_exchange_error_norm: float | None = None
 
@@ -742,27 +803,72 @@ class BruteForceX3PCF:
         n_delta_beta: int,
         *,
         reduce_domain: bool,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-        """Return the active Fourier-angle quadrature grid.
+        local_factor: int = 1,
+        refine_psi: bool = True,
+        refine_delta_beta: bool = True,
+        psi_center: float = 0.25 * np.pi,
+        psi_half_width: float = 0.12,
+        delta_beta_center: float = np.pi,
+        delta_beta_half_width: float = 0.30,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Return Fourier-angle quadrature nodes and weights.
 
-        The default grid covers ``psi in (0, pi/2)`` and
-        ``Delta beta in [0, 2 pi)``.  The opt-in symmetry-reduced construction uses
-        the fundamental rectangle ``psi in (0, pi/4)``,
-        ``Delta beta in [0, pi)``.  The latter is not merely an integration
-        truncation: the real-space evaluation explicitly sums the four
-        symmetry images, so its result is a full-domain integral when the
-        required source-bispectrum symmetries hold.
+        ``local_factor=1`` gives the legacy global grid.  Values >1 add
+        quadrature nodes only inside configurable neighborhoods of the
+        squeezed hotspot, leaving the outer domain unchanged.
         """
-        xpsi, wpsi = np.polynomial.legendre.leggauss(int(n_psi))
-        psi_extent = 0.25 * np.pi if reduce_domain else 0.5 * np.pi
-        psi = 0.5 * psi_extent * (xpsi + 1.0)
-        psi_weight = 0.5 * psi_extent * wpsi
+        if reduce_domain and local_factor > 1:
+            raise ValueError("local angular refinement is currently supported only for reduce_domain=False.")
 
-        ndb = int(n_delta_beta)
-        delta_beta_extent = np.pi if reduce_domain else 2.0 * np.pi
-        delta_beta = delta_beta_extent * (np.arange(ndb, dtype=float) + 0.5) / ndb
-        delta_beta_weight = delta_beta_extent / ndb
-        return psi, psi_weight, delta_beta, delta_beta_weight
+        psi_extent = 0.25 * np.pi if reduce_domain else 0.5 * np.pi
+        db_extent = np.pi if reduce_domain else 2.0 * np.pi
+
+        def gl_segment(a, b, n):
+            if b <= a or n <= 0:
+                return np.empty(0), np.empty(0)
+            x, w = np.polynomial.legendre.leggauss(int(n))
+            return 0.5*(b-a)*x + 0.5*(a+b), 0.5*(b-a)*w
+
+        # Legacy grid exactly when no local refinement is requested.
+        if int(local_factor) <= 1:
+            psi, psi_weight = gl_segment(0.0, psi_extent, int(n_psi))
+            ndb = int(n_delta_beta)
+            dbeta = db_extent * (np.arange(ndb, dtype=float) + 0.5) / ndb
+            db_weight = np.full(ndb, db_extent / ndb, dtype=float)
+            return psi, psi_weight, dbeta, db_weight
+
+        # Composite psi quadrature: preserve baseline outer resolution and
+        # multiply only the central segment's node density.
+        pc = float(np.clip(psi_center, 0.0, psi_extent))
+        ph = min(float(psi_half_width), pc, psi_extent-pc)
+        p0, p1 = pc-ph, pc+ph
+        density_p = float(n_psi) / psi_extent
+        segs_p = []
+        for a,b,mul in ((0.0,p0,1),(p0,p1,int(local_factor) if refine_psi else 1),(p1,psi_extent,1)):
+            nn = max(1, int(np.ceil(density_p*(b-a)*mul))) if b>a else 0
+            if mul > 1 and nn % 2:
+                nn += 1  # avoid sampling the exact degenerate center
+            segs_p.append(gl_segment(a,b,nn))
+        psi = np.concatenate([x for x,_ in segs_p])
+        psi_weight = np.concatenate([w for _,w in segs_p])
+
+        # Composite midpoint rule in Delta beta, likewise locally refined.
+        bc = float(delta_beta_center) % db_extent
+        bh = min(float(delta_beta_half_width), bc, db_extent-bc)
+        b0, b1 = bc-bh, bc+bh
+        density_b = float(n_delta_beta) / db_extent
+        dbs=[]; dws=[]
+        for a,b,mul in ((0.0,b0,1),(b0,b1,int(local_factor) if refine_delta_beta else 1),(b1,db_extent,1)):
+            if b<=a: continue
+            nn=max(1,int(np.ceil(density_b*(b-a)*mul)))
+            if mul > 1 and nn % 2:
+                nn += 1  # midpoint rule then avoids Delta beta=center
+            h=(b-a)/nn
+            dbs.append(a + h*(np.arange(nn,dtype=float)+0.5))
+            dws.append(np.full(nn,h,dtype=float))
+        dbeta=np.concatenate(dbs)
+        db_weight=np.concatenate(dws)
+        return psi, psi_weight, dbeta, db_weight
 
     def _validate_reduce_domain_exchange_symmetry(self, ell: np.ndarray, *, force: bool = False) -> None:
         """Verify the nontrivial symmetry required by the symmetry-reduction shortcut.
@@ -900,9 +1006,10 @@ class BruteForceX3PCF:
             N_extrap_low=cfg.N_extrap_low,
             N_extrap_high=cfg.N_extrap_high,
             N_pad=cfg.N_pad,
+            small_a_terms=int(cfg.small_a_terms),
         )
 
-    def _prepare_angular_grid(self, n_psi: int, n_delta_beta: int, *, force: bool = False) -> "BruteForceX3PCF":
+    def _prepare_angular_grid(self, n_psi: int, n_delta_beta: int, *, force: bool = False, local_factor: int = 1) -> "BruteForceX3PCF":
         """Build or replace the radial table for one active Fourier-angle grid.
 
         In symmetry-reduced-domain mode this table belongs only to the fundamental
@@ -916,8 +1023,9 @@ class BruteForceX3PCF:
 
         same_grid = (
             self.prepared
-            and self._n_psi_current == n_psi
-            and self._n_delta_beta_current == n_delta_beta
+            and self._n_psi_base_current == n_psi
+            and self._n_delta_beta_base_current == n_delta_beta
+            and self._local_factor_current == int(local_factor)
         )
         if same_grid and not force:
             return self
@@ -929,10 +1037,17 @@ class BruteForceX3PCF:
             ell_physical, cfg.radial_cache_padding_factor
         )
         psi, psi_weight, delta_beta, delta_beta_weight = self._make_angular_grid(
-            n_psi,
-            n_delta_beta,
+            n_psi, n_delta_beta,
             reduce_domain=cfg.reduce_domain,
+            local_factor=int(local_factor),
+            refine_psi=bool(cfg.refine_psi),
+            refine_delta_beta=bool(cfg.refine_delta_beta),
+            psi_center=float(cfg.local_psi_center),
+            psi_half_width=float(cfg.local_psi_half_width),
+            delta_beta_center=float(cfg.local_delta_beta_center),
+            delta_beta_half_width=float(cfg.local_delta_beta_half_width),
         )
+        npsi_actual, ndb_actual = psi.size, delta_beta.size
         state = self._radial_worker_state(ell_fftlog, physical_start, physical_stop)
 
         tasks = [
@@ -943,22 +1058,24 @@ class BruteForceX3PCF:
         total = len(tasks)
         table: np.ndarray | None = None
         a_grid: np.ndarray | None = None
-        phase_beta_bar = np.empty((n_psi, n_delta_beta), dtype=np.complex128)
+        phase_beta_bar = np.empty((npsi_actual, ndb_actual), dtype=np.complex128)
+        small_a_moments = np.empty((npsi_actual, ndb_actual, int(cfg.small_a_terms)), dtype=np.complex128)
 
-        def consume(entry: tuple[int, int, complex, np.ndarray, np.ndarray], count: int) -> None:
+        def consume(entry: tuple[int, int, complex, np.ndarray, np.ndarray, np.ndarray], count: int) -> None:
             nonlocal table, a_grid
-            ipsi, idb, phase, a, transformed = entry
+            ipsi, idb, phase, a, transformed, moments = entry
             if a_grid is None:
                 if np.any(a <= 0.0) or np.any(np.diff(a) <= 0.0):
                     raise RuntimeError("fastnc FFTLog did not return a strictly increasing positive A grid.")
                 a_grid = a
-                table = np.empty((n_psi, n_delta_beta, a.size), dtype=np.complex128)
+                table = np.empty((npsi_actual, ndb_actual, a.size), dtype=np.complex128)
             elif not np.array_equal(a, a_grid):
                 raise RuntimeError("The FFTLog A grid changed across Fourier-angle nodes.")
 
             assert table is not None
             phase_beta_bar[ipsi, idb] = phase
             table[ipsi, idb] = transformed
+            small_a_moments[ipsi, idb] = moments
             if logger.isEnabledFor(logging.DEBUG) and (
                 count == 1 or count % max(1, total // 20) == 0 or count == total
             ):
@@ -967,8 +1084,8 @@ class BruteForceX3PCF:
                     "%d/%d (n_psi=%d, n_delta_beta=%d)",
                     count,
                     total,
-                    n_psi,
-                    n_delta_beta,
+                    npsi_actual,
+                    ndb_actual,
                 )
 
         use_parallel = bool(cfg.parallel_prepare) and int(cfg.n_processes) > 1 and total > 1
@@ -999,9 +1116,13 @@ class BruteForceX3PCF:
         self.a_grid = a_grid
         self._log_a_grid = np.log(a_grid)
         self.radial_transform = table
+        self._small_a_moments = small_a_moments
         self._phase_beta_bar_table = phase_beta_bar
-        self._n_psi_current = n_psi
-        self._n_delta_beta_current = n_delta_beta
+        self._n_psi_current = npsi_actual
+        self._n_delta_beta_current = ndb_actual
+        self._n_psi_base_current = n_psi
+        self._n_delta_beta_base_current = n_delta_beta
+        self._local_factor_current = int(local_factor)
         return self
 
     def prepare(self, *, force: bool = False) -> "BruteForceX3PCF":
@@ -1028,6 +1149,7 @@ class BruteForceX3PCF:
         assert self.delta_beta is not None
         assert self.delta_beta_weight is not None
         assert self.radial_transform is not None
+        assert self._small_a_moments is not None
         assert self._log_a_grid is not None
         assert self.a_grid is not None
         assert self._phase_beta_bar_table is not None
@@ -1065,6 +1187,7 @@ class BruteForceX3PCF:
             delta_beta=self.delta_beta,
             delta_beta_weight=self.delta_beta_weight,
             radial_transform=self.radial_transform,
+            small_a_moments=self._small_a_moments,
             log_a_grid=self._log_a_grid,
             a_min=float(self.a_grid[0]),
             a_max=float(self.a_grid[-1]),
@@ -1077,6 +1200,7 @@ class BruteForceX3PCF:
             Sigma=self.Sigma,
             q_epsilon=self.q_epsilon,
             interpolation_bounds=self.config.interpolation_bounds,
+            small_a_fallback=bool(self.config.small_a_fallback),
         )
 
     def _evaluate_realspace_grid(
@@ -1149,6 +1273,7 @@ class BruteForceX3PCF:
         delta_phi: np.ndarray,
         *,
         delta_phi_chunk: int,
+        local_mode: bool = False,
     ) -> tuple[
         np.ndarray,
         bool,
@@ -1157,11 +1282,16 @@ class BruteForceX3PCF:
         float | None,
         tuple[BruteForce3PCFAdaptiveTrial, ...],
     ]:
-        """Globally refine Fourier-angle grids until the output converges."""
+        """Refine Fourier-angle quadrature until the output converges.
+
+        ``adaptive`` globally increases the base grid. ``local_adaptive`` keeps
+        the outer grid fixed and increases only the configured hotspot density.
+        """
         cfg = self.config
         n_psi = int(cfg.n_psi)
         n_delta_beta = int(cfg.n_delta_beta)
-        self._prepare_angular_grid(n_psi, n_delta_beta)
+        local_factor = 1
+        self._prepare_angular_grid(n_psi, n_delta_beta, local_factor=local_factor)
         previous = self._evaluate_realspace_grid(
             theta1,
             theta2,
@@ -1187,13 +1317,17 @@ class BruteForceX3PCF:
         refinement = 0
         while cfg.angular_max_refinements is None or refinement < int(cfg.angular_max_refinements):
             refinement += 1
-            next_n_psi = n_psi * int(cfg.angular_refinement_factor) if cfg.refine_psi else n_psi
-            next_n_delta_beta = (
-                n_delta_beta * int(cfg.angular_refinement_factor)
-                if cfg.refine_delta_beta
-                else n_delta_beta
-            )
-            self._prepare_angular_grid(next_n_psi, next_n_delta_beta)
+            if local_mode:
+                next_n_psi = n_psi
+                next_n_delta_beta = n_delta_beta
+                local_factor *= int(cfg.angular_refinement_factor)
+            else:
+                next_n_psi = n_psi * int(cfg.angular_refinement_factor) if cfg.refine_psi else n_psi
+                next_n_delta_beta = (
+                    n_delta_beta * int(cfg.angular_refinement_factor)
+                    if cfg.refine_delta_beta else n_delta_beta
+                )
+            self._prepare_angular_grid(next_n_psi, next_n_delta_beta, local_factor=local_factor)
             current = self._evaluate_realspace_grid(
                 theta1,
                 theta2,
@@ -1300,9 +1434,9 @@ class BruteForceX3PCF:
             raise ValueError("delta_phi_chunk must be >= 1.")
 
         mode = self.config.angular_mode if angular_mode is None else str(angular_mode)
-        if mode not in {"fixed", "adaptive"}:
-            raise ValueError("angular_mode must be 'fixed' or 'adaptive'.")
-        if mode == "adaptive" and not (self.config.refine_psi or self.config.refine_delta_beta):
+        if mode not in {"fixed", "adaptive", "local_adaptive"}:
+            raise ValueError("angular_mode must be 'fixed', 'adaptive', or 'local_adaptive'.")
+        if mode in {"adaptive", "local_adaptive"} and not (self.config.refine_psi or self.config.refine_delta_beta):
             raise ValueError("Adaptive mode requires refine_psi and/or refine_delta_beta.")
 
         if mode == "fixed":
@@ -1324,6 +1458,7 @@ class BruteForceX3PCF:
                 theta2,
                 delta_phi,
                 delta_phi_chunk=int(delta_phi_chunk),
+                local_mode=(mode == "local_adaptive"),
             )
 
         assert self._n_psi_current is not None
