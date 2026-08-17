@@ -37,12 +37,8 @@ from .analytic import (
     TracerBias, SPTMultiTracerBispectrumMultipole3D, SPTGalaxyBispectrumMultipole3D,
 )
 
-from .presets import (
-    BiHalofitBispectrum3D, 
-    OneHaloProductBispectrum3D, NFWOneHaloBispectrum3D,
-    default_wmap_like_cosmology, simple_linear_growth,
-    simple_debug_pklin, eisenstein_hu_like_pklin,
-)
+from .bihalofit import BiHalofitBispectrum3D
+from .onehalo import OneHaloProductBispectrum3D, NFWOneHaloBispectrum3D
 
 __all__ = [
     "Support2D", "Support3D",
@@ -74,7 +70,6 @@ __all__ = [
     "QuadraticBiasBispectrumMultipole3D", "TidalBiasBispectrumMultipole3D",
     "LinearCombinationBispectrumMultipole3D", "TracerBias",
     "SPTMultiTracerBispectrumMultipole3D", "SPTGalaxyBispectrumMultipole3D",
+    "BiHalofitBispectrum3D",
     "OneHaloProductBispectrum3D", "NFWOneHaloBispectrum3D",
-    "default_wmap_like_cosmology", "simple_linear_growth",
-    "simple_debug_pklin", "eisenstein_hu_like_pklin",
 ]

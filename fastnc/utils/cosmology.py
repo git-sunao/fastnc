@@ -23,6 +23,15 @@ _DEFAULT_COSMO_WMAP_LIKE = {
     "Ob0": 0.046,
 }
 
+
+def default_wmap_like_cosmology() -> dict[str, float]:
+    """Return a WMAP-like debug cosmology dictionary.
+
+    This helper is intended for examples and code-path tests, not precision
+    calculations. A fresh dictionary is returned on every call.
+    """
+    return dict(_DEFAULT_COSMO_WMAP_LIKE)
+
 def standard_linear_growth(z, cosmo: Mapping[str, float] | None = None):
     r"""Linear growth factor for a flat constant-``w`` background.
 

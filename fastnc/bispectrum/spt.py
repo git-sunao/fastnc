@@ -6,12 +6,18 @@ whose models exploit separability to evaluate bispectrum multipoles directly.
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Mapping
 
 import numpy as np
 
 from .base import Bispectrum3D
 from .support import Support3D
+from fastnc.utils.cosmology import (
+    default_wmap_like_cosmology,
+    eisenstein_hu_like_pklin,
+    simple_debug_pklin,
+    simple_linear_growth,
+)
 
 
 def f2_kernel(k1, k2, mu12):
@@ -113,6 +119,56 @@ class SPTMatterBispectrum3D(Bispectrum3D):
         self.linear_power = linear_power
         self.support = support or Support3D(policy="ignore")
 
+    @classmethod
+    def simple_debug(
+        cls,
+        *,
+        cosmo: Mapping[str, float] | None = None,
+        amplitude: float = 1.0e4,
+        k_eq: float = 2.0e-2,
+        transfer_power: float = 1.5,
+        pklin_kind: str = "debug",
+        support: Support3D | None = None,
+    ) -> "SPTMatterBispectrum3D":
+        """Return a self-initialized tree-level SPT matter model for debugging.
+
+        The debug linear power spectrum is defined at ``z=0`` and promoted to
+        arbitrary redshift using ``P_L(k,z) = D(z)^2 P_L(k,0)`` with the simple
+        bundled growth factor.  These ingredients are intended for examples and
+        validation only, not for scientific inference.
+
+        Parameters mirror :meth:`BiHalofitBispectrum3D.simple_debug` where they
+        are relevant.  Unlike Bihalofit, direct SPT evaluates the power spectrum
+        callable on demand and therefore does not require pre-tabulated ``k`` or
+        ``z`` grids.
+        """
+        cosmo_dict = default_wmap_like_cosmology() if cosmo is None else dict(cosmo)
+
+        if pklin_kind == "debug":
+            def pklin0(k):
+                return simple_debug_pklin(
+                    k,
+                    cosmo=cosmo_dict,
+                    amplitude=amplitude,
+                    k_eq=k_eq,
+                    transfer_power=transfer_power,
+                )
+        elif pklin_kind in {"eisenstein-hu", "eisenstein_hu", "eh"}:
+            def pklin0(k):
+                return eisenstein_hu_like_pklin(
+                    k,
+                    cosmo=cosmo_dict,
+                    amplitude=amplitude,
+                )
+        else:
+            raise ValueError("pklin_kind must be 'debug' or 'eisenstein-hu'.")
+
+        def linear_power(k, z):
+            growth = simple_linear_growth(z, cosmo=cosmo_dict)
+            return pklin0(k) * growth**2
+
+        return cls(linear_power=linear_power, support=support)
+
     def update_physics(self, *, linear_power: Callable):
         """Replace the linear power-spectrum evaluator in-place."""
         if not callable(linear_power):
@@ -197,6 +253,43 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
         self.b2 = b2
         self.bK2 = bK2
         self.support = support or Support3D(policy="ignore")
+
+    @classmethod
+    def simple_debug(
+        cls,
+        *,
+        b1=1.0,
+        b2=0.0,
+        bK2=0.0,
+        cosmo: Mapping[str, float] | None = None,
+        amplitude: float = 1.0e4,
+        k_eq: float = 2.0e-2,
+        transfer_power: float = 1.5,
+        pklin_kind: str = "debug",
+        support: Support3D | None = None,
+    ) -> "SPTGalaxyBispectrum3D":
+        """Return a self-initialized tree-level galaxy SPT model for debugging.
+
+        The linear spectrum and growth prescription are identical to
+        :meth:`SPTMatterBispectrum3D.simple_debug`.  Galaxy-bias parameters may
+        be scalars or callables ``bias(z)``, exactly as in the ordinary
+        constructor.
+        """
+        matter = SPTMatterBispectrum3D.simple_debug(
+            cosmo=cosmo,
+            amplitude=amplitude,
+            k_eq=k_eq,
+            transfer_power=transfer_power,
+            pklin_kind=pklin_kind,
+            support=support,
+        )
+        return cls(
+            linear_power=matter.linear_power,
+            b1=b1,
+            b2=b2,
+            bK2=bK2,
+            support=support,
+        )
 
     def update_physics(
         self,
