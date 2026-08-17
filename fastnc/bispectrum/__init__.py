@@ -22,7 +22,7 @@ from .interpolate import (
 from .regulator import Ell3HighPassRegulator
 
 from .halofit import Halofit
-from .spt import f2_kernel, SPTMatterBispectrum3D
+from .spt import f2_kernel, tidal_kernel, SPTMatterBispectrum3D, SPTGalaxyBispectrum3D
 from .analytic import (
     standard_linear_growth, eisenstein_hu_no_wiggle_pklin, fourier_power_kernel,
     PowerLawAngularKernelTableConfig, PowerLawAngularKernelTable,
@@ -61,7 +61,7 @@ __all__ = [
     "InterpolatedBispectrum3D", "InterpolatedBispectrum2D",
     "InterpolatedBispectrumMultipole3D",
     "Ell3HighPassRegulator", "Halofit",
-    "f2_kernel", "SPTMatterBispectrum3D",
+    "f2_kernel", "tidal_kernel", "SPTMatterBispectrum3D", "SPTGalaxyBispectrum3D",
     "standard_linear_growth", "eisenstein_hu_no_wiggle_pklin", "fourier_power_kernel",
     "PowerLawAngularKernelTableConfig", "PowerLawAngularKernelTable",
     "TensorProductGeometryCache",
