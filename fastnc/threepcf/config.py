@@ -22,6 +22,41 @@ def _as_1d_positive_array(x, name: str) -> np.ndarray:
 
 
 @dataclass(frozen=True)
+class SlepianConfig:
+    """Route-selection settings for the Slepian 3PCF child calculator.
+
+    Phase 7 provides the fixed-redshift numerical Slepian engine. Phase 8 adds
+    projector-backed factorized-growth LOS execution, Phase 9 batches
+    multiple sample combinations, and Phase 12 adds a general-coefficient LOS
+    rule for models with redshift-dependent radial shapes such as BiHalofit.
+    ``auto`` falls back to generic execution when the model exposes no
+    supported Slepian LOS rule; ``required`` fails loudly.
+    """
+
+    mode: str = "auto"
+    n_fftlog: int = 32
+    fftlog_bias: float = -1.3
+    k_min: float = 1.0e-5
+    k_max: float = 1.0e2
+    n_x: int = 96
+    x_min: float = 1.0e-3
+    x_max: float = 1.0e3
+    weber_r_points: int = 256
+    cache_tables: bool = True
+    timing: bool = False
+
+    def __post_init__(self):
+        if self.mode not in {"auto", "off", "required"}:
+            raise ValueError("SlepianConfig.mode must be 'auto', 'off', or 'required'")
+        if self.n_fftlog <= 0 or self.n_x <= 0 or self.weber_r_points <= 0:
+            raise ValueError("Slepian grid sizes must be positive")
+        if not (0.0 < self.k_min < self.k_max):
+            raise ValueError("SlepianConfig requires 0 < k_min < k_max")
+        if not (0.0 < self.x_min < self.x_max):
+            raise ValueError("SlepianConfig requires 0 < x_min < x_max")
+
+
+@dataclass(frozen=True)
 class ThreePCFConfig:
     """Configuration for the 3PCF engine.
 
@@ -58,6 +93,7 @@ class ThreePCFConfig:
     bin_width_logtheta: float | None = None
     hankel: DoubleHankelConfig = field(default_factory=DoubleHankelConfig)
     timing: bool = False
+    slepian: SlepianConfig = field(default_factory=SlepianConfig)
     extra: dict[str, Any] = field(default_factory=dict)
 
     epsilons: tuple[tuple[int, int, int], ...] | None = None

@@ -1,255 +1,381 @@
-"""Low-level 3PCF calculator for the B_L -> H_k -> zeta_k -> zeta pipeline."""
+"""Route orchestration for hybrid three-point correlation calculations.
+
+Phase 3 introduces the calculator hierarchy without changing the numerical
+algorithm of the generic route.  The existing B_L -> H_k -> zeta_k -> zeta
+implementation lives in :mod:`fastnc.threepcf.generic_calculator`; this module
+owns route selection and compatibility aliases.
+"""
 from __future__ import annotations
 
-import logging
+from collections.abc import Sequence
 
 import numpy as np
 
-from ..coupling import CouplingMatrix
-from .._logging import log_call
-from ..coupling.cache import CouplingCacheSession, resolve_coupling_cache_file
-from ..hankel.wrapper import DoubleHankelConfig
-from .bmultipole_grid import BMultipoleGrid
+from ..bispectrum.base import Bispectrum3D
 from .config import ThreePCFConfig
-from .grid import FFTGrid
-from .hkernel_grid import HKernelGrid
-from .spin import SpinSpec, as_effective_spin_triple
-from .zeta_grid import ZetaGrid
-from .zetak_grid import ZetaKGrid
+from .generic_calculator import GenericThreePCFCalculator
+from .slepian.calculator import SlepianThreePCFCalculator
+from .zetak_grid import ZetaKGrid, ZetaKMode
 
 
-logger = logging.getLogger(__name__)
+class _TermCollectionBispectrum3D(Bispectrum3D):
+    """Read-only 3D bispectrum view equal to the sum of a term collection.
+
+    This adapter belongs to the calculator layer: it changes only the
+    representation consumed by the generic numerical route and does not own or
+    copy any model physics.  Individual terms retain their live references to
+    the owning model/shared backend.
+    """
+
+    def __init__(self, model: Bispectrum3D, terms):
+        self.model = model
+        self.terms = tuple(terms)
+        self.support = model.support
+
+    def evaluate(self, k1, k2, k3, z, **params):
+        if not self.terms:
+            raise RuntimeError("term collection must not be empty")
+        out = self.terms[0].evaluate(k1, k2, k3, z, **params)
+        for term in self.terms[1:]:
+            out = out + term.evaluate(k1, k2, k3, z, **params)
+        return out
 
 
-class ThreePCFCalculator:
-    """Compute 3PCF grids from a bispectrum-multipole object.
+def _normalize_sample_combinations(sample_combinations):
+    if sample_combinations is None:
+        return (None,)
+    # A single combination such as ("G1", "G1", "G1") is also accepted.
+    if isinstance(sample_combinations, tuple) and len(sample_combinations) == 3:
+        if not any(isinstance(x, (tuple, list)) for x in sample_combinations):
+            return (tuple(sample_combinations),)
+    combos = tuple(sample_combinations)
+    if len(combos) == 0:
+        return (None,)
+    return tuple(None if c is None else tuple(c) for c in combos)
 
-    This is the low-level stage orchestrator.  It owns one common
-    :class:`FFTGrid` and the stage grids
 
-    - ``Bgrid`` for ``B_L(ell2, ell3)``,
-    - ``Hgrid`` for angularly mixed ``H_k(ell2, ell3)``, and
-    - ``ZKgrid`` for double-Hankel transformed ``zeta_k(theta1, theta2)``.
 
-    The final real-space 3PCF is returned as :class:`ZetaGrid` by
-    :meth:`compute_zeta`.
+
+def _supports_slepian_los(model):
+    kind = getattr(model, "slepian_los_kind", None)
+    if kind == "factorized-growth":
+        return bool(getattr(model, "has_factorized_growth", False))
+    return kind == "general-coefficient"
+
+
+class HybridThreePCFCalculator:
+    """Top-level route orchestrator for a 3PCF calculation.
+
+    Phase 9 supports a batch of projector-backed sample combinations.  The
+    Slepian child shares radial/Weber preparation and evaluates LOS moments with
+    a leading sample dimension; single-combination behavior is unchanged.
     """
 
     def __init__(
         self,
-        bmultipole,
-        config: ThreePCFConfig | None = None,
         *,
+        config: ThreePCFConfig | None = None,
+        bmultipole=None,
+        bispectrum2d=None,
+        bispectrum3d=None,
+        projector=None,
+        sample_combinations=None,
         coupling_kwargs: dict | None = None,
+        multipole_config=None,
+        multipole_basis: str = "fourier-even",
+        regulator=None,
+        multipole_kwargs: dict | None = None,
     ):
-        if bmultipole is None:
-            raise ValueError("bmultipole must be provided.")
+        provided = sum(x is not None for x in (bmultipole, bispectrum2d, bispectrum3d))
+        if provided != 1:
+            raise ValueError("provide exactly one of bmultipole, bispectrum2d, or bispectrum3d")
+        if bispectrum3d is not None and projector is None:
+            raise ValueError("projector is required for a 3D bispectrum input")
+        if bispectrum3d is None and projector is not None:
+            raise ValueError("projector is only valid with a 3D bispectrum input")
 
-        self.bmultipole = bmultipole
         self.config = config or ThreePCFConfig()
+        self.bmultipole = bmultipole
+        self.bispectrum2d = bispectrum2d
+        self.bispectrum3d = bispectrum3d
+        self.projector = projector
+        self.sample_combinations = _normalize_sample_combinations(sample_combinations)
+        self.coupling_kwargs = coupling_kwargs
+        self.multipole_config = multipole_config
+        self.multipole_basis = multipole_basis
+        self.regulator = regulator
+        self.multipole_kwargs = dict(multipole_kwargs or {})
 
-        self.timings: dict[str, float] = {}
+        if bispectrum3d is None and self.sample_combinations != (None,):
+            raise ValueError("sample combinations are only valid with a 3D bispectrum input")
+        self.generic_terms = ()
+        self.slepian_terms = ()
+        self.analytic_terms = ()
+        self.generic: GenericThreePCFCalculator | None = None
+        self.generic_by_sample = {}
+        self.slepian = None
+        self.analytic = None
+        self._combined_ZKgrid = None
+        self._combined_ZKgrids = None
+        self._combined_Zgrid = None
+        self._combined_Zgrids = None
+        self._prepare_children()
 
-        self.coupling_kwargs = dict(self.config.coupling_kwargs)
-        if coupling_kwargs is not None:
-            self.coupling_kwargs.update(dict(coupling_kwargs))
+    def _default_multipole_config(self):
+        from ..bispectrum import BispectrumMultipole2DConfig
 
-        self.spin_spec = SpinSpec(self.config.spin)
-        self.spin = self.spin_spec.spin
-        self.grid = FFTGrid.from_config(self.config)
+        return BispectrumMultipole2DConfig(
+            mode_max=int(self.config.Lmax),
+            ell_min=float(self.config.ell_min),
+            ell_max=float(self.config.ell_max),
+            n_ell=int(self.config.n_ell),
+        )
 
-        basis = getattr(self.bmultipole, "basis", "fourier-even")
-        self.Bgrid = BMultipoleGrid(grid=self.grid, Lmax=self.config.Lmax, basis=basis)
-        self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
-        self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
-        # Backward-friendly attribute name for interactive inspection only.
-        self.Zgrid: ZetaGrid | None = None
+    def _make_multipole(self, bispectrum2d):
+        if hasattr(bispectrum2d, "basis") and callable(bispectrum2d):
+            return bispectrum2d
+        if not hasattr(bispectrum2d, "multipole"):
+            raise TypeError(
+                "generic input must be either a callable multipole object with a basis "
+                "attribute or an object exposing multipole(config=..., basis=...)."
+            )
+        mp_config = self.multipole_config or self._default_multipole_config()
+        return bispectrum2d.multipole(
+            config=mp_config,
+            basis=self.multipole_basis,
+            regulator=self.regulator,
+            **self.multipole_kwargs,
+        )
 
-        self._coupling_cache_sessions: dict[str, CouplingCacheSession] = {}
-        self._couplings: dict[tuple[int, int, int], CouplingMatrix] = {}
+    def _prepare_3d_generic_model(self):
+        model = self.bispectrum3d
+        generic = tuple(model.generic_terms())
+        slepian = tuple(model.slepian_terms())
+        analytic = tuple(model.analytic_terms())
+        self.generic_terms = generic
+        self.slepian_terms = slepian
+        self.analytic_terms = analytic
 
-    # ------------------------------------------------------------------
-    # Component bookkeeping
+        mode = self.config.slepian.mode
+        if analytic:
+            raise RuntimeError("analytic_terms are not operational")
+        if mode == "required" and not slepian:
+            raise RuntimeError("SlepianConfig(mode='required') requested but the model exposes no Slepian terms")
+        if mode in {"auto", "required"} and slepian:
+            if not _supports_slepian_los(model):
+                if mode == "required":
+                    raise RuntimeError(
+                        "SlepianConfig(mode='required') needs a supported model LOS rule"
+                    )
+                terms = generic + slepian
+            else:
+                terms = generic
+        else:
+            if mode == "off" and slepian:
+                fallback = getattr(model, "generic_fallback_terms", None)
+                fallback_terms = tuple(fallback()) if callable(fallback) else ()
+                terms = fallback_terms if fallback_terms else (generic + slepian)
+            else:
+                terms = generic
+        if terms:
+            return _TermCollectionBispectrum3D(model, terms)
+        return model
+
+    def _prepare_children(self):
+        if self.bispectrum3d is not None:
+            model_for_generic = self._prepare_3d_generic_model()
+            for combo in self.sample_combinations:
+                b2d = self.projector.project(model_for_generic, sample_combination=combo)
+                bm = self._make_multipole(b2d)
+                self.generic_by_sample[combo] = GenericThreePCFCalculator(
+                    bm, config=self.config, coupling_kwargs=self.coupling_kwargs
+                )
+            self.generic = self.generic_by_sample[self.sample_combinations[0]]
+            self.bmultipole = self.generic.bmultipole
+        else:
+            if self.bmultipole is not None:
+                bm = self.bmultipole
+            else:
+                bm = self._make_multipole(self.bispectrum2d)
+                self.bmultipole = bm
+            self.generic = GenericThreePCFCalculator(
+                bm, config=self.config, coupling_kwargs=self.coupling_kwargs
+            )
+            self.generic_by_sample = {None: self.generic}
+
+        if (
+            self.bispectrum3d is not None
+            and self.config.slepian.mode in {"auto", "required"}
+            and self.slepian_terms
+            and _supports_slepian_los(self.bispectrum3d)
+        ):
+            self.slepian = SlepianThreePCFCalculator(
+                self.slepian_terms, config=self.config, projector=self.projector,
+                sample_combinations=self.sample_combinations,
+            )
+
     @property
-    def n_components(self) -> int:
-        return self.spin_spec.n_components
+    def is_batched(self):
+        return len(self.sample_combinations) > 1
+
+    @property
+    def grid(self):
+        return self.generic.grid
+
+    @property
+    def Bgrid(self):
+        if self.is_batched:
+            return {c: g.Bgrid for c, g in self.generic_by_sample.items()}
+        return self.generic.Bgrid
+
+    @property
+    def Hgrid(self):
+        if self.is_batched:
+            return {c: g.Hgrid for c, g in self.generic_by_sample.items()}
+        return self.generic.Hgrid
+
+    @property
+    def ZKgrid(self):
+        if self.is_batched:
+            if self._combined_ZKgrids is not None:
+                return self._combined_ZKgrids
+            return {c: g.ZKgrid for c, g in self.generic_by_sample.items()}
+        return self._combined_ZKgrid if self._combined_ZKgrid is not None else self.generic.ZKgrid
+
+    @property
+    def Zgrid(self):
+        if self.is_batched:
+            if self._combined_Zgrids is not None:
+                return self._combined_Zgrids
+            return {c: g.Zgrid for c, g in self.generic_by_sample.items()}
+        return self._combined_Zgrid if self._combined_Zgrid is not None else self.generic.Zgrid
+
+    @property
+    def timings(self):
+        if self.is_batched:
+            out = {"generic": {c: dict(g.timings) for c, g in self.generic_by_sample.items()}}
+        else:
+            out = {"generic": dict(self.generic.timings)}
+        if self.slepian is not None:
+            out["slepian"] = dict(self.slepian.timings)
+        return out
+
+    @property
+    def n_components(self):
+        return self.generic.n_components
 
     @property
     def components(self):
-        return self.spin_spec.components()
+        return self.generic.components
 
-    def epsilon_from_component(self, component: int) -> tuple[int, int, int]:
-        return self.spin_spec.component(component).epsilon
+    def epsilon_from_component(self, component):
+        return self.generic.epsilon_from_component(component)
 
-    def sigma_from_epsilon(self, epsilon: tuple[int, int, int]) -> tuple[int, int, int]:
-        return self.spin_spec.sigma_from_epsilon(epsilon)
+    def sigma_from_epsilon(self, epsilon):
+        return self.generic.sigma_from_epsilon(epsilon)
 
-    def _epsilons(
-        self,
-        *,
-        epsilons=None,
-        epsilon: tuple[int, int, int] | None = None,
-        component: int | None = None,
-        all_components: bool = False,
-    ) -> tuple[tuple[int, int, int], ...]:
-        if epsilons is not None:
-            return tuple(tuple(int(e) for e in eps) for eps in epsilons)
-        if epsilon is not None and component is not None:
-            raise ValueError("Specify at most one of epsilon or component.")
-        if epsilon is not None:
-            idx, _ = self.spin_spec.component_index_from_epsilon(epsilon)
-            return (self.spin_spec.component(idx).epsilon,)
-        if component is not None:
-            return (self.spin_spec.component(component).epsilon,)
-        if all_components or self.config.epsilons is not None:
-            eps = self.config.epsilons or self.spin_spec.representative_epsilons()
-            return tuple(tuple(int(e) for e in ep) for ep in eps)
-        return (self.spin_spec.component(0).epsilon,)
+    def k_values(self, **kwargs):
+        return self.generic.k_values(**kwargs)
 
-    def k_values(self, *, epsilon=None, component=None) -> np.ndarray:
-        if epsilon is not None and component is not None:
-            raise ValueError("Specify at most one of epsilon or component.")
-        if epsilon is not None:
-            sigma = self.spin_spec.sigma_from_epsilon(epsilon)
-        elif component is not None:
-            sigma = self.spin_spec.component(component).sigma
-        else:
-            sigma = self.spin_spec.component(0).sigma
-        return as_effective_spin_triple(sigma).k_values(self.config.kmax)
+    def compute_bmultipoles(self, *args, **kwargs):
+        if self.is_batched:
+            return {c: g.compute_bmultipoles(*args, **kwargs) for c, g in self.generic_by_sample.items()}
+        return self.generic.compute_bmultipoles(*args, **kwargs)
 
-    # ------------------------------------------------------------------
-    # Coupling/session management
-    def _cache_session_key(self) -> str:
-        return str(resolve_coupling_cache_file(self.coupling_kwargs.get("cache_file")))
+    def compute_hkernels(self, *args, **kwargs):
+        if self.is_batched:
+            return {c: g.compute_hkernels(*args, **kwargs) for c, g in self.generic_by_sample.items()}
+        return self.generic.compute_hkernels(*args, **kwargs)
 
-    def _get_cache_session(self) -> CouplingCacheSession | None:
-        if not bool(self.coupling_kwargs.get("use_cache", True)):
-            return None
-        key = self._cache_session_key()
-        if key not in self._coupling_cache_sessions:
-            self._coupling_cache_sessions[key] = CouplingCacheSession(key)
-        return self._coupling_cache_sessions[key]
+    @staticmethod
+    def _merge_zetak(generic, slep):
+        combined = ZetaKGrid(spin=generic.spin, kmax=generic.kmax, grid=generic.grid)
+        combined.active_epsilons = generic.active_epsilons
+        combined.aliases = dict(generic.aliases)
+        keys = set(generic.modes) | set(slep.modes)
+        for key in keys:
+            gm = generic.modes.get(key)
+            sm = slep.modes.get(key)
+            if gm is not None:
+                val = np.array(gm.value, copy=True)
+                source_k, source_sigma = gm.source_k, gm.source_sigma
+            else:
+                val = np.zeros(generic.grid.shape_theta_fft, dtype=complex)
+                source_k, source_sigma = sm.source_k, sm.source_sigma
+            if sm is not None:
+                val += sm.value
+            combined.modes[key] = ZetaKMode(
+                grid=generic.grid, key=key, value=val,
+                source_k=source_k, source_sigma=source_sigma,
+            )
+        return combined
 
-    def _make_coupling(self, sigma: tuple[int, int, int]) -> CouplingMatrix:
-        sig = tuple(int(x) for x in sigma)
-        if sig not in self._couplings:
-            kwargs = dict(self.coupling_kwargs)
-            session = self._get_cache_session()
-            if session is not None:
-                kwargs["cache_session"] = session
-            self._couplings[sig] = CouplingMatrix(sig[0], sig[1], sig[2], **kwargs)
-        return self._couplings[sig]
+    def compute_zetak(self, *args, **kwargs):
+        if not self.is_batched:
+            generic = self.generic.compute_zetak(*args, **kwargs)
+            if self.slepian is None:
+                self._combined_ZKgrid = generic
+                return generic
+            slep = self.slepian.compute_zetak_los(
+                epsilons=kwargs.get("epsilons"), epsilon=kwargs.get("epsilon"),
+                component=kwargs.get("component"),
+                all_components=kwargs.get("all_components", False),
+                force=kwargs.get("force", False),
+            )
+            self._combined_ZKgrid = self._merge_zetak(generic, slep)
+            return self._combined_ZKgrid
 
-    # ------------------------------------------------------------------
-    # Stage execution
-    @log_call(logger, logging.INFO, timing_key="bmultipoles")
-    def compute_bmultipoles(self, *, force: bool = False) -> BMultipoleGrid:
-        """Compute and store ``B_L(ell_2, ell_3)`` on the managed FFT grid."""
-        if force:
-            self.Hgrid = HKernelGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
-            self.ZKgrid = ZetaKGrid(spin=self.spin, kmax=self.config.kmax, grid=self.grid)
-            self.Zgrid = None
-        return self.Bgrid.compute(self.bmultipole, force=force)
-
-    @log_call(logger, logging.INFO, timing_key="hkernels")
-    def compute_hkernels(
-        self,
-        *,
-        epsilons=None,
-        epsilon: tuple[int, int, int] | None = None,
-        component: int | None = None,
-        all_components: bool = False,
-        force: bool = False,
-    ) -> HKernelGrid:
-        """Compute and store deduplicated ``H_k`` kernels."""
-        eps = self._epsilons(
-            epsilons=epsilons,
-            epsilon=epsilon,
-            component=component,
-            all_components=all_components,
+        generic = {c: g.compute_zetak(*args, **kwargs) for c, g in self.generic_by_sample.items()}
+        if self.slepian is None:
+            self._combined_ZKgrids = generic
+            return generic
+        slep = self.slepian.compute_zetak_los_many(
+            sample_combinations=self.sample_combinations,
+            epsilons=kwargs.get("epsilons"), epsilon=kwargs.get("epsilon"),
+            component=kwargs.get("component"),
+            all_components=kwargs.get("all_components", False),
+            force=kwargs.get("force", False),
         )
-        Bgrid = self.compute_bmultipoles()
-        self.Hgrid.compute_all_epsilons(
-            Bgrid,
-            eps,
-            coupling_factory=self._make_coupling,
-            force=force,
-        )
-        return self.Hgrid
+        self._combined_ZKgrids = {
+            c: self._merge_zetak(generic[c], slep[c]) for c in self.sample_combinations
+        }
+        return self._combined_ZKgrids
 
-    def _hankel_config(self) -> DoubleHankelConfig:
-        cfg = self.config
-        return DoubleHankelConfig(
-            xy=self.grid.xy,
-            nu1=cfg.hankel.nu1,
-            nu2=cfg.hankel.nu2,
-            N_extrap_low=cfg.hankel.N_extrap_low,
-            N_extrap_high=cfg.hankel.N_extrap_high,
-            c_window_width=cfg.hankel.c_window_width,
-            N_pad=cfg.hankel.N_pad,
-            extra=dict(cfg.hankel.extra),
-        )
-
-    @log_call(logger, logging.INFO, timing_key="zetak")
-    def compute_zetak(
-        self,
-        *,
-        epsilons=None,
-        epsilon: tuple[int, int, int] | None = None,
-        component: int | None = None,
-        all_components: bool = False,
-        force: bool = False,
-    ) -> ZetaKGrid:
-        """Compute and store deduplicated ``zeta_k(theta1, theta2)`` modes."""
-        eps = self._epsilons(
-            epsilons=epsilons,
-            epsilon=epsilon,
-            component=component,
-            all_components=all_components,
-        )
-        Hgrid = self.compute_hkernels(epsilons=eps)
-        self.ZKgrid.compute_all_epsilons(
-            Hgrid,
-            eps,
-            hankel_config=self._hankel_config(),
-            bin_width_logtheta=self.config.effective_bin_width_logtheta(),
-            force=force,
-        )
-        return self.ZKgrid
-
-    # Explicit alias with separator for readability in prose.
     compute_zeta_k = compute_zetak
 
-    @log_call(logger, logging.INFO, timing_key="zeta")
-    def compute_zeta(
-        self,
-        delta_phi,
-        *,
-        phase: str = "nu",
-        normalization: float = 1.0,
-        bin_width: float | None = None,
-        force: bool = False,
-    ) -> ZetaGrid:
-        """Compute the final all-component x-projection 3PCF grid.
-
-        This is the preferred user-facing calculation method.  Internally it
-        computes all representative ``ZetaKGrid`` components and then calls
-        ``ZetaKGrid.resum(delta_phi)``.  Projection conversion is not performed
-        here; call ``ZetaGrid.to_projection(...)`` on the returned object.
-        """
-        ZKgrid = self.compute_zetak(
-            all_components=True,
-            force=force,
+    def compute_zeta(self, delta_phi, *args, **kwargs):
+        phase = kwargs.pop("phase", "nu")
+        normalization = kwargs.pop("normalization", 1.0)
+        bin_width = kwargs.pop("bin_width", None)
+        force = kwargs.pop("force", False)
+        if kwargs:
+            raise TypeError(f"unexpected compute_zeta keyword(s): {tuple(kwargs)}")
+        zk = self.compute_zetak(all_components=True, force=force)
+        if self.is_batched:
+            self._combined_Zgrids = {
+                c: grid.resum(
+                    delta_phi, phase=phase, normalization=normalization,
+                    bin_width=bin_width, config=self.config,
+                ) for c, grid in zk.items()
+            }
+            return self._combined_Zgrids
+        self._combined_Zgrid = zk.resum(
+            delta_phi, phase=phase, normalization=normalization,
+            bin_width=bin_width, config=self.config,
         )
-        self.Zgrid = ZKgrid.resum(
-            delta_phi,
-            phase=phase,
-            normalization=normalization,
-            bin_width=bin_width,
-            config=self.config,
-        )
-        return self.Zgrid
+        return self._combined_Zgrid
 
-    def compute(self, delta_phi, **kwargs) -> ZetaGrid:
-        """Alias for :meth:`compute_zeta`."""
-        return self.compute_zeta(delta_phi, **kwargs)
+    def compute(self, delta_phi, *args, **kwargs):
+        return self.compute_zeta(delta_phi, *args, **kwargs)
+
+
+# Backward compatibility: the historical low-level name remains the generic
+# stage calculator.  New production orchestration uses HybridThreePCFCalculator.
+ThreePCFCalculator = GenericThreePCFCalculator
+
+
+__all__ = [
+    "HybridThreePCFCalculator",
+    "GenericThreePCFCalculator",
+    "ThreePCFCalculator",
+]

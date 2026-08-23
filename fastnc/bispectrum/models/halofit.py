@@ -597,6 +597,33 @@ class Halofit:
         kmax_safe = np.where(physical, np.minimum(kmax, kmin + kmid), kmax)
         return physical, kmax_safe
 
+    def get_bihalofit_3h_radials(self, k, z):
+        """Return reusable one-dimensional radial factors for the 3-halo fit.
+
+        The returned dictionary contains the BiHalofit effective power ``PE``,
+        damping factor ``I = 1/(1+e_n q)``, dressed power ``H = I*PE``, and
+        ``kI``.  These are the exact factors entering the separable Phase-12
+        decomposition; the direct evaluator below uses the same definitions.
+        """
+        self.update()
+        k, z = np.broadcast_arrays(np.asarray(k, dtype=float), np.asarray(z, dtype=float))
+        c = self.get_bihalofit_coeffs(z)
+        q = np.maximum(k * c['r_sigma'], 1.0e-100)
+        PL = self.get_interpolated_pklin(k, z)
+        PE = ((1.0 + c['fn'] * q**2) / (1.0 + c['gn'] * q + c['hn'] * q**2) * PL
+              + 1.0 / (c['mn'] * q**c['mun'] + c['nn'] * q**c['nun'])
+              / (1.0 + (c['pn'] * q)**-3))
+        I = 1.0 / (1.0 + c['en'] * q)
+        return {
+            'q': q,
+            'PE': PE,
+            'I': I,
+            'H': I * PE,
+            'kI': k * I,
+            'r_sigma': c['r_sigma'],
+            'dn': c['dn'],
+        }
+
     def get_bihalofit(self, k1, k2, k3, z, which=['Bh3', 'Bh1'], squeezed_safe=True, eps_sq=1.0e-4):
         """
         Returns the bihalofit prediction of matter bispectrum.

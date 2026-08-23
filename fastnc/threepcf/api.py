@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from ..bispectrum import BispectrumMultipole2DConfig
 from .bmultipole_grid import BMultipoleGrid
-from .calculator import ThreePCFCalculator
+from .calculator import HybridThreePCFCalculator
 from .config import ThreePCFConfig
 from .grid import FFTGrid
 from .hkernel_grid import HKernel, HKernelGrid, HKernelKey
@@ -12,14 +12,11 @@ from .zetak_grid import ZetaKGrid, ZetaKKey, ZetaKMode
 
 
 class ThreePCF:
-    """High-level object for 3PCF calculations.
+    """High-level facade for generic and future specialized 3PCF routes.
 
-    The preferred user-facing method is :meth:`compute_zeta`, which returns a
-    :class:`ZetaGrid`.  Stage methods are also exposed for debugging:
-
-    ``compute_bmultipoles() -> BMultipoleGrid``
-    ``compute_hkernels() -> HKernelGrid``
-    ``compute_zetak() -> ZetaKGrid``
+    Prefer the explicit named constructors :meth:`from_3d`, :meth:`from_2d`,
+    and :meth:`from_multipole`.  The historical direct constructor remains as
+    a compatibility dispatcher and retains generic-only behavior.
     """
 
     def __init__(
@@ -41,8 +38,96 @@ class ThreePCF:
         self.regulator = regulator
         self.multipole_kwargs = dict(multipole_kwargs or {})
 
+        self._input_kind = "compat"
+        self.bispectrum3d = None
+        self.bispectrum2d = bispectrum
+        self.projector = None
+        self.sample_combinations = None
         self.bmultipole = None
-        self.calculator: ThreePCFCalculator | None = None
+        self.calculator: HybridThreePCFCalculator | None = None
+
+    @classmethod
+    def from_3d(
+        cls,
+        bispectrum,
+        projector,
+        *,
+        config: ThreePCFConfig | None = None,
+        sample_combinations=None,
+        coupling_kwargs: dict | None = None,
+        multipole_config: BispectrumMultipole2DConfig | None = None,
+        multipole_basis: str = "fourier-even",
+        regulator=None,
+        multipole_kwargs: dict | None = None,
+    ):
+        """Construct a hybrid-capable 3PCF from an unprojected 3D model."""
+        obj = cls.__new__(cls)
+        obj.bispectrum = bispectrum
+        obj.bispectrum3d = bispectrum
+        obj.bispectrum2d = None
+        obj.projector = projector
+        obj.sample_combinations = sample_combinations
+        obj.config = config or ThreePCFConfig()
+        obj.coupling_kwargs = coupling_kwargs
+        obj.multipole_config = multipole_config
+        obj.multipole_basis = multipole_basis
+        obj.regulator = regulator
+        obj.multipole_kwargs = dict(multipole_kwargs or {})
+        obj._input_kind = "3d"
+        obj.bmultipole = None
+        obj.calculator = None
+        return obj
+
+    @classmethod
+    def from_2d(
+        cls,
+        bispectrum,
+        *,
+        config: ThreePCFConfig | None = None,
+        coupling_kwargs: dict | None = None,
+        multipole_config: BispectrumMultipole2DConfig | None = None,
+        multipole_basis: str = "fourier-even",
+        regulator=None,
+        multipole_kwargs: dict | None = None,
+    ):
+        """Construct a generic-route 3PCF from an already projected 2D bispectrum."""
+        obj = cls(
+            bispectrum,
+            config=config,
+            coupling_kwargs=coupling_kwargs,
+            multipole_config=multipole_config,
+            multipole_basis=multipole_basis,
+            regulator=regulator,
+            multipole_kwargs=multipole_kwargs,
+        )
+        obj._input_kind = "2d"
+        return obj
+
+    @classmethod
+    def from_multipole(
+        cls,
+        bmultipole,
+        *,
+        config: ThreePCFConfig | None = None,
+        coupling_kwargs: dict | None = None,
+    ):
+        """Construct a generic-route 3PCF from a precomputed/callable multipole object."""
+        obj = cls.__new__(cls)
+        obj.bispectrum = bmultipole
+        obj.bispectrum3d = None
+        obj.bispectrum2d = None
+        obj.projector = None
+        obj.sample_combinations = None
+        obj.config = config or ThreePCFConfig()
+        obj.coupling_kwargs = coupling_kwargs
+        obj.multipole_config = None
+        obj.multipole_basis = getattr(bmultipole, "basis", "fourier-even")
+        obj.regulator = None
+        obj.multipole_kwargs = {}
+        obj._input_kind = "multipole"
+        obj.bmultipole = bmultipole
+        obj.calculator = None
+        return obj
 
     @property
     def grid(self) -> FFTGrid:
@@ -65,49 +150,55 @@ class ThreePCF:
         return self._require_calculator().Zgrid
 
     @property
-    def timings(self) -> dict[str, float]:
-        """Elapsed wall times (seconds) for the latest calculation stages."""
-        return dict(self._require_calculator().timings)
+    def timings(self):
+        """Per-route elapsed wall times for the latest calculation stages."""
+        return self._require_calculator().timings
 
-    def _require_calculator(self) -> ThreePCFCalculator:
+    def _require_calculator(self) -> HybridThreePCFCalculator:
         if self.calculator is None:
             raise RuntimeError("A compute method must be called before accessing stage grids.")
         return self.calculator
 
-    def _default_multipole_config(self) -> BispectrumMultipole2DConfig:
-        return BispectrumMultipole2DConfig(
-            mode_max=int(self.config.Lmax),
-            ell_min=float(self.config.ell_min),
-            ell_max=float(self.config.ell_max),
-            n_ell=int(self.config.n_ell),
-        )
-
-    def make_multipole(self):
-        """Return a bispectrum-multipole object compatible with the 3PCF engine."""
-        if hasattr(self.bispectrum, "basis") and callable(self.bispectrum):
-            return self.bispectrum
-        if not hasattr(self.bispectrum, "multipole"):
-            raise TypeError(
-                "bispectrum must be either a callable multipole object with a basis attribute "
-                "or an object exposing multipole(config=..., basis=...)."
-            )
-        mp_config = self.multipole_config or self._default_multipole_config()
-        return self.bispectrum.multipole(
-            config=mp_config,
-            basis=self.multipole_basis,
-            regulator=self.regulator,
-            **self.multipole_kwargs,
-        )
-
-    def _ensure_calculator(self) -> ThreePCFCalculator:
+    def _ensure_calculator(self) -> HybridThreePCFCalculator:
         if self.calculator is None:
-            self.bmultipole = self.make_multipole()
-            self.calculator = ThreePCFCalculator(
-                self.bmultipole,
+            common = dict(
                 config=self.config,
                 coupling_kwargs=self.coupling_kwargs,
+                multipole_config=self.multipole_config,
+                multipole_basis=self.multipole_basis,
+                regulator=self.regulator,
+                multipole_kwargs=self.multipole_kwargs,
             )
+            if self._input_kind == "3d":
+                self.calculator = HybridThreePCFCalculator(
+                    bispectrum3d=self.bispectrum3d,
+                    projector=self.projector,
+                    sample_combinations=self.sample_combinations,
+                    **common,
+                )
+            elif self._input_kind == "multipole":
+                self.calculator = HybridThreePCFCalculator(
+                    bmultipole=self.bmultipole,
+                    **common,
+                )
+            else:
+                # Compatibility/direct and explicit 2D paths are generic-only.
+                if hasattr(self.bispectrum2d, "basis") and callable(self.bispectrum2d):
+                    self.calculator = HybridThreePCFCalculator(
+                        bmultipole=self.bispectrum2d,
+                        **common,
+                    )
+                else:
+                    self.calculator = HybridThreePCFCalculator(
+                        bispectrum2d=self.bispectrum2d,
+                        **common,
+                    )
+            self.bmultipole = self.calculator.bmultipole
         return self.calculator
+
+    def make_multipole(self):
+        """Compatibility helper returning the generic multipole representation."""
+        return self._ensure_calculator().bmultipole
 
     def compute_bmultipoles(self, *args, **kwargs) -> BMultipoleGrid:
         return self._ensure_calculator().compute_bmultipoles(*args, **kwargs)
@@ -124,7 +215,6 @@ class ThreePCF:
         return self._ensure_calculator().compute_zeta(delta_phi, *args, **kwargs)
 
     def compute(self, delta_phi, *args, **kwargs) -> ZetaGrid:
-        """Alias for :meth:`compute_zeta`."""
         return self.compute_zeta(delta_phi, *args, **kwargs)
 
     def get_H_kernel(self, key: HKernelKey) -> HKernel:

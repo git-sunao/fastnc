@@ -56,14 +56,39 @@ class _BispectrumBase:
 
 
 class Bispectrum3D(_BispectrumBase):
-    """Base object for a 3D bispectrum ``B(k1,k2,k3,z)``."""
+    """Base object for a 3D bispectrum ``B(k1,k2,k3,z)``.
+
+    Concrete models may expose physical contributions through the route-
+    capability collections :meth:`generic_terms`, :meth:`slepian_terms`, and
+    :meth:`analytic_terms`.  Empty tuples are the default so legacy models are
+    unchanged until they are explicitly converted to terms.
+    """
     support = Support3D()
+    supports_slepian = False
+    slepian_los_kind = None
 
     def __call__(self, k1, k2, k3, z, **params):
         return self.evaluate(k1, k2, k3, z, **params)
 
     def evaluate(self, k1, k2, k3, z, **params):
         raise NotImplementedError
+
+    def generic_terms(self, **params):
+        """Return physical terms assigned to the generic numerical route.
+
+        Models are converted incrementally.  An empty tuple therefore means
+        "no term representation exposed yet", not that the physical
+        bispectrum itself vanishes.
+        """
+        return ()
+
+    def slepian_terms(self, **params):
+        """Return terms supporting the future direct Slepian 3PCF route."""
+        return ()
+
+    def analytic_terms(self, **params):
+        """Return terms for the future optimized regular analytic route."""
+        return ()
 
     def interpolate(self, config, **params):
         from .interpolate import InterpolatedBispectrum3D

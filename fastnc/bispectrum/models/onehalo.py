@@ -11,8 +11,21 @@ from typing import Callable
 
 import numpy as np
 
-from .base import Bispectrum3D
-from .support import Support3D
+from ..base import Bispectrum3D
+from ..terms import ModelBispectrumTerm
+from ..support import Support3D
+
+
+class OneHaloProductTerm(ModelBispectrumTerm):
+    """The complete separable one-halo product contribution."""
+
+    def evaluate(self, k1, k2, k3, z, **params):
+        params = self._merge_model_defaults(params)
+        amp = self.model._amplitude(z)
+        u1 = self.model.profile(k1, z, **params)
+        u2 = self.model.profile(k2, z, **params)
+        u3 = self.model.profile(k3, z, **params)
+        return amp * u1 * u2 * u3
 
 
 class OneHaloProductBispectrum3D(Bispectrum3D):
@@ -32,11 +45,16 @@ class OneHaloProductBispectrum3D(Bispectrum3D):
         self.profile = profile
         self.amplitude = amplitude
         self.support = support or Support3D(policy="ignore")
+        self._generic_terms = (OneHaloProductTerm(self),)
 
     def _amplitude(self, z):
         if callable(self.amplitude):
             return self.amplitude(z)
         return self.amplitude
+
+    def generic_terms(self, **params):
+        """Return the single physical one-halo product term."""
+        return self._generic_terms
 
     def evaluate(self, k1, k2, k3, z, **params):
         amp = self._amplitude(z)

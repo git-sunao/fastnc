@@ -3,12 +3,13 @@
 Public API
 ----------
 Use :class:`ThreePCF` for ordinary calculations and
-:class:`ThreePCFCalculator` for low-level stage-by-stage debugging.
+:class:`GenericThreePCFCalculator` (or the compatibility alias
+:class:`ThreePCFCalculator`) for low-level generic stage debugging.
 """
 
 from .api import ThreePCF
-from .calculator import ThreePCFCalculator
-from .config import ThreePCFConfig
+from .calculator import HybridThreePCFCalculator, GenericThreePCFCalculator, ThreePCFCalculator
+from .config import ThreePCFConfig, SlepianConfig
 from .grid import FFTGrid, GridBacked
 from .bmultipole_grid import BMultipoleGrid
 from .hkernel_grid import HKernel, HKernelGrid, HKernelKey
@@ -31,8 +32,11 @@ from .bruteforce import (
 
 __all__ = [
     "ThreePCF",
+    "HybridThreePCFCalculator",
+    "GenericThreePCFCalculator",
     "ThreePCFCalculator",
     "ThreePCFConfig",
+    "SlepianConfig",
     "FFTGrid",
     "GridBacked",
     "BMultipoleGrid",
@@ -54,3 +58,5 @@ __all__ = [
     "BruteForce3PCFResult",
     "BruteForceX3PCF",
 ]
+
+from .slepian import SlepianThreePCFCalculator
