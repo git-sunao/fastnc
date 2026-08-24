@@ -1,9 +1,4 @@
 """Route orchestration for hybrid three-point correlation calculations.
-
-Phase 3 introduces the calculator hierarchy without changing the numerical
-algorithm of the generic route.  The existing B_L -> H_k -> zeta_k -> zeta
-implementation lives in :mod:`fastnc.threepcf.generic_calculator`; this module
-owns route selection and compatibility aliases.
 """
 from __future__ import annotations
 
@@ -65,10 +60,6 @@ def _supports_slepian_los(model):
 
 class HybridThreePCFCalculator:
     """Top-level route orchestrator for a 3PCF calculation.
-
-    Phase 9 supports a batch of projector-backed sample combinations.  The
-    Slepian child shares radial/Weber preparation and evaluates LOS moments with
-    a leading sample dimension; single-combination behavior is unchanged.
     """
 
     def __init__(

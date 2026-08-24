@@ -24,13 +24,8 @@ def _as_1d_positive_array(x, name: str) -> np.ndarray:
 @dataclass(frozen=True)
 class SlepianConfig:
     """Route-selection settings for the Slepian 3PCF child calculator.
-
-    Phase 7 provides the fixed-redshift numerical Slepian engine. Phase 8 adds
-    projector-backed factorized-growth LOS execution, Phase 9 batches
-    multiple sample combinations, and Phase 12 adds a general-coefficient LOS
-    rule for models with redshift-dependent radial shapes such as BiHalofit.
-    ``auto`` falls back to generic execution when the model exposes no
-    supported Slepian LOS rule; ``required`` fails loudly.
+    Supports fixed-redshift evaluation and LOS-projected evaluation with
+    factorized-growth or general redshift-dependent coefficients.
     """
 
     mode: str = "auto"

@@ -1,4 +1,4 @@
-"""Fixed-redshift, no-LOS Slepian 3PCF calculator (Phase 7)."""
+"""Fixed-redshift, no-LOS Slepian 3PCF calculator"""
 from __future__ import annotations
 import time
 import hashlib
@@ -20,10 +20,6 @@ from .los_moments import (
 
 class SlepianThreePCFCalculator:
     """Direct separable ``B -> zeta_k`` transform at one fixed redshift.
-
-    This Phase-7 calculator deliberately has no LOS integration.  ``z`` and
-    ``chi`` must be supplied to :meth:`compute_zetak`; Phase 8 will provide the
-    projector/moment wrapper.  No bispectrum multipoles ``B_L`` are formed.
     """
     is_operational = True
 
@@ -52,14 +48,6 @@ class SlepianThreePCFCalculator:
         self._general_node_mode_cache = {}
         self._prepared_los_moment_cache = {}
         self._state_token_memo = {}
-        self._phase10_counters = {
-            "single_basis_builds": 0,
-            "double_basis_builds": 0,
-            "double_contact_builds": 0,
-            "shifted_expansion_builds": 0,
-            "compiled_plan_builds": 0,
-            "contact_diag_builds": 0,
-        }
         self._los_rule_cache = {}
         self._batch_ZKgrids = None
         self.constructed_bmultipoles = False
@@ -149,10 +137,6 @@ class SlepianThreePCFCalculator:
 
     def _double_leg_at(self, term, leg, ex, order_x, order_theta, z, chi, x, theta):
         """Two-Bessel transform with canonicalized coincident correction.
-
-        Phase 10 caches the *physical* coincident transform by radial identity
-        and canonical Bessel orders.  Hence conjugate / +/-k terms sharing the
-        same radial function no longer repeat the 2048-point direct quadrature.
         """
         x = np.asarray(x, dtype=float)
         theta = np.asarray(theta, dtype=float)
@@ -182,7 +166,6 @@ class SlepianThreePCFCalculator:
                 integrand = base * jv(int(ox), ell * x[ix]) * jv(int(ot), ell * theta[it])
                 out[it, ix] = np.trapezoid(integrand, kval)
         self._prepared_double_contact[ckey] = out
-        self._phase10_counters["double_contact_builds"] += 1
         return sign * out
 
     @staticmethod
@@ -287,7 +270,6 @@ class SlepianThreePCFCalculator:
                 bias=base.bias + shift,
             )
             self._factorized_shift_cache[skey] = shifted
-            self._phase10_counters["shifted_expansion_builds"] += 1
         return shifted
 
     @staticmethod
@@ -306,7 +288,6 @@ class SlepianThreePCFCalculator:
                 * x[None, :] ** (-ex.exponents[:, None] - 2.0)
             )
             self._prepared_single_basis[key] = basis
-            self._phase10_counters["single_basis_builds"] += 1
         return sign * basis
 
     def _double_basis(self, ex, order_x, order_theta, x, theta):
@@ -326,7 +307,6 @@ class SlepianThreePCFCalculator:
                 self._prepared_two_bessel[pkey] = basis
             weighted = ex.coefficients[:, None, None] * basis
             self._prepared_double_basis[key] = weighted
-            self._phase10_counters["double_basis_builds"] += 1
         return (sx * st) * weighted
 
     def _compiled_plan(self, sigma, k):
@@ -336,34 +316,14 @@ class SlepianThreePCFCalculator:
             eff = as_effective_spin_triple(sigma)
             plan = compile_mode_plan(self.terms, sigma=sigma, k=float(k), effective_spin=eff)
             self._compiled_mode_plans[key] = plan
-            self._phase10_counters["compiled_plan_builds"] += 1
         return plan
-
-    def phase10_cache_stats(self):
-        """Return production grouping/cache diagnostics for validation/benchmarks."""
-        out = dict(self._phase10_counters)
-        out.update({
-            "compiled_mode_plans": len(self._compiled_mode_plans),
-            "single_basis_cache": len(self._prepared_single_basis),
-            "double_basis_cache": len(self._prepared_double_basis),
-            "double_contact_cache": len(self._prepared_double_contact),
-            "shifted_expansion_cache": len(self._factorized_shift_cache),
-            "contact_diag_cache": len(self._contact_diag_cache),
-            "general_node_mode_cache": len(self._general_node_mode_cache),
-            "prepared_los_moment_cache": len(self._prepared_los_moment_cache),
-            "weber_tables": self.weber.n_tables,
-            "weber_hypergeom_evaluations": self.weber.hypergeom_evaluations,
-        })
-        return out
 
     def _double_basis_with_contact(self, term, leg, ex, order_x, order_theta, x, theta):
         """Mode-resolved basis, using direct quadrature only at x=theta contacts.
 
         The contact replacement is applied to the *summed* physical radial
         transform in the fixed-z path.  A mode-resolved contact split is not
-        unique.  Phase 8 therefore keeps the analytic Weber modes here and
-        relies on the exact delta collapse for constant legs; convergence of
-        coincident non-constant kernels remains covered by the Phase-7 tests.
+        unique. 
         """
         return self._double_basis(ex, order_x, order_theta, x, theta)
 
@@ -456,11 +416,6 @@ class SlepianThreePCFCalculator:
 
     def _contact_diag_nodes(self, term, sigma, k):
         """Return fixed-z contact diagonals, cached independently of LOS sample.
-
-        These radial data are the expensive part of the Phase-8/9 diagonal
-        correction but do not depend on sample weights.  The key includes a
-        content fingerprint of factorized model physics and the term coefficient
-        values on projector nodes, so model updates cannot reuse stale data.
         """
         pjt = self.projector
         model = term.model
@@ -477,7 +432,6 @@ class SlepianThreePCFCalculator:
                 nodes.append(np.diag(fixed))
             nodes = np.asarray(nodes)
             self._contact_diag_cache[key] = nodes
-            self._phase10_counters["contact_diag_builds"] += 1
         return nodes
 
     def _term_mode_los_factorized_batch(self, term, sigma, k, rule, weight_matrix=None):
