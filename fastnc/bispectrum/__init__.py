@@ -5,7 +5,7 @@ from .base import (
 )
 from .terms import BispectrumTerm, BackendBispectrumTerm, ModelBispectrumTerm
 from .slepian import (
-    SlepianTerm, ModelSlepianTerm, BackendSlepianTerm, SlepianLOSMomentMetadata,
+    SlepianTerm, ModelSlepianTerm, BackendSlepianTerm, SlepianLOSMomentMetadata, SlepianRadialMetadata,
 )
 from .los import (
     Kernel1D, KernelSet, BaseLOSIntegrand, LOSProjectorBase, LineOfSightProjector,
@@ -50,7 +50,7 @@ from .analytic import (
 
 
 __all__ = [
-    "SlepianTerm", "ModelSlepianTerm", "BackendSlepianTerm", "SlepianLOSMomentMetadata",
+    "SlepianTerm", "ModelSlepianTerm", "BackendSlepianTerm", "SlepianLOSMomentMetadata", "SlepianRadialMetadata",
     "Support2D", "Support3D",
     "Bispectrum3D",
     "Bispectrum2D",

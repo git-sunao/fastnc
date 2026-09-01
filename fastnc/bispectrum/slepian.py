@@ -45,6 +45,32 @@ class SlepianLOSMomentMetadata:
         object.__setattr__(self, "signature", tuple(self.signature))
 
 
+
+
+@dataclass(frozen=True)
+class SlepianRadialMetadata:
+    """Declarative identity of one separable radial factor.
+
+    ``family`` describes mathematical structure, not a calculator algorithm.
+    The 3PCF layer may use it to choose an exact radial transform and to share
+    caches across physically distinct terms with identical radial structure.
+
+    Supported production-facing families introduced here are
+    ``"generic"``, ``"constant"``, ``"linear-power"``,
+    ``"bihalofit-H"``, ``"bihalofit-I"`` and ``"bihalofit-kI"``.
+    ``power_shift`` is an exact integer power of k multiplying the base
+    radial function.
+    """
+
+    family: str = "generic"
+    power_shift: int = 0
+    cache_key: Any | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.family, str) or not self.family:
+            raise ValueError("family must be a non-empty string")
+        object.__setattr__(self, "power_shift", int(self.power_shift))
+
 class SlepianTerm(BispectrumTerm):
     r"""Physical bispectrum term with a separable Slepian representation.
 
@@ -71,6 +97,18 @@ class SlepianTerm(BispectrumTerm):
     def angular_orders(self):
         """Integer tuple ``(n1,n2,n3)`` with ``n1+n2+n3 == 0``."""
         raise NotImplementedError
+
+    def radial_metadata(self, leg: int) -> SlepianRadialMetadata:
+        """Return declarative radial metadata for one leg.
+
+        Model classes should override this when a radial factor has exact
+        structure useful to the Slepian numerical layer.  The generic default
+        preserves compatibility with third-party Slepian terms.
+        """
+        leg = int(leg)
+        if leg not in (0, 1, 2):
+            raise ValueError("leg must be 0, 1, or 2")
+        return SlepianRadialMetadata("generic", cache_key=(id(self), leg))
 
     @property
     def los_moment_metadata(self) -> SlepianLOSMomentMetadata | None:

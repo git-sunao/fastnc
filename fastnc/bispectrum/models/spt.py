@@ -12,7 +12,7 @@ import numpy as np
 
 from ..base import Bispectrum3D
 from ..terms import ModelBispectrumTerm
-from ..slepian import ModelSlepianTerm, SlepianLOSMomentMetadata
+from ..slepian import ModelSlepianTerm, SlepianLOSMomentMetadata, SlepianRadialMetadata
 from ..support import Support3D
 from fastnc.utils.cosmology import (
     default_wmap_like_cosmology,
@@ -176,6 +176,18 @@ class SPTMatterSlepianTerm(ModelSlepianTerm):
     def radial_signature(self):
         """Hashable identity for future FFTLog/grouping logic."""
         return ("linear-power-pair", self.paired_legs, self.power_shifts)
+
+    def radial_metadata(self, leg):
+        leg = int(leg)
+        if leg == self.other_leg:
+            return SlepianRadialMetadata(
+                "constant", cache_key=("constant", 1.0)
+            )
+        return SlepianRadialMetadata(
+            "linear-power",
+            power_shift=self.power_shifts[leg],
+            cache_key=("linear-power", id(self.model), self.power_shifts[leg]),
+        )
 
     def c(self, z, **params):
         return self.coefficient

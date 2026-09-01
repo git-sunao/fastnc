@@ -151,3 +151,131 @@ class WeberTableCache:
             for j in range(exponents.size):
                 out[j][mask] = tmp[j]
         return out
+
+
+@dataclass(frozen=True)
+class ContactTerm:
+    """Distributional contribution supported at ``x=theta``.
+
+    Contact terms are represented with respect to the ordinary ``dx`` measure.
+    The constant-leg kernels implemented here currently require only
+    ``derivative_order=0`` and use ``coefficient * delta(x-theta) / x``.
+    The derivative-order field keeps the API extensible without encoding a
+    distribution as a numerical array value.
+    """
+
+    derivative_order: int
+    coefficient: complex
+
+    def __post_init__(self):
+        if int(self.derivative_order) < 0:
+            raise ValueError("derivative_order must be non-negative")
+        object.__setattr__(self, "derivative_order", int(self.derivative_order))
+        object.__setattr__(self, "coefficient", complex(self.coefficient))
+
+
+@dataclass(frozen=True)
+class ConstantWeberKernel:
+    r"""Exact ``f(ell)=1`` Weber kernel for integer Bessel orders.
+
+    For canonical non-negative orders with ``a=b+2r``, the distribution is
+
+    .. math::
+
+        W^{(0)}_{b+2r,b}
+        = H(x-\theta)\frac{2(b+r)}{x^2}
+          \left(\frac{\theta}{x}\right)^b
+          P_{r-1}^{(b,1)}\!\left(1-2\frac{\theta^2}{x^2}\right)
+          + (-1)^r\frac{\delta(x-\theta)}{x}.
+
+    The opposite order orientation follows by ``x <-> theta``.  Negative raw
+    orders are canonicalized with ``J_-n=(-1)^n J_n``.  Odd canonical order
+    differences have no completeness contact of this type and are deliberately
+    reported as unsupported by the closed Jacobi branch; callers may use the
+    generic ordinary Weber table for that regular case.
+    """
+
+    order_x: int
+    order_theta: int
+
+    def __post_init__(self):
+        ox, sx = canonical_bessel_order(self.order_x)
+        ot, st = canonical_bessel_order(self.order_theta)
+        object.__setattr__(self, "canonical_order_x", int(ox))
+        object.__setattr__(self, "canonical_order_theta", int(ot))
+        object.__setattr__(self, "canonical_sign", int(sx * st))
+        diff = abs(int(ox) - int(ot))
+        object.__setattr__(self, "order_difference", diff)
+        object.__setattr__(self, "analytic_even_difference", diff % 2 == 0)
+
+    @property
+    def has_contact(self):
+        return bool(self.analytic_even_difference)
+
+    @property
+    def contact_coefficient(self):
+        if not self.has_contact:
+            return 0.0 + 0.0j
+        r = self.order_difference // 2
+        return complex(self.canonical_sign * ((-1) ** r))
+
+    def contact_terms(self):
+        if not self.has_contact:
+            return ()
+        return (ContactTerm(0, self.contact_coefficient),)
+
+    def regular(self, x, theta):
+        """Return the ordinary regular part on broadcast ``(theta,x)`` grids.
+
+        The equality point is assigned zero.  The distributional contribution
+        at equality is exposed separately by :meth:`contact_terms`.
+        """
+        from scipy.special import eval_jacobi
+
+        if not self.analytic_even_difference:
+            raise ValueError(
+                "closed constant-Weber regular formula requires an even "
+                "canonical Bessel-order difference"
+            )
+
+        x = np.asarray(x, dtype=float)
+        theta = np.asarray(theta, dtype=float)
+        X = x[None, :]
+        T = theta[:, None]
+        out = np.zeros((theta.size, x.size), dtype=np.complex128)
+
+        ax = self.canonical_order_x
+        at = self.canonical_order_theta
+        sign = self.canonical_sign
+        if ax == at:
+            return out
+
+        if ax > at:
+            small = at
+            r = (ax - at) // 2
+            mask = X > T
+            u = np.zeros_like(np.broadcast_to(X, out.shape))
+            np.divide(T, X, out=u, where=mask)
+            poly = eval_jacobi(r - 1, small, 1, 1.0 - 2.0 * u[mask] ** 2)
+            out[mask] = (
+                sign
+                * 2.0 * (small + r)
+                / X.repeat(theta.size, axis=0)[mask] ** 2
+                * u[mask] ** small
+                * poly
+            )
+        else:
+            small = ax
+            r = (at - ax) // 2
+            mask = X < T
+            u = np.zeros_like(np.broadcast_to(X, out.shape))
+            np.divide(X, T, out=u, where=mask)
+            poly = eval_jacobi(r - 1, small, 1, 1.0 - 2.0 * u[mask] ** 2)
+            out[mask] = (
+                sign
+                * 2.0 * (small + r)
+                / T.repeat(x.size, axis=1)[mask] ** 2
+                * u[mask] ** small
+                * poly
+            )
+        return out

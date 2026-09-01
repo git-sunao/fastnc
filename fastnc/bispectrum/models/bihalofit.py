@@ -11,7 +11,7 @@ import numpy as np
 
 from ..base import Bispectrum3D
 from ..terms import BackendBispectrumTerm
-from ..slepian import BackendSlepianTerm, SlepianLOSMomentMetadata
+from ..slepian import BackendSlepianTerm, SlepianLOSMomentMetadata, SlepianRadialMetadata
 from ..support import Support3D
 from .halofit import Halofit
 from ..analytic import (
@@ -136,6 +136,18 @@ class BiHalofitSlepianF2Term(BackendSlepianTerm):
     def radial_signature(self):
         return ("bihalofit-HHI", self.pair, self.power_shifts)
 
+    def radial_metadata(self, leg):
+        leg = int(leg)
+        if leg == self.other_leg:
+            return SlepianRadialMetadata(
+                "bihalofit-I", cache_key=("bihalofit-I", id(self.backend))
+            )
+        return SlepianRadialMetadata(
+            "bihalofit-H",
+            power_shift=self.power_shifts[leg],
+            cache_key=("bihalofit-H", id(self.backend), self.power_shifts[leg]),
+        )
+
     def c(self, z, **params):
         return self.coefficient
 
@@ -185,6 +197,16 @@ class BiHalofitSlepianDnTerm(BackendSlepianTerm):
     @property
     def radial_signature(self):
         return ("bihalofit-dn-HHkI", self.pair)
+
+    def radial_metadata(self, leg):
+        leg = int(leg)
+        if leg == self.other_leg:
+            return SlepianRadialMetadata(
+                "bihalofit-kI", cache_key=("bihalofit-kI", id(self.backend))
+            )
+        return SlepianRadialMetadata(
+            "bihalofit-H", cache_key=("bihalofit-H", id(self.backend), 0)
+        )
 
     def c(self, z, **params):
         zz = np.asarray(z, dtype=float)

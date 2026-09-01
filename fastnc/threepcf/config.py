@@ -39,10 +39,15 @@ class SlepianConfig:
     weber_r_points: int = 256
     cache_tables: bool = True
     timing: bool = False
+    radial_backend: str = "reference"
 
     def __post_init__(self):
         if self.mode not in {"auto", "off", "required"}:
             raise ValueError("SlepianConfig.mode must be 'auto', 'off', or 'required'")
+        if self.radial_backend not in {"reference", "integrated"}:
+            raise ValueError(
+                "SlepianConfig.radial_backend must be 'reference' or 'integrated'"
+            )
         if self.n_fftlog <= 0 or self.n_x <= 0 or self.weber_r_points <= 0:
             raise ValueError("Slepian grid sizes must be positive")
         if not (0.0 < self.k_min < self.k_max):

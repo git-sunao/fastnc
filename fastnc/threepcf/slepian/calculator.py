@@ -10,7 +10,10 @@ from ..spin import SpinSpec, as_effective_spin_triple
 from ..zetak_grid import ZetaKGrid, ZetaKMode
 from .fftlog import FFTLogExpansion, decompose_log_powerlaw
 from .geometry import SlepianRadialGrid
-from .weber import WeberTableCache, single_bessel_factor, canonical_bessel_order
+from .weber import (
+    WeberTableCache, ConstantWeberKernel, single_bessel_factor,
+    canonical_bessel_order,
+)
 from .terms import compile_mode_plan
 from .los_moments import (
     FactorizedGrowthMomentRule, FactorizedGrowthBatchMomentRule,
@@ -28,6 +31,12 @@ class SlepianThreePCFCalculator:
         if not self.terms:
             raise ValueError("SlepianThreePCFCalculator requires at least one term")
         self.config = config
+        if self.config.slepian.radial_backend == "integrated":
+            raise NotImplementedError(
+                "The integrated Slepian kernel API is present, but production "
+                "dispatch is not enabled until diagonal and general-spin "
+                "rational kernels are validated. Use radial_backend='reference'."
+            )
         self.projector = projector
         self.sample_combinations = sample_combinations
         self.grid = FFTGrid.from_config(config)
@@ -57,6 +66,20 @@ class SlepianThreePCFCalculator:
         if key in self._constant_cache:
             return self._constant_cache[key]
         f = (term.f1, term.f2, term.f3)[leg]
+
+        # Built-in terms declare exact radial structure.  Prefer that contract
+        # to numerical probing so constant/contact behavior is deterministic.
+        metadata = None
+        radial_metadata = getattr(term, "radial_metadata", None)
+        if radial_metadata is not None:
+            metadata = radial_metadata(int(leg))
+        if metadata is not None and getattr(metadata, "family", None) == "constant":
+            value = complex(np.asarray(f(1.0, z), dtype=complex))
+            self._constant_cache[key] = value
+            return value
+
+        # Compatibility fallback for third-party/legacy Slepian terms that do
+        # not yet advertise radial metadata.
         probe = np.geomspace(self.config.slepian.k_min, self.config.slepian.k_max, 7)
         vals = np.asarray(f(probe, z), dtype=complex)
         vals = np.broadcast_to(vals, probe.shape)
@@ -168,6 +191,111 @@ class SlepianThreePCFCalculator:
         self._prepared_double_contact[ckey] = out
         return sign * out
 
+
+    def _constant_support_grid(self, kernel, theta_value):
+        """Reference x grid restricted to the analytic constant-Weber support.
+
+        The Heaviside branch point is inserted explicitly.  This avoids the
+        saw-tooth error obtained when a moving x=theta discontinuity is sampled
+        on a fixed logarithmic radial grid.
+        """
+        theta_value = float(theta_value)
+        x0 = np.asarray(self.radial_grid.x, dtype=float)
+        ax = kernel.canonical_order_x
+        at = kernel.canonical_order_theta
+        if ax == at:
+            return np.asarray([theta_value], dtype=float)
+        if ax > at:
+            tail = x0[x0 > theta_value]
+            return np.concatenate(([theta_value], tail))
+        head = x0[x0 < theta_value]
+        return np.concatenate((head, [theta_value]))
+
+    def _constant_regular_fixed_z(self, term, constant_leg, kernel, e1, e2, e3,
+                                  n1, p, m, q, n, eff, z, chi):
+        """Branch-aware regular contribution for one constant double-Bessel leg."""
+        theta = np.asarray(self.grid.theta_fft, dtype=float)
+        out = np.zeros(self.grid.shape_theta_fft, dtype=complex)
+        if kernel.canonical_order_x == kernel.canonical_order_theta:
+            return out
+
+        if constant_leg == 2:  # B12: leg 3 is constant; output [theta1, theta2]
+            for j, th in enumerate(theta):
+                x = self._constant_support_grid(kernel, th)
+                if x.size < 2:
+                    continue
+                R1 = self._single_at(e1, n1 + eff.sigma1, chi, x)
+                R2 = self._double_leg_at(term, 1, e2, p, m, z, chi, x, theta)
+                Rc = kernel.regular(x, np.asarray([th]))[0]
+                out[:, j] = np.trapezoid(
+                    R2 * (x * R1 * Rc)[None, :], x, axis=-1
+                )
+            return out
+
+        if constant_leg == 1:  # B31: leg 2 is constant
+            for i, th in enumerate(theta):
+                x = self._constant_support_grid(kernel, th)
+                if x.size < 2:
+                    continue
+                R1 = self._single_at(e1, n1 + eff.sigma1, chi, x)
+                R3 = self._double_leg_at(term, 2, e3, q, n, z, chi, x, theta)
+                Rc = kernel.regular(x, np.asarray([th]))[0]
+                out[i, :] = np.trapezoid(
+                    R3 * (x * R1 * Rc)[None, :], x, axis=-1
+                )
+            return out
+
+        raise ValueError("constant_leg must be 1 or 2")
+
+    def _constant_regular_los_factorized_batch(
+        self, term, constant_leg, kernel, e1, e2, e3, n1, p, m, q, n, eff,
+        paired, moment_values,
+    ):
+        """LOS-moment contraction of the analytic constant-Weber regular part.
+
+        ``moment_values`` already contains the LOS integral over the two
+        non-constant Mellin exponents, including growth, coefficient factor,
+        LOS weight and chi powers.  The remaining x integral is therefore
+        cosmology independent and is performed on a branch-aware grid.
+        """
+        theta = np.asarray(self.grid.theta_fft, dtype=float)
+        nsamp = int(moment_values.shape[0])
+        out = np.zeros((nsamp, *self.grid.shape_theta_fft), dtype=complex)
+        if kernel.canonical_order_x == kernel.canonical_order_theta:
+            return out
+
+        if constant_leg == 2:  # B12, paired=(0,1)
+            M01 = moment_values if paired == (0, 1) else np.swapaxes(moment_values, 1, 2)
+            for j, th in enumerate(theta):
+                x = self._constant_support_grid(kernel, th)
+                if x.size < 2:
+                    continue
+                A1 = self._single_basis(e1, n1 + eff.sigma1, x)
+                A2 = self._double_basis(e2, p, m, x, theta)
+                Rc = kernel.regular(x, np.asarray([th]))[0]
+                gx = np.einsum('ax,bix,sab->six', A1, A2, M01, optimize=True)
+                out[:, :, j] = np.trapezoid(
+                    gx * (x * Rc)[None, None, :], x, axis=-1
+                )
+            return out
+
+        if constant_leg == 1:  # B31, paired=(2,0)
+            M03 = np.swapaxes(moment_values, 1, 2) if paired == (2, 0) else moment_values
+            for i, th in enumerate(theta):
+                x = self._constant_support_grid(kernel, th)
+                if x.size < 2:
+                    continue
+                A1 = self._single_basis(e1, n1 + eff.sigma1, x)
+                A3 = self._double_basis(e3, q, n, x, theta)
+                Rc = kernel.regular(x, np.asarray([th]))[0]
+                gx = np.einsum('ax,cjx,sac->sjx', A1, A3, M03, optimize=True)
+                out[:, i, :] = np.trapezoid(
+                    gx * (x * Rc)[None, None, :], x, axis=-1
+                )
+            return out
+
+        raise ValueError("constant_leg must be 1 or 2")
+
     @staticmethod
     def _delta_sign(order_x, order_theta):
         from .weber import canonical_bessel_order
@@ -185,29 +313,71 @@ class SlepianThreePCFCalculator:
         e2 = self._expansion(term, 1, z, chi)
         e3 = self._expansion(term, 2, z, chi)
 
-        # A k-independent radial leg with equal (up to J_-n=(-1)^n J_n)
-        # Bessel orders is distributional: integral dl l J_a(lx)J_a(ltheta)
-        # = delta(x-theta)/x.  Collapse that leg analytically instead of
-        # asking an ordinary Weber table to represent a Dirac delta.
         c2 = self._constant_value(term, 1, z)
-        sign2 = self._delta_sign(p, m) if c2 is not None else None
         c3 = self._constant_value(term, 2, z)
-        sign3 = self._delta_sign(q, n) if c3 is not None else None
+        if c2 is not None and c3 is not None:
+            raise NotImplementedError(
+                "Slepian fixed-z reference path supports at most one constant "
+                "double-Bessel leg"
+            )
+
         theta = self.grid.theta_fft
-        if sign2 is not None:
-            R1t = self._single_at(e1, n1 + eff.sigma1, chi, theta)
-            R3 = self._double_leg_at(term, 2, e3, q, n, z, chi, theta, theta)  # [theta2, theta1]
-            value = c2 * sign2 * R1t[:, None] * R3.T
-        elif sign3 is not None:
-            R1t = self._single_at(e1, n1 + eff.sigma1, chi, theta)
-            R2 = self._double_leg_at(term, 1, e2, p, m, z, chi, theta, theta)  # [theta1, theta2]
-            value = c3 * sign3 * R2 * R1t[None, :]
+        x = self.radial_grid.x
+        wx = self.radial_grid.weights * x
+
+        # A constant leg is a distribution-aware Weber kernel.  For an even
+        # canonical order difference the recurrence chain yields an exact
+        # Jacobi-polynomial regular part plus a completeness contact term.
+        # The regular part is integrated on the reference x grid; the contact
+        # part is applied analytically at x=theta.
+        if c2 is not None:
+            ck = ConstantWeberKernel(p, m)
+            if ck.analytic_even_difference:
+                value = c2 * self._constant_regular_fixed_z(
+                    term, 1, ck, e1, e2, e3, n1, p, m, q, n, eff, z, chi
+                )
+                if ck.has_contact:
+                    R1t = self._single_at(e1, n1 + eff.sigma1, chi, theta)
+                    R3t = self._double_leg_at(
+                        term, 2, e3, q, n, z, chi, theta, theta
+                    )  # [theta2, theta1]
+                    value += (
+                        c2 * ck.contact_coefficient
+                        * R1t[:, None] * R3t.T
+                    )
+            else:
+                # Odd canonical difference has no completeness contact of the
+                # constant-leg type.  Retain the ordinary Weber reference path.
+                R1 = self._single(e1, n1 + eff.sigma1, chi)
+                R2 = self._double(e2, p, m, chi)
+                R3 = self._double_leg_at(term, 2, e3, q, n, z, chi, x, theta)
+                value = np.einsum('ix,x,jx->ij', R2, wx * R1, R3, optimize=True)
+        elif c3 is not None:
+            ck = ConstantWeberKernel(q, n)
+            if ck.analytic_even_difference:
+                value = c3 * self._constant_regular_fixed_z(
+                    term, 2, ck, e1, e2, e3, n1, p, m, q, n, eff, z, chi
+                )
+                if ck.has_contact:
+                    R1t = self._single_at(e1, n1 + eff.sigma1, chi, theta)
+                    R2t = self._double_leg_at(
+                        term, 1, e2, p, m, z, chi, theta, theta
+                    )  # [theta1, theta2]
+                    value += (
+                        c3 * ck.contact_coefficient
+                        * R2t * R1t[None, :]
+                    )
+            else:
+                R1 = self._single(e1, n1 + eff.sigma1, chi)
+                R2 = self._double_leg_at(term, 1, e2, p, m, z, chi, x, theta)
+                R3 = self._double(e3, q, n, chi)
+                value = np.einsum('ix,x,jx->ij', R2, wx * R1, R3, optimize=True)
         else:
             R1 = self._single(e1, n1 + eff.sigma1, chi)
-            R2 = self._double(e2, p, m, chi)
-            R3 = self._double(e3, q, n, chi)
-            diag = self.radial_grid.weights * self.radial_grid.x * R1
-            value = np.einsum('ix,x,jx->ij', R2, diag, R3, optimize=True)
+            R2 = self._double_leg_at(term, 1, e2, p, m, z, chi, x, theta)
+            R3 = self._double_leg_at(term, 2, e3, q, n, z, chi, x, theta)
+            value = np.einsum('ix,x,jx->ij', R2, wx * R1, R3, optimize=True)
+
         pref = ((-1j) ** eff.Sigma) / (2.0 * np.pi) ** 2
         return pref * term.c(z) * value
 
@@ -348,71 +518,25 @@ class SlepianThreePCFCalculator:
         return out
 
     def _term_mode_los_factorized(self, term, sigma, k, rule):
-        """LOS-integrated one-term mode using Mellin exponent-sum moments."""
-        eff = as_effective_spin_triple(sigma)
-        m, n = eff.bessel_orders(float(k))
-        n1, n2, n3 = term.validated_angular_orders()
-        p = n2 + eff.sigma2 - m
-        q = n3 + eff.sigma3 - n
-        e1 = self._factorized_expansion(term, 0)
-        e2 = self._factorized_expansion(term, 1)
-        e3 = self._factorized_expansion(term, 2)
-        ex = (e1, e2, e3)
-        paired = tuple(int(i) for i in term.paired_legs)
-        moments = self._prepared_los_moments(
-            rule, term, ex[paired[0]].exponents, ex[paired[1]].exponents
+        """LOS-integrated one-term mode using corrected constant-Weber algebra.
+
+        The two non-constant legs still use the exact Mellin exponent-sum LOS
+        moments.  If the remaining leg is constant, its Weber transform is
+        represented as analytic regular + contact pieces.  The regular
+        Heaviside branch is integrated on a branch-aware x grid whose endpoint
+        includes x=theta exactly; the contact is collapsed analytically.
+        """
+        batch_rule = FactorizedGrowthBatchMomentRule(
+            rule.model, rule.projector, (rule.sample_combination,)
         )
-        M = moments.values
-        theta = self.grid.theta_fft
-        pref = ((-1j) ** eff.Sigma) / (2.0 * np.pi) ** 2
-        coeff0 = complex(term.coefficient)
-
-        c2 = 1.0 if term.other_leg == 1 else None
-        sign2 = self._delta_sign(p, m) if c2 is not None else None
-        c3 = 1.0 if term.other_leg == 2 else None
-        sign3 = self._delta_sign(q, n) if c3 is not None else None
-
-        if sign2 is not None:
-            # B31: paired legs are (2,0).  Reorder M to (leg0, leg2).
-            A1 = self._single_basis(e1, n1 + eff.sigma1, theta)       # [a,i]
-            A3 = self._double_basis_with_contact(term, 2, e3, q, n, theta, theta)  # [b,j,i]
-            M03 = M.T if paired == (2, 0) else M
-            value = sign2 * np.einsum('ai,bji,ab->ij', A1, A3, M03, optimize=True)
-        elif sign3 is not None:
-            # B12: paired legs are (0,1).
-            A1 = self._single_basis(e1, n1 + eff.sigma1, theta)       # [a,j]
-            A2 = self._double_basis_with_contact(term, 1, e2, p, m, theta, theta)  # [b,i,j]
-            M01 = M if paired == (0, 1) else M.T
-            value = sign3 * np.einsum('aj,bij,ab->ij', A1, A2, M01, optimize=True)
-        else:
-            # General path, including non-delta constant-leg order combinations.
-            x = self.radial_grid.x
-            A1 = self._single_basis(e1, n1 + eff.sigma1, x)
-            A2 = self._double_basis(e2, p, m, x, theta)
-            A3 = self._double_basis(e3, q, n, x, theta)
-            wx = self.radial_grid.weights * x
-            if term.other_leg == 2:  # paired 0,1; e3 has one mode
-                value = np.einsum('ax,bix,cjx,ab,x->ij', A1, A2, A3, M, wx, optimize=True)
-            elif term.other_leg == 1:  # paired 2,0; e2 has one mode
-                M02 = M.T if paired == (2, 0) else M
-                value = np.einsum('ax,bix,cjx,ac,x->ij', A1, A2, A3, M02, wx, optimize=True)
-            else:
-                raise NotImplementedError("Phase-8 SPT LOS rule expects exactly two linear-power legs")
-        result = pref * coeff0 * value
-        # The constant-leg delta collapse evaluates the remaining Weber kernel
-        # at x=theta on the theta1=theta2 diagonal.  Phase 7 established that
-        # term-by-term analytic continuation misses a contact contribution at
-        # this coincident geometry.  Preserve the Mellin-moment route on the
-        # full off-diagonal plane, but replace the diagonal by direct LOS
-        # integration of the already validated fixed-z term transform.
-        if sign2 is not None or sign3 is not None:
-            pjt = rule.projector
-            weight = np.asarray(pjt.los_weight(rule.sample_combination), dtype=complex)
-            diag_nodes = self._contact_diag_nodes(term, sigma, float(k))
-            diag_los = np.trapezoid(diag_nodes * weight[:, None], pjt.chi, axis=0)
-            ii = np.diag_indices_from(result)
-            result[ii] = diag_los
-        return result, moments
+        value, prepared = self._term_mode_los_factorized_batch(
+            term, sigma, k, batch_rule, weight_matrix=batch_rule.weight_matrix()
+        )
+        return value[0], PreparedLOSMoments(
+            exponent_sums=prepared.exponent_sums,
+            values=prepared.values[0],
+            unique_exponents=prepared.unique_exponents,
+        )
 
     def _contact_diag_nodes(self, term, sigma, k):
         """Return fixed-z contact diagonals, cached independently of LOS sample.
@@ -435,10 +559,14 @@ class SlepianThreePCFCalculator:
         return nodes
 
     def _term_mode_los_factorized_batch(self, term, sigma, k, rule, weight_matrix=None):
-        """Batched LOS-integrated one-term mode.
+        """Batched factorized-growth LOS mode with distribution-aware constants.
 
-        Returns an array with shape ``(n_sample, n_theta_fft, n_theta_fft)``.
-        All radial/Weber objects are sample independent and are built only once.
+        This is the production correctness path for SPT.  It retains the
+        exponent-sum LOS moment acceleration but replaces the old
+        equal-order-only ``_delta_sign`` shortcut by ``ConstantWeberKernel``.
+        Hence spin-shifted families such as J_(1+k) J_(1-k) contribute both
+        their Jacobi-polynomial regular part and their recurrence-generated
+        contact term.
         """
         eff = as_effective_spin_triple(sigma)
         m, n = eff.bessel_orders(float(k))
@@ -454,43 +582,77 @@ class SlepianThreePCFCalculator:
             rule, term, ex[paired[0]].exponents, ex[paired[1]].exponents
         )
         M = moments.values  # [sample, a, b]
-        theta = self.grid.theta_fft
+        theta = np.asarray(self.grid.theta_fft, dtype=float)
         pref = ((-1j) ** eff.Sigma) / (2.0 * np.pi) ** 2
         coeff0 = complex(term.coefficient)
 
-        sign2 = self._delta_sign(p, m) if term.other_leg == 1 else None
-        sign3 = self._delta_sign(q, n) if term.other_leg == 2 else None
-
-        if sign2 is not None:
-            A1 = self._single_basis(e1, n1 + eff.sigma1, theta)
-            A3 = self._double_basis_with_contact(term, 2, e3, q, n, theta, theta)
-            M03 = np.swapaxes(M, 1, 2) if paired == (2, 0) else M
-            value = sign2 * np.einsum('ai,bji,sab->sij', A1, A3, M03, optimize=True)
-        elif sign3 is not None:
-            A1 = self._single_basis(e1, n1 + eff.sigma1, theta)
-            A2 = self._double_basis_with_contact(term, 1, e2, p, m, theta, theta)
-            M01 = M if paired == (0, 1) else np.swapaxes(M, 1, 2)
-            value = sign3 * np.einsum('aj,bij,sab->sij', A1, A2, M01, optimize=True)
+        other = int(term.other_leg)
+        if other == 1:
+            ck = ConstantWeberKernel(p, m)
+        elif other == 2:
+            ck = ConstantWeberKernel(q, n)
         else:
-            x = self.radial_grid.x
+            raise NotImplementedError(
+                "factorized-growth SPT LOS expects exactly one constant double-Bessel leg"
+            )
+
+        if ck.analytic_even_difference:
+            value = self._constant_regular_los_factorized_batch(
+                term, other, ck, e1, e2, e3, n1, p, m, q, n, eff,
+                paired, M,
+            )
+
+            if ck.has_contact:
+                if other == 1:  # B31, collapse x=theta1
+                    A1 = self._single_basis(e1, n1 + eff.sigma1, theta)
+                    A3 = self._double_basis_with_contact(
+                        term, 2, e3, q, n, theta, theta
+                    )
+                    M03 = np.swapaxes(M, 1, 2) if paired == (2, 0) else M
+                    value += ck.contact_coefficient * np.einsum(
+                        'ai,cji,sac->sij', A1, A3, M03, optimize=True
+                    )
+                else:  # B12, collapse x=theta2
+                    A1 = self._single_basis(e1, n1 + eff.sigma1, theta)
+                    A2 = self._double_basis_with_contact(
+                        term, 1, e2, p, m, theta, theta
+                    )
+                    M01 = M if paired == (0, 1) else np.swapaxes(M, 1, 2)
+                    value += ck.contact_coefficient * np.einsum(
+                        'aj,bij,sab->sij', A1, A2, M01, optimize=True
+                    )
+        else:
+            # Odd canonical order difference has no completeness contact.
+            # The constant leg is an ordinary Weber kernel, so the historical
+            # Mellin-basis x integral is valid.
+            x = np.asarray(self.radial_grid.x, dtype=float)
             A1 = self._single_basis(e1, n1 + eff.sigma1, x)
             A2 = self._double_basis(e2, p, m, x, theta)
             A3 = self._double_basis(e3, q, n, x, theta)
             wx = self.radial_grid.weights * x
-            if term.other_leg == 2:
-                value = np.einsum('ax,bix,cjx,sab,x->sij', A1, A2, A3, M, wx, optimize=True)
-            elif term.other_leg == 1:
-                M02 = np.swapaxes(M, 1, 2) if paired == (2, 0) else M
-                value = np.einsum('ax,bix,cjx,sac,x->sij', A1, A2, A3, M02, wx, optimize=True)
+            if other == 2:
+                M01 = M if paired == (0, 1) else np.swapaxes(M, 1, 2)
+                value = np.einsum(
+                    'ax,bix,cjx,sab,x->sij', A1, A2, A3, M01, wx,
+                    optimize=True,
+                )
             else:
-                raise NotImplementedError("Phase-9 SPT LOS rule expects exactly two linear-power legs")
+                M03 = np.swapaxes(M, 1, 2) if paired == (2, 0) else M
+                value = np.einsum(
+                    'ax,bix,cjx,sac,x->sij', A1, A2, A3, M03, wx,
+                    optimize=True,
+                )
+
         result = pref * coeff0 * value
 
-        # Contact diagonal: fixed-z radial data are sample independent.  Build
-        # them once, then contract all LOS weights as one leading sample axis.
-        if sign2 is not None or sign3 is not None:
+        # On the exact theta1=theta2 diagonal the non-constant companion Weber
+        # is evaluated at its own branch point.  Keep the already validated
+        # fixed-z coincident correction there and integrate only that diagonal
+        # over LOS.  This is cheap compared with replacing the whole plane by
+        # node-by-node fixed-z transforms.
+        if ck.has_contact:
             pjt = rule.projector
-            weights = rule.weight_matrix() if weight_matrix is None else weight_matrix
+            weights = rule.weight_matrix() if weight_matrix is None else np.asarray(weight_matrix, dtype=complex)
             diag_nodes = self._contact_diag_nodes(term, sigma, float(k))
             diag_los = np.trapezoid(
                 weights[:, :, None] * diag_nodes[None, :, :],

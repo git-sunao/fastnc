@@ -22,6 +22,7 @@ class RadialKernelKey:
 
     model_id: int
     leg: int
+    radial_family: str
     shift: int
     kind: str
     order_x: int
@@ -87,11 +88,18 @@ def compile_mode_plan(terms, *, sigma, k, effective_spin):
         om, _ = canonical_bessel_order(m)
         oq, _ = canonical_bessel_order(q)
         on, _ = canonical_bessel_order(n)
-        keys.append(RadialKernelKey(model_id, 0, shifts[0], "single", o1, None, "x"))
-        if int(getattr(term, "other_leg", -1)) != 1:
-            keys.append(RadialKernelKey(model_id, 1, shifts[1], "double", op, om, "theta-x"))
-        if int(getattr(term, "other_leg", -1)) != 2:
-            keys.append(RadialKernelKey(model_id, 2, shifts[2], "double", oq, on, "theta-x"))
+        keys.append(RadialKernelKey(model_id, 0, getattr(term.radial_metadata(0), "family", "generic"), shifts[0], "single", o1, None, "x"))
+        # Keep the other leg in the compiled identity.  A constant leg may
+        # still have a non-zero Jacobi regular part for general spin, so it is
+        # not mathematically absent even when it also carries a contact term.
+        keys.append(RadialKernelKey(
+            model_id, 1, getattr(term.radial_metadata(1), "family", "generic"),
+            shifts[1], "double", op, om, "theta-x"
+        ))
+        keys.append(RadialKernelKey(
+            model_id, 2, getattr(term.radial_metadata(2), "family", "generic"),
+            shifts[2], "double", oq, on, "theta-x"
+        ))
     unique = tuple(dict.fromkeys(keys))
     return CompiledModePlan(
         sigma=tuple(int(v) for v in sigma), k=float(k), terms=tuple(compiled),
