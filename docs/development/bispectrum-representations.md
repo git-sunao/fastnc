@@ -375,31 +375,117 @@ contract_slepian(coefficients, kernels, geometry) -> arrays
 Workflow or assembly code extracts representations, performs angularization,
 queries caches, calls numerical kernels, and stores results in Grid objects.
 
+## Package ownership and the legacy object model
+
+The representation refactor replaces, rather than extends, the object model in
+the current `bispectrum/base.py`. The old model makes a generic `evaluate()`
+method the center of the package and connects projection, interpolation, and
+multipole calculations through methods and inheritance. That dependency
+direction does not fit the term/representation/calculator design.
+
+The target domain structure is
+
+```text
+fastnc/bispectrum/
+    bispectrum.py       # Bispectrum3D and Bispectrum2D term aggregates
+    terms.py            # indivisible terms and typed weighted terms
+    representations.py  # alternative mathematical descriptions of a term
+    support.py           # domain/support value types
+    models/              # SPT, BiHalofit, one-halo, and later models
+```
+
+`Bispectrum3D` and `Bispectrum2D` are typed aggregates of weighted terms, not
+abstract evaluator wrappers. A bispectrum is not itself a term. Addition of
+bispectra concatenates and flattens their term collections; a term remains the
+smallest unit assigned to one route. The 3D and 2D aggregate and weighted-term
+types remain distinct instead of using runtime dimensionality checks.
+
+The target model does not retain the following behavior from `base.py`:
+
+- automatic wrapping of subclass `evaluate()` methods through
+  `__init_subclass__`;
+- mutable persistent `default_kwargs` hidden inside domain objects;
+- route entry points such as `Bispectrum2D.multipole()` on a bispectrum;
+- inheritance whose purpose is only to make unrelated derived objects expose
+  the same `evaluate()` method.
+
+Physical model classes construct and own term aggregates and shared physical
+state. Their numeric evaluation is the sum of the selected numeric
+representations. SPT, one-halo, and BiHalofit models must be migrated to this
+structure before new Slepian model classes are added.
+
+## Disposition of existing modules
+
+Existing files are not kept or deleted as indivisible units. Pure mathematical
+and numerical components are retained, while wrappers that depend on the old
+bispectrum object graph are replaced.
+
+- `support.py` remains a domain/value module and can be reused directly.
+- `halofit.py` is a standalone physical/numerical implementation and remains
+  usable. Moving it under a later `models` or `physics` namespace is optional
+  and is not required for the representation refactor.
+- The basis definitions and pure transforms in `decompose.py` are reusable.
+  Callers coupled to old bispectrum or multipole objects are not part of the
+  retained interface.
+- Coordinate transforms, grid preparation, packing, and interpolation kernels
+  in `interpolate.py` should be extracted as array-based functions. The old
+  interpolated bispectrum wrappers should not define the new architecture.
+- Angular sampling, quadrature, basis normalization, and array-shape logic in
+  `multipole.py` should be extracted into calculators or pure kernels. Lazy
+  multipole wrappers, Grid/calculator mixing, and direct dependencies on
+  `Bispectrum2D` should be retired after equivalence tests pass.
+- The mathematical regulator in `regulator.py` is reusable, but regulator
+  selection belongs to the numeric route rather than to a bispectrum model.
+- LOS geometry, windows, and quadrature are projection concerns and move out
+  of `bispectrum/`. Route-independent projection kernels belong in a projection
+  package. Numeric node evaluation, Mellin-coefficient integration, and other
+  route-specific assembly belong to their respective route packages.
+- Grid classes are passive storage for coordinates, values, labels, and
+  provenance. Calculator methods are removed from them rather than migrated.
+
+The intended high-level ownership is therefore
+
+```text
+bispectrum/   physical terms, representations, state, and support
+projection/   route-independent LOS geometry and integration primitives
+routes/       numeric, Slepian, and semi-analytic calculators and assembly
+grids/        passive result storage
+```
+
 ## Migration from the current package
 
-The refactor should be incremental. Existing numerical kernels and public APIs
-remain usable until replacements are tested.
+The refactor remains incremental, but preservation of an old wrapper is not a
+design objective. Existing implementations remain temporarily available only
+until their reusable kernels and numerical behavior have replacement tests.
 
 1. Introduce representation value types and weighted term composition without
    changing existing model behavior.
 2. Express a small SPT matter-bispectrum subset as terms and verify that the
    sum of numeric expressions reproduces the existing `evaluate` method.
-3. Add `Bispectrum3D.terms`, state revision, and immutable scaling/composition.
-4. Introduce corresponding 2D terms and verify direct 2D numeric evaluation.
-5. Extract the angular multipole decomposition kernel from
+3. Replace the generic `CompositeBispectrum` prototype with typed 3D and 2D
+   weighted terms and aggregates in a new `bispectrum.py`.
+4. Move shared state revision, support, numeric evaluation, and immutable
+   scaling/composition into the new aggregates; do not build them on the old
+   `base.py` inheritance mechanism.
+5. Migrate SPT matter and galaxy terms, then one-halo and BiHalofit terms, and
+   verify each aggregate against the previous direct evaluation.
+6. Introduce corresponding native 2D terms and verify direct 2D numeric
+   evaluation.
+7. Extract the angular multipole decomposition kernel from
    `BispectrumMultipole2DCalculator` so it consumes arrays/callables rather than
    a concrete `Bispectrum2D` object.
-6. Verify that one fixed-z 3D expression and one native 2D expression use the
+8. Verify that one fixed-z 3D expression and one native 2D expression use the
    same angular multipole kernel.
-7. Adapt existing semi-analytic term classes into `SemiAnalyticExpression`
+9. Adapt existing semi-analytic term classes into `SemiAnalyticExpression`
    producers while retaining their proven FFTLog and angular-kernel code.
-8. Remove `isinstance`-based semi-analytic dispatch from LOS projection after
-   the representation planner is operational.
-9. Migrate BiHalofit, one-halo, galaxy bias, and remaining SPT terms.
-10. Refactor the 3PCF workflow and passive Grid storage only after the
-    bispectrum representation boundary is stable.
-11. Implement the Slepian and Weber-Schafheitlin route on top of the new
-    expression API.
+10. Move LOS code out of `bispectrum/`, split route-independent projection
+   primitives from route-specific assembly, and remove `isinstance` dispatch.
+11. Refactor the 3PCF workflow and passive Grid storage only after the
+   bispectrum representation boundary is stable.
+12. Remove `base.py` and obsolete interpolation/multipole wrappers after all
+   production imports have migrated and numerical-equivalence tests pass.
+13. Implement the Slepian and Weber-Schafheitlin route on top of the new
+   expression API.
 
 Interpolation and persistent disk-cache redesign are not part of the first
 step unless required to preserve existing behavior.
@@ -428,8 +514,6 @@ These decisions should be made from concrete term implementations rather than
 premature abstraction:
 
 - Exact names and fields of the 3D and 2D representation dataclasses.
-- Whether 3D and 2D terms need separate concrete classes or one generic
-  composition helper with different representations.
 - The first public form of state updates: immutable only or immutable plus a
   mutable compatibility wrapper.
 - Whether projected 2D terms preserve per-3D-term provenance by default.
