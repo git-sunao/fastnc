@@ -8,10 +8,16 @@ These rules apply to all future development in this repository.
 2. After changing source code, report the principal files that were added or
    modified and briefly identify what changed in each file. This list is for
    the maintainer's review and must not be omitted.
-3. For every new feature, create a minimal Jupyter notebook that exercises the
-   feature. Keep the notebook as short as possible. If part of the feature
-   cannot yet be exercised, leave a concise `#` comment in the relevant code
-   cell explaining what remains.
+3. For every new feature, create a focused Jupyter notebook that exercises the
+   feature. Here, "minimal" means free of unrelated setup, exhaustive parameter
+   scans, duplicated calculations, and tutorial boilerplate; it does not mean a
+   one-cell smoke test. A notebook should normally contain enough short cells to
+   show the intended API, inspect the important intermediate objects or arrays,
+   and verify at least one defining identity or reference result. For composite
+   features, also demonstrate the principal selection, composition, or alternate
+   execution path needed to understand the design. Use concise markdown to state
+   what each stage establishes. If part of the feature cannot yet be exercised,
+   leave a concise `#` comment in the relevant code cell explaining what remains.
 4. Never add or commit Jupyter notebooks to Git. Development notebooks remain
    local, untracked files.
 
