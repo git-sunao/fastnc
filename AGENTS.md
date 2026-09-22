@@ -18,3 +18,15 @@ These rules apply to all future development in this repository.
 Changes limited to documentation, tests, notebooks, Git configuration, or
 these development rules do not by themselves require a version increment or a
 new validation notebook.
+
+## Architecture
+
+Before modifying bispectrum, projection, route, multipole, interpolation, LOS,
+or Grid code, read `docs/development/bispectrum-representations.md` and follow
+the architecture and migration decisions recorded there.
+
+Treat that document as the authoritative source for this refactor; do not
+duplicate its detailed design in `AGENTS.md`. If an implementation requires a
+change to an agreed architectural decision, update the design document first
+and explain the proposed change to the maintainer before changing the
+architecture.
