@@ -475,10 +475,16 @@ Projection is top-level because converting a 3D expression into an angular or
 LOS-integrated expression is useful independently of a final 3PCF route.
 
 The active projection layer consumes arrays and callables. It does not receive
-a `Bispectrum3D`, `Bispectrum2D`, Grid, or ThreePCF instance. The first
-extracted primitives are radial kernels, the flat-sky `k_i = ell_i / chi`
-geometry, numeric callable evaluation at LOS nodes, and generic coefficient
-integration. Object-based projectors remain archived.
+a `Bispectrum3D`, `Bispectrum2D`, Grid, or ThreePCF instance. Its
+`LOSProjector` is a route-independent configured facade over radial kernels,
+the flat-sky `k_i = ell_i / chi` geometry, numeric callable evaluation at LOS
+nodes, and generic coefficient integration. The projector stores only LOS
+coordinates, kernels, an explicit prefactor, and the angular-to-comoving
+shift. Numeric and coefficient-level methods delegate to independently usable
+pure functions. It does not select representations or routes and does not own
+route caches. The prefactor defaults to unity; conventions such as
+`chi**-4` must be supplied explicitly. The former object-based projectors
+remain archived.
 
 ## Migration from the current package
 
@@ -486,7 +492,7 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.13`, steps 1--6 below are implemented. The old object graph,
+As of version `2.0.14`, steps 1--6 below are implemented. The old object graph,
 unfinished semi-analytic package, and old high-level `ThreePCF` entry point are
 in `legacy/bispectrum_object_api/`; they are no longer active imports.
 Route-independent projection primitives have been extracted into

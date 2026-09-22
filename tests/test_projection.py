@@ -4,6 +4,7 @@ import numpy as np
 
 from fastnc.projection import (
     KernelSet,
+    LOSProjector,
     RadialKernel,
     angular_to_comoving,
     evaluate_numeric_los,
@@ -63,6 +64,66 @@ class ProjectionPrimitiveTests(unittest.TestCase):
             integrate_coefficients(coefficients, self.chi, axis=1),
             expected,
         )
+
+    def test_projector_composes_numeric_projection_primitives(self):
+        kernels = KernelSet(
+            {
+                "source": RadialKernel(
+                    self.z,
+                    self.chi,
+                    np.array([1.0, 2.0, 3.0]),
+                )
+            }
+        )
+        projector = LOSProjector(
+            self.z,
+            self.chi,
+            kernels=kernels,
+            prefactor=lambda z, chi: (1.0 + z) / chi,
+            shift=0.5,
+        )
+
+        def evaluator(k1, k2, k3, z, amplitude):
+            return amplitude * (k1 + k2 + k3) * (1.0 + z)
+
+        sampled = projector.sample_numeric(
+            evaluator,
+            2.0,
+            3.0,
+            4.0,
+            amplitude=2.0,
+        )
+        expected_weight = (1.0 + self.z) / self.chi * kernels.product(
+            ("source",), self.chi
+        )
+        np.testing.assert_allclose(projector.weight(), expected_weight)
+        np.testing.assert_allclose(
+            projector.project_numeric(
+                evaluator,
+                2.0,
+                3.0,
+                4.0,
+                amplitude=2.0,
+            ),
+            integrate_numeric_los(sampled, self.chi, weight=expected_weight),
+        )
+
+    def test_projector_integrates_route_coefficients_without_route_types(self):
+        projector = LOSProjector(self.z, self.chi, prefactor=self.chi**-2)
+        coefficients = np.arange(12.0).reshape(2, 3, 2)
+        np.testing.assert_allclose(
+            projector.integrate_coefficients(coefficients, axis=1),
+            integrate_coefficients(
+                coefficients,
+                self.chi,
+                weight=self.chi**-2,
+                axis=1,
+            ),
+        )
+
+    def test_projector_uses_explicit_unity_weight_by_default(self):
+        projector = LOSProjector(self.z, self.chi)
+        np.testing.assert_allclose(projector.weight(), np.ones_like(self.chi))
 
 
 if __name__ == "__main__":
