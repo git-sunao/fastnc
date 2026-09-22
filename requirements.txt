@@ -3,3 +3,4 @@ scipy
 astropy
 pandas
 mpi4py
+h5py
