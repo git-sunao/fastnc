@@ -1,5 +1,16 @@
-"""Numeric route: B2D -> multipoles -> H -> ZetaK -> Zeta.
+"""Numeric route: B2D -> multipoles -> H -> ZetaK -> Zeta."""
 
-The legacy object-based calculator is archived. Pure numerical kernels will be
-reintroduced here as they are extracted and independently tested.
-"""
+from .calculator import AngularBispectrumSamples, NumericMultipoleCalculator
+from .config import NumericMultipoleConfig
+from .multipoles import (
+    decompose_angular_multipoles,
+    triangle_closing_side,
+)
+
+__all__ = [
+    "AngularBispectrumSamples",
+    "NumericMultipoleCalculator",
+    "NumericMultipoleConfig",
+    "decompose_angular_multipoles",
+    "triangle_closing_side",
+]

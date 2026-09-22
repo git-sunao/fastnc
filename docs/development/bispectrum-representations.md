@@ -492,7 +492,7 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.14`, steps 1--6 below are implemented. The old object graph,
+As of version `2.0.15`, steps 1--8 below are implemented. The old object graph,
 unfinished semi-analytic package, and old high-level `ThreePCF` entry point are
 in `legacy/bispectrum_object_api/`; they are no longer active imports.
 Route-independent projection primitives have been extracted into
