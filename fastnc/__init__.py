@@ -8,10 +8,11 @@ _logging.getLogger(__name__).addHandler(_logging.NullHandler())
 from . import bispectrum
 from . import coupling
 from . import hankel
+from . import projection
 from . import threepcf
 
-__all__ = ["bispectrum", "coupling", "hankel", "threepcf"]
+__all__ = ["bispectrum", "coupling", "hankel", "projection", "threepcf"]
 
-__version__ = "2.0.12"
+__version__ = "2.0.13"
 __author__ = 'Sunao Sugiyama, Rafael Heringer Gomes'
 __url__ = 'https://github.com/git-sunao/fastnc'

@@ -458,11 +458,27 @@ bispectrum object graph are replaced.
 The intended high-level ownership is therefore
 
 ```text
-bispectrum/   physical terms, representations, state, and support
-projection/   route-independent LOS geometry and integration primitives
-routes/       numeric, Slepian, and semi-analytic calculators and assembly
-grids/        passive result storage
+fastnc/
+    bispectrum/          physical terms, representations, state, and support
+    projection/          LOS kernels, geometry, and projection primitives
+    threepcf/
+        routes/
+            numeric/     B2D -> multipoles -> H -> ZetaK -> Zeta
+            slepian/     angular Slepian expression -> ZetaK -> Zeta
+            semi_analytic/  angular U/V/W expression -> multipoles -> ...
+        *grid.py         transitional result storage to make passive
 ```
+
+The routes are specifically bispectrum-to-3PCF algorithms and therefore live
+under `threepcf/routes`, not in an ambiguous top-level `routes` package.
+Projection is top-level because converting a 3D expression into an angular or
+LOS-integrated expression is useful independently of a final 3PCF route.
+
+The active projection layer consumes arrays and callables. It does not receive
+a `Bispectrum3D`, `Bispectrum2D`, Grid, or ThreePCF instance. The first
+extracted primitives are radial kernels, the flat-sky `k_i = ell_i / chi`
+geometry, numeric callable evaluation at LOS nodes, and generic coefficient
+integration. Object-based projectors remain archived.
 
 ## Migration from the current package
 
@@ -470,9 +486,12 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.12`, steps 1--6 below are implemented. The old object graph,
+As of version `2.0.13`, steps 1--6 below are implemented. The old object graph,
 unfinished semi-analytic package, and old high-level `ThreePCF` entry point are
 in `legacy/bispectrum_object_api/`; they are no longer active imports.
+Route-independent projection primitives have been extracted into
+`fastnc/projection`, and the new route ownership exists under
+`fastnc/threepcf/routes`. No Slepian or semi-analytic route is implemented yet.
 
 1. Introduce representation value types and weighted term composition without
    changing existing model behavior.

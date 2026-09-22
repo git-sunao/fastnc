@@ -36,3 +36,9 @@ archive for the retired bispectrum object graph and the unfinished,
 unvalidated semi-analytic implementation. Active code must never import from
 that directory. Recover a useful numerical component only by extracting it
 into the active architecture and adding an independent test for its contract.
+
+Line-of-sight kernels and geometry belong in `fastnc/projection`. Algorithms
+that map angular bispectrum representations to 3PCF products belong in
+`fastnc/threepcf/routes/{numeric,slepian,semi_analytic}`. Keep route-independent
+projection code out of route packages, and keep physical bispectrum models out
+of both projection and route packages.

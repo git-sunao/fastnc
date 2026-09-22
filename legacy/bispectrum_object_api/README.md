@@ -13,6 +13,8 @@ The archived code includes:
   implementation;
 - the former high-level `threepcf/api.py`, which called
   `Bispectrum2D.multipole()`;
+- the former object-based `ThreePCFCalculator`, which combined route assembly,
+  Grid mutation, and bispectrum-multipole object calls;
 - an unfinished Slepian-foundation test that referenced modules not present in
   the active branch.
 
