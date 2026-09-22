@@ -1,5 +1,5 @@
 from .support import Support2D, Support3D
-from .base import (
+from .bispectrum import (
     Bispectrum3D,
     Bispectrum2D,
 )
@@ -13,8 +13,8 @@ from .representations import (
 from .terms import (
     BispectrumTerm3D,
     BispectrumTerm2D,
-    WeightedTerm,
-    CompositeBispectrum,
+    WeightedTerm3D,
+    WeightedTerm2D,
 )
 from .los import (
     Kernel1D, KernelSet, BaseLOSIntegrand, LOSProjectorBase, LineOfSightProjector,
@@ -61,7 +61,7 @@ __all__ = [
     "BispectrumRepresentation3D", "BispectrumRepresentation2D",
     "NumericExpression3D", "NumericExpression2D",
     "BispectrumTerm3D", "BispectrumTerm2D",
-    "WeightedTerm", "CompositeBispectrum",
+    "WeightedTerm3D", "WeightedTerm2D",
     "Kernel1D", "KernelSet", "BaseLOSIntegrand", "LOSProjectorBase", "LineOfSightProjector",
     "MultipoleLineOfSightProjector",
     "BispectrumMultipole2DConfig", "BispectrumMultipoleConfig",
@@ -86,7 +86,7 @@ __all__ = [
     "CompositeSemiAnalyticBispectrumMultipole3D", "TreeBispectrumMultipole3D",
     "BiHalofitBispectrumMultipole3D",
     "QuadraticBiasBispectrumMultipole3D", "TidalBiasBispectrumMultipole3D",
-    "LinearCombinationBispectrumMultipole3D", "TracerBias",
+    "TracerBias",
     "SPTMultiTracerBispectrumMultipole3D", "SPTGalaxyBispectrumMultipole3D",
     "BiHalofitBispectrum3D",
     "OneHaloProductBispectrum3D", "NFWOneHaloBispectrum3D",

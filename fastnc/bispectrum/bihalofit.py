@@ -5,12 +5,15 @@ This module adapts the bundled :class:`Halofit` implementation to the
 """
 from __future__ import annotations
 
+from functools import partial
 from typing import Mapping
 
 import numpy as np
 
-from .base import Bispectrum3D
+from .bispectrum import Bispectrum3D
+from .representations import NumericExpression3D
 from .support import Support3D
+from .terms import BispectrumTerm3D
 from .halofit import Halofit
 from .analytic import (
     BiHalofitBispectrumMultipole3D,
@@ -59,7 +62,16 @@ class BiHalofitBispectrum3D(Bispectrum3D):
         self.halofit = halofit or Halofit()
         self._support_policy = support_policy
         self._user_support = support is not None
-        self.support = support or Support3D(policy=support_policy)
+        terms = tuple(
+            BispectrumTerm3D(
+                name=f"bihalofit:{name}",
+                representations=(
+                    NumericExpression3D(partial(self._evaluate_term, name)),
+                ),
+            )
+            for name in ("Bh1", "Bh3")
+        )
+        super().__init__(terms, support=support or Support3D(policy=support_policy))
 
     @property
     def ready(self) -> bool:
@@ -91,17 +103,20 @@ class BiHalofitBispectrum3D(Bispectrum3D):
     def set_cosmology(self, cosmo: Mapping[str, float]) -> "BiHalofitBispectrum3D":
         self.halofit.set_cosmology(dict(cosmo))
         self._refresh_support()
+        self._state_updated()
         return self
 
     def set_pklin(self, k, pklin) -> "BiHalofitBispectrum3D":
         self.halofit.set_pklin(np.asarray(k, dtype=float), np.asarray(pklin, dtype=float))
         self._refresh_support()
+        self._state_updated()
         return self
 
     def set_growth(self, z, growth) -> "BiHalofitBispectrum3D":
         """Set the linear growth factor/grid used by the bundled Halofit code."""
         self.halofit.set_lgr(np.asarray(z, dtype=float), np.asarray(growth, dtype=float))
         self._refresh_support()
+        self._state_updated()
         return self
 
     def set_lgr(self, z, lgr) -> "BiHalofitBispectrum3D":
@@ -196,14 +211,19 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             support_policy=support_policy,
         )
 
-    def evaluate(self, k1, k2, k3, z, **params):
+    def _evaluate_term(self, name, k1, k2, k3, z, **params):
         if not self.ready:
             raise RuntimeError(
                 "BiHalofitBispectrum3D is not configured. "
                 "Call set_cosmology(), set_pklin(), and set_growth(), or use "
                 "BiHalofitBispectrum3D.from_cosmology(...)."
             )
-        return self.halofit.get_bihalofit(k1, k2, k3, z, **params)
+        if "which" in params:
+            raise TypeError(
+                "select BiHalofit components with select_terms() instead of "
+                "the legacy which parameter"
+            )
+        return self.halofit.get_bihalofit(k1, k2, k3, z, which=name, **params)
 
     def fourier_multipole(
         self,
@@ -257,4 +277,3 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             modes=modes,
             mode_max=mode_max,
         )
-

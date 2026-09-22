@@ -1,4 +1,4 @@
-"""Additive bispectrum terms and immutable linear composition."""
+"""Typed additive bispectrum terms and immutable term weights."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,6 +26,18 @@ def _coefficient_value(coefficient: Coefficient, z=None):
     return coefficient(z)
 
 
+def _combined_coefficient(left: Coefficient, right: Coefficient, *, is_3d: bool):
+    if not callable(left) and not callable(right):
+        return left * right
+    if is_3d:
+        def combined(z):
+            return _coefficient_value(left, z) * _coefficient_value(right, z)
+    else:
+        def combined():
+            return _coefficient_value(left) * _coefficient_value(right)
+    return combined
+
+
 @dataclass(frozen=True)
 class _BispectrumTerm:
     name: str
@@ -41,8 +53,12 @@ class _BispectrumTerm:
             raise TypeError(
                 "representations must contain BispectrumRepresentation objects"
             )
-        types = [type(rep) for rep in representations]
-        duplicates = {rep_type.__name__ for rep_type in types if types.count(rep_type) > 1}
+        representation_types = [type(rep) for rep in representations]
+        duplicates = {
+            rep_type.__name__
+            for rep_type in representation_types
+            if representation_types.count(rep_type) > 1
+        }
         if duplicates:
             names = ", ".join(sorted(duplicates))
             raise ValueError(f"term {self.name!r} has duplicate representations: {names}")
@@ -61,7 +77,8 @@ class _BispectrumTerm:
             return matches[0]
         if len(matches) > 1:
             raise RuntimeError(
-                f"term {self.name!r} has multiple {representation_type.__name__} representations"
+                f"term {self.name!r} has multiple "
+                f"{representation_type.__name__} representations"
             )
         available = ", ".join(rep.__name__ for rep in self.available_representations)
         raise LookupError(
@@ -69,22 +86,10 @@ class _BispectrumTerm:
             f"available representations: {available}"
         )
 
-    def scaled_by(self, coefficient: Coefficient):
-        return WeightedTerm(coefficient=coefficient, term=self)
-
-    def __mul__(self, coefficient: Coefficient):
-        return self.scaled_by(coefficient)
-
-    def __rmul__(self, coefficient: Coefficient):
-        return self.scaled_by(coefficient)
-
-    def __add__(self, other):
-        return CompositeBispectrum.from_components(self, other)
-
 
 @dataclass(frozen=True)
 class BispectrumTerm3D(_BispectrumTerm):
-    """One numerically stable additive contribution to a 3D bispectrum."""
+    """One indivisible additive contribution to a 3D bispectrum."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -94,16 +99,29 @@ class BispectrumTerm3D(_BispectrumTerm):
         ):
             raise TypeError("a 3D term can contain only 3D representations")
 
-    def evaluate(self, k1, k2, k3, z, **params):
+    def evaluate_numeric(self, k1, k2, k3, z, **params):
         expression = self.get_representation(NumericExpression3D)
         return expression.evaluate(k1, k2, k3, z, **params)
 
-    __call__ = evaluate
+    __call__ = evaluate_numeric
+
+    def scaled_by(self, coefficient: Coefficient):
+        return WeightedTerm3D(coefficient=coefficient, term=self)
+
+    def __mul__(self, coefficient: Coefficient):
+        return self.scaled_by(coefficient)
+
+    def __rmul__(self, coefficient: Coefficient):
+        return self.scaled_by(coefficient)
+
+    def __add__(self, other):
+        from .bispectrum import Bispectrum3D
+        return Bispectrum3D.from_components(self, other)
 
 
 @dataclass(frozen=True)
 class BispectrumTerm2D(_BispectrumTerm):
-    """One numerically stable additive contribution to a 2D bispectrum."""
+    """One indivisible additive contribution to a 2D bispectrum."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -113,41 +131,14 @@ class BispectrumTerm2D(_BispectrumTerm):
         ):
             raise TypeError("a 2D term can contain only 2D representations")
 
-    def evaluate(self, ell1, ell2, ell3, **params):
+    def evaluate_numeric(self, ell1, ell2, ell3, **params):
         expression = self.get_representation(NumericExpression2D)
         return expression.evaluate(ell1, ell2, ell3, **params)
 
-    __call__ = evaluate
-
-
-@dataclass(frozen=True)
-class WeightedTerm:
-    """A coefficient times one leaf bispectrum term."""
-
-    coefficient: Coefficient
-    term: _BispectrumTerm
-
-    def __post_init__(self):
-        if not isinstance(self.term, _BispectrumTerm):
-            raise TypeError("term must be a BispectrumTerm2D or BispectrumTerm3D")
-        if not callable(self.coefficient) and not isinstance(self.coefficient, Number):
-            raise TypeError("coefficient must be numeric or callable")
+    __call__ = evaluate_numeric
 
     def scaled_by(self, coefficient: Coefficient):
-        if callable(self.coefficient) or callable(coefficient):
-            if isinstance(self.term, BispectrumTerm3D):
-                def combined(z):
-                    left = _coefficient_value(self.coefficient, z)
-                    right = _coefficient_value(coefficient, z)
-                    return left * right
-            else:
-                def combined():
-                    left = _coefficient_value(self.coefficient)
-                    right = _coefficient_value(coefficient)
-                    return left * right
-        else:
-            combined = self.coefficient * coefficient
-        return WeightedTerm(combined, self.term)
+        return WeightedTerm2D(coefficient=coefficient, term=self)
 
     def __mul__(self, coefficient: Coefficient):
         return self.scaled_by(coefficient)
@@ -156,62 +147,31 @@ class WeightedTerm:
         return self.scaled_by(coefficient)
 
     def __add__(self, other):
-        return CompositeBispectrum.from_components(self, other)
-
-    def evaluate(self, *args, **params):
-        if isinstance(self.term, BispectrumTerm3D):
-            if len(args) < 4:
-                raise TypeError("3D weighted-term evaluation requires k1, k2, k3, z")
-            z = args[3]
-            coefficient = _coefficient_value(self.coefficient, z)
-        else:
-            coefficient = _coefficient_value(self.coefficient)
-        return coefficient * self.term.evaluate(*args, **params)
-
-    __call__ = evaluate
+        from .bispectrum import Bispectrum2D
+        return Bispectrum2D.from_components(self, other)
 
 
 @dataclass(frozen=True)
-class CompositeBispectrum:
-    """An immutable, flat linear combination of weighted leaf terms."""
-
-    weighted_terms: tuple[WeightedTerm, ...]
+class WeightedTerm3D:
+    coefficient: Coefficient
+    term: BispectrumTerm3D
 
     def __post_init__(self):
-        weighted_terms = tuple(self.weighted_terms)
-        if not weighted_terms:
-            raise ValueError("a composite bispectrum must contain at least one term")
-        dimensions = {type(item.term) for item in weighted_terms}
-        if len(dimensions) != 1:
-            raise TypeError("2D and 3D bispectrum terms cannot be combined")
-        object.__setattr__(self, "weighted_terms", weighted_terms)
+        if not isinstance(self.term, BispectrumTerm3D):
+            raise TypeError("term must be a BispectrumTerm3D")
+        if not callable(self.coefficient) and not isinstance(self.coefficient, Number):
+            raise TypeError("coefficient must be numeric or callable as coefficient(z)")
 
-    @classmethod
-    def from_components(cls, *components):
-        weighted_terms = []
-        for component in components:
-            if isinstance(component, cls):
-                weighted_terms.extend(component.weighted_terms)
-            elif isinstance(component, WeightedTerm):
-                weighted_terms.append(component)
-            elif isinstance(component, _BispectrumTerm):
-                weighted_terms.append(WeightedTerm(1.0, component))
-            else:
-                raise TypeError(
-                    "components must be bispectrum terms, weighted terms, or composites"
-                )
-        return cls(tuple(weighted_terms))
+    def evaluate_numeric(self, k1, k2, k3, z, **params):
+        coefficient = _coefficient_value(self.coefficient, z)
+        return coefficient * self.term.evaluate_numeric(k1, k2, k3, z, **params)
 
-    def iter_terms(self):
-        return iter(self.weighted_terms)
-
-    @property
-    def terms(self):
-        return tuple(item.term for item in self.weighted_terms)
+    __call__ = evaluate_numeric
 
     def scaled_by(self, coefficient: Coefficient):
-        return CompositeBispectrum(
-            tuple(item.scaled_by(coefficient) for item in self.weighted_terms)
+        return WeightedTerm3D(
+            _combined_coefficient(self.coefficient, coefficient, is_3d=True),
+            self.term,
         )
 
     def __mul__(self, coefficient: Coefficient):
@@ -221,9 +181,39 @@ class CompositeBispectrum:
         return self.scaled_by(coefficient)
 
     def __add__(self, other):
-        return CompositeBispectrum.from_components(self, other)
+        from .bispectrum import Bispectrum3D
+        return Bispectrum3D.from_components(self, other)
 
-    def evaluate(self, *args, **params):
-        return sum(item.evaluate(*args, **params) for item in self.weighted_terms)
 
-    __call__ = evaluate
+@dataclass(frozen=True)
+class WeightedTerm2D:
+    coefficient: Coefficient
+    term: BispectrumTerm2D
+
+    def __post_init__(self):
+        if not isinstance(self.term, BispectrumTerm2D):
+            raise TypeError("term must be a BispectrumTerm2D")
+        if not callable(self.coefficient) and not isinstance(self.coefficient, Number):
+            raise TypeError("coefficient must be numeric or callable with no arguments")
+
+    def evaluate_numeric(self, ell1, ell2, ell3, **params):
+        coefficient = _coefficient_value(self.coefficient)
+        return coefficient * self.term.evaluate_numeric(ell1, ell2, ell3, **params)
+
+    __call__ = evaluate_numeric
+
+    def scaled_by(self, coefficient: Coefficient):
+        return WeightedTerm2D(
+            _combined_coefficient(self.coefficient, coefficient, is_3d=False),
+            self.term,
+        )
+
+    def __mul__(self, coefficient: Coefficient):
+        return self.scaled_by(coefficient)
+
+    def __rmul__(self, coefficient: Coefficient):
+        return self.scaled_by(coefficient)
+
+    def __add__(self, other):
+        from .bispectrum import Bispectrum2D
+        return Bispectrum2D.from_components(self, other)

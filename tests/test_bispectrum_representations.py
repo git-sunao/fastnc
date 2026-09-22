@@ -5,12 +5,16 @@ import numpy as np
 from fastnc.bispectrum import (
     BispectrumTerm2D,
     BispectrumTerm3D,
-    CompositeBispectrum,
+    Bispectrum2D,
+    Bispectrum3D,
+    BiHalofitBispectrum3D,
+    NFWOneHaloBispectrum3D,
     NumericExpression2D,
     NumericExpression3D,
+    SPTGalaxyBispectrum3D,
     SPTMatterBispectrum3D,
 )
-from fastnc.bispectrum.spt import _pair_cosine, f2_kernel
+from fastnc.bispectrum.spt import _pair_cosine, f2_kernel, tidal_kernel
 
 
 class BispectrumRepresentationTests(unittest.TestCase):
@@ -62,10 +66,10 @@ class BispectrumRepresentationTests(unittest.TestCase):
             (NumericExpression3D(lambda k1, k2, k3, z: np.asarray(k2)),),
         )
         composite = 2.0 * first + (lambda z: 1.0 + z) * second
-        self.assertIsInstance(composite, CompositeBispectrum)
+        self.assertIsInstance(composite, Bispectrum3D)
         self.assertEqual(len(first.representations), 1)
         np.testing.assert_allclose(
-            composite.evaluate(np.array([1.0, 2.0]), 3.0, 4.0, 0.5),
+            composite.evaluate_numeric(np.array([1.0, 2.0]), 3.0, 4.0, 0.5),
             np.array([6.5, 8.5]),
         )
         self.assertEqual(
@@ -84,6 +88,19 @@ class BispectrumRepresentationTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(TypeError, "2D and 3D"):
             _ = term3d + term2d
+
+    def test_native_2d_terms_form_a_typed_aggregate(self):
+        first = BispectrumTerm2D(
+            "first-2d",
+            (NumericExpression2D(lambda ell1, ell2, ell3: np.asarray(ell1)),),
+        )
+        second = BispectrumTerm2D(
+            "second-2d",
+            (NumericExpression2D(lambda ell1, ell2, ell3: np.asarray(ell2)),),
+        )
+        b2d = first + 2.0 * second
+        self.assertIsInstance(b2d, Bispectrum2D)
+        np.testing.assert_allclose(b2d([1.0, 2.0], 3.0, 4.0), [7.0, 8.0])
 
 
 class SPTMatterTermTests(unittest.TestCase):
@@ -127,8 +144,10 @@ class SPTMatterTermTests(unittest.TestCase):
     def test_state_update_is_seen_by_existing_terms(self):
         model = SPTMatterBispectrum3D(self.linear_power)
         terms_before = model.terms
+        selected = model.select_terms("tree:F2:12")
         value_before = model.evaluate(0.7, 1.1, 1.3, 0.4)
         revision_before = model.state_revision
+        token_before = selected.state_token
 
         model.update_physics(
             linear_power=lambda k, z: 2.0 * self.linear_power(k, z)
@@ -136,9 +155,89 @@ class SPTMatterTermTests(unittest.TestCase):
 
         self.assertIs(model.terms, terms_before)
         self.assertEqual(model.state_revision, revision_before + 1)
+        self.assertNotEqual(selected.state_token, token_before)
         np.testing.assert_allclose(
             model.evaluate(0.7, 1.1, 1.3, 0.4),
             4.0 * value_before,
+        )
+
+
+class MigratedPhysicalModelTests(unittest.TestCase):
+    @staticmethod
+    def linear_power(k, z):
+        return np.asarray(k) ** -0.75 / (1.0 + np.asarray(z)) ** 2
+
+    def test_spt_galaxy_terms_reproduce_direct_formula(self):
+        b1, b2, bK2 = 1.7, 0.4, -0.2
+        model = SPTGalaxyBispectrum3D(
+            self.linear_power,
+            b1=b1,
+            b2=b2,
+            bK2=bK2,
+        )
+        k1, k2, k3, z = 0.7, 1.1, 1.3, 0.4
+        p1 = self.linear_power(k1, z)
+        p2 = self.linear_power(k2, z)
+        p3 = self.linear_power(k3, z)
+        mu12 = _pair_cosine(k1, k2, k3)
+        mu23 = _pair_cosine(k2, k3, k1)
+        mu31 = _pair_cosine(k3, k1, k2)
+        tree = (
+            2.0 * f2_kernel(k1, k2, mu12) * p1 * p2
+            + 2.0 * f2_kernel(k2, k3, mu23) * p2 * p3
+            + 2.0 * f2_kernel(k3, k1, mu31) * p3 * p1
+        )
+        quadratic = p1 * p2 + p2 * p3 + p3 * p1
+        tidal = (
+            tidal_kernel(mu12) * p1 * p2
+            + tidal_kernel(mu23) * p2 * p3
+            + tidal_kernel(mu31) * p3 * p1
+        )
+        expected = (
+            b1**3 * tree
+            + b1**2 * b2 * quadratic
+            + 2.0 * b1**2 * bK2 * tidal
+        )
+        np.testing.assert_allclose(model(k1, k2, k3, z), expected)
+        self.assertEqual(len(model.terms), 9)
+
+    def test_one_halo_is_one_weighted_product_term(self):
+        model = NFWOneHaloBispectrum3D(
+            k_s=0.8,
+            slope=2.0,
+            amplitude_power=1.5,
+            redshift_scaling=0.3,
+            amplitude=lambda z: 2.0 + z,
+        )
+        triangle = (0.4, 0.8, 1.2, 0.5)
+        expected = (2.0 + triangle[3]) * np.prod(
+            [model.profile(k, triangle[3]) for k in triangle[:3]]
+        )
+        np.testing.assert_allclose(model(*triangle), expected)
+        self.assertEqual([term.name for term in model.terms], ["one-halo:product"])
+        token = model.state_token
+        model.update_physics(amplitude=3.0)
+        self.assertNotEqual(model.state_token, token)
+        np.testing.assert_allclose(
+            model(*triangle),
+            3.0 * np.prod([model.profile(k, triangle[3]) for k in triangle[:3]]),
+        )
+
+    def test_bihalofit_terms_reproduce_direct_halofit_evaluation(self):
+        model = BiHalofitBispectrum3D.simple_debug(
+            k=np.logspace(-3, 1, 128),
+            z=np.linspace(0.0, 1.0, 32),
+        )
+        k1 = np.array([0.1, 0.2])
+        k2 = np.array([0.15, 0.25])
+        k3 = np.array([0.2, 0.3])
+        z = np.array([0.3, 0.5])
+        expected = model.halofit.get_bihalofit(k1, k2, k3, z)
+        np.testing.assert_allclose(model(k1, k2, k3, z), expected, rtol=1.0e-13)
+        np.testing.assert_allclose(
+            model.select_terms("bihalofit:Bh1")(k1, k2, k3, z),
+            model.halofit.get_bihalofit(k1, k2, k3, z, which="Bh1"),
+            rtol=1.0e-13,
         )
 
 

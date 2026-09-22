@@ -10,10 +10,10 @@ from typing import Callable, Mapping
 
 import numpy as np
 
-from .base import Bispectrum3D
+from .bispectrum import Bispectrum3D
 from .representations import NumericExpression3D
 from .support import Support3D
-from .terms import BispectrumTerm3D
+from .terms import BispectrumTerm3D, WeightedTerm3D
 from fastnc.utils.cosmology import (
     default_wmap_like_cosmology,
     eisenstein_hu_like_pklin,
@@ -119,9 +119,7 @@ class SPTMatterBispectrum3D(Bispectrum3D):
         if not callable(linear_power):
             raise TypeError("linear_power must be callable as linear_power(k, z)")
         self.linear_power = linear_power
-        self.support = support or Support3D(policy="ignore")
-        self._state_revision = 0
-        self._terms = (
+        terms = (
             BispectrumTerm3D(
                 name="tree:F2:12",
                 representations=(NumericExpression3D(self._evaluate_12),),
@@ -135,17 +133,7 @@ class SPTMatterBispectrum3D(Bispectrum3D):
                 representations=(NumericExpression3D(self._evaluate_31),),
             ),
         )
-
-    @property
-    def terms(self) -> tuple[BispectrumTerm3D, ...]:
-        return self._terms
-
-    def iter_terms(self):
-        return iter(self._terms)
-
-    @property
-    def state_revision(self) -> int:
-        return self._state_revision
+        super().__init__(terms, support=support)
 
     @classmethod
     def simple_debug(
@@ -202,7 +190,7 @@ class SPTMatterBispectrum3D(Bispectrum3D):
         if not callable(linear_power):
             raise TypeError("linear_power must be callable as linear_power(k, z)")
         self.linear_power = linear_power
-        self._state_revision += 1
+        self._state_updated()
         return self
 
     def _evaluate_pair(self, k_left, k_right, k_closing, z):
@@ -225,10 +213,6 @@ class SPTMatterBispectrum3D(Bispectrum3D):
 
     def _evaluate_31(self, k1, k2, k3, z, **params):
         return self._evaluate_pair(k3, k1, k2, z)
-
-    def evaluate(self, k1, k2, k3, z, **params):
-        return sum(term.evaluate(k1, k2, k3, z, **params) for term in self._terms)
-
 
 class SPTGalaxyBispectrum3D(Bispectrum3D):
     r"""Direct tree-level real-space galaxy bispectrum in SPT.
@@ -287,7 +271,50 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
         self.b1 = b1
         self.b2 = b2
         self.bK2 = bK2
-        self.support = support or Support3D(policy="ignore")
+        terms = []
+        for pair, evaluator in (
+            ("12", self._evaluate_tree_12),
+            ("23", self._evaluate_tree_23),
+            ("31", self._evaluate_tree_31),
+        ):
+            terms.append(
+                WeightedTerm3D(
+                    coefficient=self._tree_coefficient,
+                    term=BispectrumTerm3D(
+                        name=f"tree:F2:{pair}",
+                        representations=(NumericExpression3D(evaluator),),
+                    ),
+                )
+            )
+        for pair, evaluator in (
+            ("12", self._evaluate_quadratic_12),
+            ("23", self._evaluate_quadratic_23),
+            ("31", self._evaluate_quadratic_31),
+        ):
+            terms.append(
+                WeightedTerm3D(
+                    coefficient=self._quadratic_coefficient,
+                    term=BispectrumTerm3D(
+                        name=f"bias:quadratic:{pair}",
+                        representations=(NumericExpression3D(evaluator),),
+                    ),
+                )
+            )
+        for pair, evaluator in (
+            ("12", self._evaluate_tidal_12),
+            ("23", self._evaluate_tidal_23),
+            ("31", self._evaluate_tidal_31),
+        ):
+            terms.append(
+                WeightedTerm3D(
+                    coefficient=self._tidal_coefficient,
+                    term=BispectrumTerm3D(
+                        name=f"bias:tidal:{pair}",
+                        representations=(NumericExpression3D(evaluator),),
+                    ),
+                )
+            )
+        super().__init__(terms, support=support)
 
     @classmethod
     def simple_debug(
@@ -335,49 +362,74 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
         bK2=None,
     ):
         """Update the power spectrum and/or galaxy-bias parameters in-place."""
+        changed = False
         if linear_power is not None:
             if not callable(linear_power):
                 raise TypeError("linear_power must be callable as linear_power(k, z)")
             self.linear_power = linear_power
+            changed = True
         if b1 is not None:
             self.b1 = b1
+            changed = True
         if b2 is not None:
             self.b2 = b2
+            changed = True
         if bK2 is not None:
             self.bK2 = bK2
+            changed = True
+        if changed:
+            self._state_updated()
         return self
 
-    def evaluate(self, k1, k2, k3, z, **params):
-        k1 = np.asarray(k1, dtype=float)
-        k2 = np.asarray(k2, dtype=float)
-        k3 = np.asarray(k3, dtype=float)
+    def _tree_coefficient(self, z):
+        b1 = _value_at_z(self.b1, z)
+        return b1**3
 
-        p1 = self.linear_power(k1, z)
-        p2 = self.linear_power(k2, z)
-        p3 = self.linear_power(k3, z)
-
-        mu12 = _pair_cosine(k1, k2, k3)
-        mu23 = _pair_cosine(k2, k3, k1)
-        mu31 = _pair_cosine(k3, k1, k2)
-
-        tree = (
-            2.0 * f2_kernel(k1, k2, mu12) * p1 * p2
-            + 2.0 * f2_kernel(k2, k3, mu23) * p2 * p3
-            + 2.0 * f2_kernel(k3, k1, mu31) * p3 * p1
-        )
-        quadratic = p1 * p2 + p2 * p3 + p3 * p1
-        tidal = (
-            tidal_kernel(mu12) * p1 * p2
-            + tidal_kernel(mu23) * p2 * p3
-            + tidal_kernel(mu31) * p3 * p1
-        )
-
+    def _quadratic_coefficient(self, z):
         b1 = _value_at_z(self.b1, z)
         b2 = _value_at_z(self.b2, z)
-        bK2 = _value_at_z(self.bK2, z)
+        return b1**2 * b2
 
-        return (
-            b1**3 * tree
-            + b1**2 * b2 * quadratic
-            + 2.0 * b1**2 * bK2 * tidal
-        )
+    def _tidal_coefficient(self, z):
+        b1 = _value_at_z(self.b1, z)
+        bK2 = _value_at_z(self.bK2, z)
+        return 2.0 * b1**2 * bK2
+
+    def _evaluate_pair(self, kind, k_left, k_right, k_closing, z):
+        k_left = np.asarray(k_left, dtype=float)
+        k_right = np.asarray(k_right, dtype=float)
+        k_closing = np.asarray(k_closing, dtype=float)
+        product = self.linear_power(k_left, z) * self.linear_power(k_right, z)
+        if kind == "quadratic":
+            return product
+        mu = _pair_cosine(k_left, k_right, k_closing)
+        if kind == "tree":
+            return 2.0 * f2_kernel(k_left, k_right, mu) * product
+        return tidal_kernel(mu) * product
+
+    def _evaluate_tree_12(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("tree", k1, k2, k3, z)
+
+    def _evaluate_tree_23(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("tree", k2, k3, k1, z)
+
+    def _evaluate_tree_31(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("tree", k3, k1, k2, z)
+
+    def _evaluate_quadratic_12(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("quadratic", k1, k2, k3, z)
+
+    def _evaluate_quadratic_23(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("quadratic", k2, k3, k1, z)
+
+    def _evaluate_quadratic_31(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("quadratic", k3, k1, k2, z)
+
+    def _evaluate_tidal_12(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("tidal", k1, k2, k3, z)
+
+    def _evaluate_tidal_23(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("tidal", k2, k3, k1, z)
+
+    def _evaluate_tidal_31(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair("tidal", k3, k1, k2, z)
