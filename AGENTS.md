@@ -30,3 +30,9 @@ duplicate its detailed design in `AGENTS.md`. If an implementation requires a
 change to an agreed architectural decision, update the design document first
 and explain the proposed change to the maintainer before changing the
 architecture.
+
+The directory `legacy/bispectrum_object_api/` is a non-importable reference
+archive for the retired bispectrum object graph and the unfinished,
+unvalidated semi-analytic implementation. Active code must never import from
+that directory. Recover a useful numerical component only by extracting it
+into the active architecture and adding an independent test for its contract.

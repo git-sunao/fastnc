@@ -1,8 +1,4 @@
-"""Direct 3D BiHalofit bispectrum model.
-
-This module adapts the bundled :class:`Halofit` implementation to the
-:class:`Bispectrum3D` interface.
-"""
+"""Direct 3D BiHalofit term aggregate."""
 from __future__ import annotations
 
 from functools import partial
@@ -10,38 +6,17 @@ from typing import Mapping
 
 import numpy as np
 
-from .bispectrum import Bispectrum3D
-from .representations import NumericExpression3D
-from .support import Support3D
-from .terms import BispectrumTerm3D
-from .halofit import Halofit
-from .analytic import (
-    BiHalofitBispectrumMultipole3D,
-    PowerLawAngularKernelTableConfig,
-)
-from fastnc.hankel.wrapper import PowerLawFFTLogConfig
+from ..bispectrum import Bispectrum3D
+from ..halofit import Halofit
+from ..representations import NumericExpression3D
+from ..support import Support3D
+from ..terms import BispectrumTerm3D
 from fastnc.utils.cosmology import (
     default_wmap_like_cosmology,
     eisenstein_hu_like_pklin,
     simple_debug_pklin,
     simple_linear_growth,
 )
-
-
-def _normalize_bihalofit_terms(which):
-    """Validate and canonicalize a BiHalofit term selection."""
-    if isinstance(which, str):
-        which = (which,)
-    else:
-        which = tuple(which)
-    valid = {"Bh1", "Bh3"}
-    invalid = set(which) - valid
-    if invalid:
-        raise ValueError(f"Unknown BiHalofit term(s): {sorted(invalid)}")
-    if not which:
-        raise ValueError("Select at least one of 'Bh1' or 'Bh3'.")
-    return tuple(term for term in ("Bh1", "Bh3") if term in which)
-
 
 class BiHalofitBispectrum3D(Bispectrum3D):
     """Wrapper for the bundled :class:`Halofit` / Bihalofit model.
@@ -224,56 +199,3 @@ class BiHalofitBispectrum3D(Bispectrum3D):
                 "the legacy which parameter"
             )
         return self.halofit.get_bihalofit(k1, k2, k3, z, which=name, **params)
-
-    def fourier_multipole(
-        self,
-        *,
-        r1: float = 0.5,
-        r2: float = 0.0,
-        k_grid=None,
-        fftlog_config: PowerLawFFTLogConfig | None = None,
-        angular_kernel_config: PowerLawAngularKernelTableConfig | None = None,
-    ):
-        """Return semi-analytic multipoles of the complete BiHalofit model.
-
-        The one-halo fitting shape parameters are fixed to ``r1`` and ``r2``,
-        making the one-halo product separable.  The complete three-halo term
-        is included in the same composite object.
-        """
-        if not self.ready:
-            raise RuntimeError("Configure cosmology, pklin, and growth first.")
-        return BiHalofitBispectrumMultipole3D(
-            self.halofit,
-            r1=r1,
-            r2=r2,
-            k_grid=k_grid,
-            fftlog_config=fftlog_config,
-            angular_kernel_config=angular_kernel_config,
-        )
-
-    def projected_fourier_multipole(
-        self,
-        projector,
-        *,
-        sample_combination=None,
-        modes=None,
-        mode_max=None,
-        r1: float = 0.5,
-        r2: float = 0.0,
-        k_grid=None,
-        fftlog_config: PowerLawFFTLogConfig | None = None,
-        angular_kernel_config: PowerLawAngularKernelTableConfig | None = None,
-    ):
-        """Return the coefficient-level LOS projection of the multipoles."""
-        return self.fourier_multipole(
-            r1=r1,
-            r2=r2,
-            k_grid=k_grid,
-            fftlog_config=fftlog_config,
-            angular_kernel_config=angular_kernel_config,
-        ).project_los(
-            projector,
-            sample_combination=sample_combination,
-            modes=modes,
-            mode_max=mode_max,
-        )

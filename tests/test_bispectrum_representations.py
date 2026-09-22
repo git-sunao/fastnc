@@ -14,7 +14,7 @@ from fastnc.bispectrum import (
     SPTGalaxyBispectrum3D,
     SPTMatterBispectrum3D,
 )
-from fastnc.bispectrum.spt import _pair_cosine, f2_kernel, tidal_kernel
+from fastnc.bispectrum.models.spt import _pair_cosine, f2_kernel, tidal_kernel
 
 
 class BispectrumRepresentationTests(unittest.TestCase):

@@ -391,6 +391,8 @@ fastnc/bispectrum/
     terms.py            # indivisible terms and typed weighted terms
     representations.py  # alternative mathematical descriptions of a term
     support.py           # domain/support value types
+    decompose.py         # standalone angular basis definitions
+    halofit.py           # standalone Halofit/BiHalofit numerical model
     models/              # SPT, BiHalofit, one-halo, and later models
 ```
 
@@ -414,6 +416,14 @@ state. Their numeric evaluation is the sum of the selected numeric
 representations. SPT, one-halo, and BiHalofit models must be migrated to this
 structure before new Slepian model classes are added.
 
+The old object graph is stored under `legacy/bispectrum_object_api/`. This is
+a non-importable reference archive, not a compatibility layer. It contains the
+former evaluator bases and wrappers, the unfinished and unvalidated
+`bispectrum/analytic` implementation, and the old high-level `ThreePCF` API.
+Active modules must not import from the archive. A useful numerical component
+returns to active code only after it is extracted behind the new dependency
+boundary and independently tested.
+
 ## Disposition of existing modules
 
 Existing files are not kept or deleted as indivisible units. Pure mathematical
@@ -428,14 +438,16 @@ bispectrum object graph are replaced.
   Callers coupled to old bispectrum or multipole objects are not part of the
   retained interface.
 - Coordinate transforms, grid preparation, packing, and interpolation kernels
-  in `interpolate.py` should be extracted as array-based functions. The old
-  interpolated bispectrum wrappers should not define the new architecture.
+  in the archived `interpolate.py` may later be extracted as array-based
+  functions. The old interpolated bispectrum wrappers do not define the new
+  architecture.
 - Angular sampling, quadrature, basis normalization, and array-shape logic in
-  `multipole.py` should be extracted into calculators or pure kernels. Lazy
-  multipole wrappers, Grid/calculator mixing, and direct dependencies on
-  `Bispectrum2D` should be retired after equivalence tests pass.
-- The mathematical regulator in `regulator.py` is reusable, but regulator
-  selection belongs to the numeric route rather than to a bispectrum model.
+  the archived `multipole.py` may later be extracted into calculators or pure
+  kernels. Lazy multipole wrappers, Grid/calculator mixing, and direct
+  dependencies on `Bispectrum2D` are retired.
+- The mathematical regulator in the archived `regulator.py` is potentially
+  reusable, but regulator selection belongs to the numeric route rather than
+  to a bispectrum model.
 - LOS geometry, windows, and quadrature are projection concerns and move out
   of `bispectrum/`. Route-independent projection kernels belong in a projection
   package. Numeric node evaluation, Mellin-coefficient integration, and other
@@ -458,6 +470,10 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
+As of version `2.0.12`, steps 1--6 below are implemented. The old object graph,
+unfinished semi-analytic package, and old high-level `ThreePCF` entry point are
+in `legacy/bispectrum_object_api/`; they are no longer active imports.
+
 1. Introduce representation value types and weighted term composition without
    changing existing model behavior.
 2. Express a small SPT matter-bispectrum subset as terms and verify that the
@@ -476,14 +492,15 @@ until their reusable kernels and numerical behavior have replacement tests.
    a concrete `Bispectrum2D` object.
 8. Verify that one fixed-z 3D expression and one native 2D expression use the
    same angular multipole kernel.
-9. Adapt existing semi-analytic term classes into `SemiAnalyticExpression`
-   producers while retaining their proven FFTLog and angular-kernel code.
-10. Move LOS code out of `bispectrum/`, split route-independent projection
-   primitives from route-specific assembly, and remove `isinstance` dispatch.
+9. Define and validate `SemiAnalyticExpression` from the mathematics and
+   reference calculations. Do not migrate the archived, unvalidated analytic
+   package wholesale; recover individual kernels only after independent tests.
+10. Extract required LOS primitives from the archive into a projection package,
+   separating route-independent geometry from route-specific assembly.
 11. Refactor the 3PCF workflow and passive Grid storage only after the
    bispectrum representation boundary is stable.
-12. Remove `base.py` and obsolete interpolation/multipole wrappers after all
-   production imports have migrated and numerical-equivalence tests pass.
+12. Keep the retired `base.py` and obsolete interpolation/multipole wrappers
+   only in the non-importable reference archive.
 13. Implement the Slepian and Weber-Schafheitlin route on top of the new
    expression API.
 

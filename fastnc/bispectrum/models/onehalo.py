@@ -5,10 +5,10 @@ from typing import Callable
 
 import numpy as np
 
-from .bispectrum import Bispectrum3D
-from .representations import NumericExpression3D
-from .support import Support3D
-from .terms import BispectrumTerm3D, WeightedTerm3D
+from ..bispectrum import Bispectrum3D
+from ..representations import NumericExpression3D
+from ..support import Support3D
+from ..terms import BispectrumTerm3D, WeightedTerm3D
 
 
 class OneHaloProductBispectrum3D(Bispectrum3D):

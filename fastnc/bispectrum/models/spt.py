@@ -1,8 +1,7 @@
 """Direct standard-perturbation-theory bispectrum models.
 
-This module contains ordinary configuration-space/Fourier-space evaluators of
-SPT bispectra.  It is intentionally separate from :mod:`fastnc.bispectrum.analytic`,
-whose models exploit separability to evaluate bispectrum multipoles directly.
+This module contains direct triangle-space reference implementations expressed
+as typed term aggregates.
 """
 from __future__ import annotations
 
@@ -10,10 +9,10 @@ from typing import Callable, Mapping
 
 import numpy as np
 
-from .bispectrum import Bispectrum3D
-from .representations import NumericExpression3D
-from .support import Support3D
-from .terms import BispectrumTerm3D, WeightedTerm3D
+from ..bispectrum import Bispectrum3D
+from ..representations import NumericExpression3D
+from ..support import Support3D
+from ..terms import BispectrumTerm3D, WeightedTerm3D
 from fastnc.utils.cosmology import (
     default_wmap_like_cosmology,
     eisenstein_hu_like_pklin,
