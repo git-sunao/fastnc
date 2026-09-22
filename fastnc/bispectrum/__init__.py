@@ -3,6 +3,19 @@ from .base import (
     Bispectrum3D,
     Bispectrum2D,
 )
+from .representations import (
+    BispectrumRepresentation,
+    BispectrumRepresentation3D,
+    BispectrumRepresentation2D,
+    NumericExpression3D,
+    NumericExpression2D,
+)
+from .terms import (
+    BispectrumTerm3D,
+    BispectrumTerm2D,
+    WeightedTerm,
+    CompositeBispectrum,
+)
 from .los import (
     Kernel1D, KernelSet, BaseLOSIntegrand, LOSProjectorBase, LineOfSightProjector,
     MultipoleLineOfSightProjector,
@@ -44,6 +57,11 @@ __all__ = [
     "Support2D", "Support3D",
     "Bispectrum3D",
     "Bispectrum2D",
+    "BispectrumRepresentation",
+    "BispectrumRepresentation3D", "BispectrumRepresentation2D",
+    "NumericExpression3D", "NumericExpression2D",
+    "BispectrumTerm3D", "BispectrumTerm2D",
+    "WeightedTerm", "CompositeBispectrum",
     "Kernel1D", "KernelSet", "BaseLOSIntegrand", "LOSProjectorBase", "LineOfSightProjector",
     "MultipoleLineOfSightProjector",
     "BispectrumMultipole2DConfig", "BispectrumMultipoleConfig",

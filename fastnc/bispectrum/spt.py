@@ -11,7 +11,9 @@ from typing import Callable, Mapping
 import numpy as np
 
 from .base import Bispectrum3D
+from .representations import NumericExpression3D
 from .support import Support3D
+from .terms import BispectrumTerm3D
 from fastnc.utils.cosmology import (
     default_wmap_like_cosmology,
     eisenstein_hu_like_pklin,
@@ -118,6 +120,32 @@ class SPTMatterBispectrum3D(Bispectrum3D):
             raise TypeError("linear_power must be callable as linear_power(k, z)")
         self.linear_power = linear_power
         self.support = support or Support3D(policy="ignore")
+        self._state_revision = 0
+        self._terms = (
+            BispectrumTerm3D(
+                name="tree:F2:12",
+                representations=(NumericExpression3D(self._evaluate_12),),
+            ),
+            BispectrumTerm3D(
+                name="tree:F2:23",
+                representations=(NumericExpression3D(self._evaluate_23),),
+            ),
+            BispectrumTerm3D(
+                name="tree:F2:31",
+                representations=(NumericExpression3D(self._evaluate_31),),
+            ),
+        )
+
+    @property
+    def terms(self) -> tuple[BispectrumTerm3D, ...]:
+        return self._terms
+
+    def iter_terms(self):
+        return iter(self._terms)
+
+    @property
+    def state_revision(self) -> int:
+        return self._state_revision
 
     @classmethod
     def simple_debug(
@@ -174,25 +202,32 @@ class SPTMatterBispectrum3D(Bispectrum3D):
         if not callable(linear_power):
             raise TypeError("linear_power must be callable as linear_power(k, z)")
         self.linear_power = linear_power
+        self._state_revision += 1
         return self
 
+    def _evaluate_pair(self, k_left, k_right, k_closing, z):
+        k_left = np.asarray(k_left, dtype=float)
+        k_right = np.asarray(k_right, dtype=float)
+        k_closing = np.asarray(k_closing, dtype=float)
+        mu = _pair_cosine(k_left, k_right, k_closing)
+        return (
+            2.0
+            * f2_kernel(k_left, k_right, mu)
+            * self.linear_power(k_left, z)
+            * self.linear_power(k_right, z)
+        )
+
+    def _evaluate_12(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair(k1, k2, k3, z)
+
+    def _evaluate_23(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair(k2, k3, k1, z)
+
+    def _evaluate_31(self, k1, k2, k3, z, **params):
+        return self._evaluate_pair(k3, k1, k2, z)
+
     def evaluate(self, k1, k2, k3, z, **params):
-        k1 = np.asarray(k1, dtype=float)
-        k2 = np.asarray(k2, dtype=float)
-        k3 = np.asarray(k3, dtype=float)
-
-        p1 = self.linear_power(k1, z)
-        p2 = self.linear_power(k2, z)
-        p3 = self.linear_power(k3, z)
-
-        mu12 = _pair_cosine(k1, k2, k3)
-        mu23 = _pair_cosine(k2, k3, k1)
-        mu31 = _pair_cosine(k3, k1, k2)
-
-        b12 = 2.0 * f2_kernel(k1, k2, mu12) * p1 * p2
-        b23 = 2.0 * f2_kernel(k2, k3, mu23) * p2 * p3
-        b31 = 2.0 * f2_kernel(k3, k1, mu31) * p3 * p1
-        return b12 + b23 + b31
+        return sum(term.evaluate(k1, k2, k3, z, **params) for term in self._terms)
 
 
 class SPTGalaxyBispectrum3D(Bispectrum3D):
