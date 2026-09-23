@@ -43,6 +43,12 @@ unvalidated semi-analytic implementation. Active code must never import from
 that directory. Recover a useful numerical component only by extracting it
 into the active architecture and adding an independent test for its contract.
 
+The directory `legacy/threepcf_grid_pipeline/` is also a non-importable
+reference archive. It contains the retired 3PCF prototype in which Grid
+objects performed calculations and managed route state. Active code must not
+import from it. Keep active `fastnc/threepcf` organized into shared
+conventions and explicit route packages; new result/Grid types must be passive.
+
 Line-of-sight kernels and geometry belong in `fastnc/projection`. Algorithms
 that map angular bispectrum representations to 3PCF products belong in
 `fastnc/threepcf/routes/{numeric,slepian,semi_analytic}`. Keep route-independent

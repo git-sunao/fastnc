@@ -13,6 +13,6 @@ from . import threepcf
 
 __all__ = ["bispectrum", "coupling", "hankel", "projection", "threepcf"]
 
-__version__ = "2.0.15"
+__version__ = "2.0.16"
 __author__ = 'Sunao Sugiyama, Rafael Heringer Gomes'
 __url__ = 'https://github.com/git-sunao/fastnc'

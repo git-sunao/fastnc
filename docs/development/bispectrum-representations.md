@@ -462,11 +462,11 @@ fastnc/
     bispectrum/          physical terms, representations, state, and support
     projection/          LOS kernels, geometry, and projection primitives
     threepcf/
+        conventions/     shared spin and projection conventions
         routes/
             numeric/     B2D -> multipoles -> H -> ZetaK -> Zeta
             slepian/     angular Slepian expression -> ZetaK -> Zeta
             semi_analytic/  angular U/V/W expression -> multipoles -> ...
-        *grid.py         transitional result storage to make passive
 ```
 
 The routes are specifically bispectrum-to-3PCF algorithms and therefore live
@@ -492,12 +492,16 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.15`, steps 1--8 below are implemented. The old object graph,
-unfinished semi-analytic package, and old high-level `ThreePCF` entry point are
-in `legacy/bispectrum_object_api/`; they are no longer active imports.
+As of version `2.0.16`, steps 1--8 below are implemented. The old bispectrum
+object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
+entry point are in `legacy/bispectrum_object_api/`. The computing Grid
+pipeline formerly under `fastnc/threepcf` is in
+`legacy/threepcf_grid_pipeline/`. Neither archive is an active import.
 Route-independent projection primitives have been extracted into
 `fastnc/projection`, and the new route ownership exists under
-`fastnc/threepcf/routes`. No Slepian or semi-analytic route is implemented yet.
+`fastnc/threepcf/routes`. Shared spin and output-projection conventions live
+under `fastnc/threepcf/conventions`. No Slepian or semi-analytic route is
+implemented yet.
 
 1. Introduce representation value types and weighted term composition without
    changing existing model behavior.
