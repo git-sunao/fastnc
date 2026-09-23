@@ -221,47 +221,42 @@ class InterpolatedNumericRepresentation2D(NumericRepresentation2D):
     __call__ = evaluate
 
 
-class NumericInterpolation2D:
-    """Build term-wise interpolated numeric representations."""
+def interpolate_numeric(bispectrum, config, *, prepare=True):
+    """Return a new bispectrum with each numeric representation interpolated."""
+    if not isinstance(bispectrum, Bispectrum2D):
+        raise TypeError("bispectrum must be a Bispectrum2D")
+    if not isinstance(config, TriangleInterpolationConfig):
+        raise TypeError("config must be a TriangleInterpolationConfig")
 
-    def __init__(self, config: TriangleInterpolationConfig):
-        if not isinstance(config, TriangleInterpolationConfig):
-            raise TypeError("config must be a TriangleInterpolationConfig")
-        self.config = config
-
-    def build(self, bispectrum, *, prepare=True):
-        if not isinstance(bispectrum, Bispectrum2D):
-            raise TypeError("bispectrum must be a Bispectrum2D")
-
-        output_terms = []
-        interpolated = []
-        for weighted_term in bispectrum.weighted_terms:
-            representations = []
-            for representation in weighted_term.term.representations:
-                if isinstance(representation, NumericRepresentation2D):
-                    replacement = InterpolatedNumericRepresentation2D(
-                        source_term=weighted_term.term,
-                        source_representation=representation,
-                        config=self.config,
-                        source_state_token=lambda source=bispectrum: source.state_token,
-                    )
-                    representations.append(replacement)
-                    interpolated.append(replacement)
-                else:
-                    representations.append(representation)
-            term = BispectrumTerm2D(
-                name=weighted_term.term.name,
-                representations=tuple(representations),
-            )
-            output_terms.append(term.scaled_by(weighted_term.coefficient))
-
-        if not interpolated:
-            raise LookupError("bispectrum has no numeric 2D representations")
-        if prepare:
-            for representation in interpolated:
-                representation.prepare()
-        return Bispectrum2D(
-            output_terms,
-            support=bispectrum.support,
-            _revision_sources=(lambda: bispectrum.state_token,),
+    output_terms = []
+    interpolated = []
+    for weighted_term in bispectrum.weighted_terms:
+        representations = []
+        for representation in weighted_term.term.representations:
+            if isinstance(representation, NumericRepresentation2D):
+                replacement = InterpolatedNumericRepresentation2D(
+                    source_term=weighted_term.term,
+                    source_representation=representation,
+                    config=config,
+                    source_state_token=lambda source=bispectrum: source.state_token,
+                )
+                representations.append(replacement)
+                interpolated.append(replacement)
+            else:
+                representations.append(representation)
+        term = BispectrumTerm2D(
+            name=weighted_term.term.name,
+            representations=tuple(representations),
         )
+        output_terms.append(term.scaled_by(weighted_term.coefficient))
+
+    if not interpolated:
+        raise LookupError("bispectrum has no numeric 2D representations")
+    if prepare:
+        for representation in interpolated:
+            representation.prepare()
+    return Bispectrum2D(
+        output_terms,
+        support=bispectrum.support,
+        _revision_sources=(lambda: bispectrum.state_token,),
+    )

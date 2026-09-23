@@ -298,12 +298,32 @@ route without sampling invalid triples of side lengths. Values are
 interpolated linearly by default; logarithmic interpolation of the bispectrum
 value is not assumed because terms may change sign.
 
-`NumericInterpolation2D.build(b2d)` replaces each numeric term representation
-with an interpolated representation while preserving term names, term
-coefficients, non-numeric representations, and the `Bispectrum2D` interface.
-It builds term-level caches by default. Grouped or total-bispectrum caches may
-be added later as an explicit optimization; they must not silently erase the
-source term decomposition.
+`b2d.interpolate(config)` returns a new `Bispectrum2D` in which each numeric
+term representation is replaced by an interpolated representation. It does
+not mutate the source bispectrum or append a second numeric capability to the
+same term. The exact source remains available through
+`InterpolatedNumericRepresentation2D.source_representation`; term names,
+coefficients, non-numeric representations, and the `Bispectrum2D` interface
+are preserved. Term-level caches are built by default.
+
+Multiple terms can share one interpolation table by composing them before
+interpolation:
+
+```python
+b_grouped = b2d.combine_numeric_terms(
+    name="combined",
+    terms=("term1", "term2"),
+)
+b_interpolated = b_grouped.interpolate(config)
+```
+
+The combined term contains a `NumericSumRepresentation2D` whose components
+are the original coefficient-bearing terms. It intentionally exposes only a
+numeric representation: combining route-specific single-form expressions is
+not assumed to preserve their Slepian or semi-analytic structure. Unselected
+terms remain separate unless `keep_unselected=False` is requested. This keeps
+grouping independent from interpolation and makes any loss of route-specific
+representations explicit.
 
 Each representation owns a mutable private cache slot containing an immutable
 `TriangleInterpolationCache`. The cache stores the axes, sampled values,
@@ -568,7 +588,7 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.22`, steps 1--8 below are implemented. The old bispectrum
+As of version `2.0.23`, steps 1--8 below are implemented. The old bispectrum
 object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
 entry point are in `legacy/bispectrum_object_api/`. The computing Grid
 pipeline formerly under `fastnc/threepcf` is in
@@ -609,8 +629,9 @@ implemented yet.
 13. Implement the Slepian and Weber-Schafheitlin route on top of the new
    expression API.
 
-Term-wise in-memory numeric 2D interpolation is implemented. Grouped
-interpolation and persistent disk-cache design remain later optimizations.
+Term-wise in-memory numeric 2D interpolation and explicit numeric term
+composition are implemented. Automatic grouping policies and persistent
+disk-cache design remain later optimizations.
 
 ## Required tests
 

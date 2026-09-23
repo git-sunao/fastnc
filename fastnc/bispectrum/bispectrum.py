@@ -215,6 +215,29 @@ class Bispectrum2D:
     def _state_updated(self):
         self._state_revision += 1
 
+    def interpolate(self, config, *, prepare=True):
+        """Return a term-wise numerically interpolated bispectrum."""
+        from .interpolation import interpolate_numeric
+
+        return interpolate_numeric(self, config, prepare=prepare)
+
+    def combine_numeric_terms(
+        self,
+        *,
+        name: str,
+        terms,
+        keep_unselected: bool = True,
+    ):
+        """Return a bispectrum with selected terms replaced by their sum."""
+        from .composition import combine_numeric_terms
+
+        return combine_numeric_terms(
+            self,
+            name=name,
+            terms=terms,
+            keep_unselected=keep_unselected,
+        )
+
     def evaluate_numeric(self, ell1, ell2, ell3, **params):
         return sum(
             item.evaluate_numeric(ell1, ell2, ell3, **params)

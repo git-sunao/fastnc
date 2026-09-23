@@ -9,9 +9,9 @@ from .decompose import (
     MultipoleSine,
 )
 from .halofit import Halofit
+from .composition import NumericSumRepresentation2D
 from .interpolation import (
     InterpolatedNumericRepresentation2D,
-    NumericInterpolation2D,
     TriangleInterpolationCache,
     TriangleInterpolationConfig,
 )
@@ -60,7 +60,7 @@ __all__ = [
     "NFWOneHaloBispectrum3D",
     "NumericExpression2D",
     "NumericExpression3D",
-    "NumericInterpolation2D",
+    "NumericSumRepresentation2D",
     "NumericRepresentation2D",
     "NumericRepresentation3D",
     "OneHaloProductBispectrum3D",
