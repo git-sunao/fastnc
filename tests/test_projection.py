@@ -96,13 +96,21 @@ class ProjectionPrimitiveTests(unittest.TestCase):
         expected_weight = (1.0 + self.z) / self.chi * kernels.product(
             ("source",), self.chi
         )
-        np.testing.assert_allclose(projector.weight(), expected_weight)
+        np.testing.assert_allclose(
+            projector.weight(),
+            (1.0 + self.z) / self.chi,
+        )
+        np.testing.assert_allclose(
+            projector.weight(("source",)),
+            expected_weight,
+        )
         np.testing.assert_allclose(
             projector.project_numeric(
                 evaluator,
                 2.0,
                 3.0,
                 4.0,
+                sample_combination=("source",),
                 amplitude=2.0,
             ),
             integrate_numeric_los(sampled, self.chi, weight=expected_weight),
@@ -121,9 +129,57 @@ class ProjectionPrimitiveTests(unittest.TestCase):
             ),
         )
 
-    def test_projector_uses_explicit_unity_weight_by_default(self):
+    def test_projector_uses_chi_minus_four_by_default(self):
         projector = LOSProjector(self.z, self.chi)
+        np.testing.assert_allclose(projector.weight(), self.chi**-4)
+
+    def test_projector_accepts_explicit_unity_prefactor(self):
+        projector = LOSProjector(self.z, self.chi, prefactor=1.0)
         np.testing.assert_allclose(projector.weight(), np.ones_like(self.chi))
+
+    def test_delta_like_kernel_product_is_normalized_at_requested_power(self):
+        kernels = KernelSet.delta_like(
+            z=0.5,
+            chi=1000.0,
+            width=20.0,
+            power=3,
+        )
+        kernel = kernels["delta"]
+        product = kernels.product(("delta", "delta", "delta"), kernel.chi)
+        self.assertAlmostEqual(np.trapezoid(product, kernel.chi), 1.0)
+        projector = LOSProjector(
+            kernel.z,
+            kernel.chi,
+            kernels=kernels,
+            prefactor=1.0,
+        )
+        np.testing.assert_allclose(
+            projector.weight(("delta", "delta", "delta")),
+            product,
+        )
+
+    def test_kernel_factories_preserve_v2_nz_and_lensing_conventions(self):
+        nz = np.array([1.0, 2.0, 1.0])
+        normalized_nz = nz / np.trapezoid(nz, self.z)
+        n_chi = RadialKernel.from_nz(
+            self.z,
+            self.chi,
+            nz,
+            name="source",
+        )
+        np.testing.assert_allclose(
+            n_chi.weight,
+            normalized_nz * np.gradient(self.z, self.chi, edge_order=1),
+        )
+
+        lensing = RadialKernel.lensing_from_nz(
+            self.z,
+            self.chi,
+            nz,
+            omega_m=0.3,
+        )
+        self.assertGreater(lensing.weight[0], 0.0)
+        self.assertAlmostEqual(lensing.weight[-1], 0.0)
 
 
 if __name__ == "__main__":

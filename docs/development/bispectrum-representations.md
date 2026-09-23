@@ -482,9 +482,11 @@ nodes, and generic coefficient integration. The projector stores only LOS
 coordinates, kernels, an explicit prefactor, and the angular-to-comoving
 shift. Numeric and coefficient-level methods delegate to independently usable
 pure functions. It does not select representations or routes and does not own
-route caches. The prefactor defaults to unity; conventions such as
-`chi**-4` must be supplied explicitly. The former object-based projectors
-remain archived.
+route caches. Following the version 2 projection convention, the prefactor
+defaults to `chi**-4`; a delta-like fixed-redshift benchmark explicitly uses
+unity. `KernelSet.delta_like(power=3)` supplies one factor whose triple
+product integrates to unity, and the same kernel name is therefore selected
+three times. The former object-based projectors remain archived.
 
 ## Migration from the current package
 
@@ -492,7 +494,7 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.16`, steps 1--8 below are implemented. The old bispectrum
+As of version `2.0.17`, steps 1--8 below are implemented. The old bispectrum
 object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
 entry point are in `legacy/bispectrum_object_api/`. The computing Grid
 pipeline formerly under `fastnc/threepcf` is in

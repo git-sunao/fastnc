@@ -12,7 +12,12 @@ from .kernels import KernelSet
 from .numeric_los import LOSValues, evaluate_numeric_los, integrate_numeric_los
 
 
-LOSPrefactor = float | np.ndarray | Callable[[np.ndarray, np.ndarray], np.ndarray]
+LOSPrefactor = (
+    float
+    | np.ndarray
+    | Callable[[np.ndarray, np.ndarray], np.ndarray]
+    | None
+)
 
 
 @dataclass(frozen=True)
@@ -21,14 +26,14 @@ class LOSProjector:
 
     The projector knows neither bispectrum representations nor 3PCF routes.
     Callers provide either a numeric evaluator or already sampled coefficient
-    arrays. The prefactor is deliberately unity by default so geometrical and
-    physical projection conventions remain explicit.
+    arrays. By default the geometrical prefactor is chi**-4, matching the
+    standard projected-bispectrum convention used by fastnc v2.
     """
 
     z: np.ndarray
     chi: np.ndarray
     kernels: KernelSet | None = None
-    prefactor: LOSPrefactor = 1.0
+    prefactor: LOSPrefactor = None
     shift: float = 0.0
 
     def __post_init__(self):
@@ -39,7 +44,7 @@ class LOSProjector:
         chi.setflags(write=False)
         if self.kernels is not None and not isinstance(self.kernels, KernelSet):
             raise TypeError("kernels must be a KernelSet or None")
-        if not callable(self.prefactor):
+        if self.prefactor is not None and not callable(self.prefactor):
             prefactor = np.asarray(self.prefactor, dtype=float)
             try:
                 np.broadcast_to(prefactor, chi.shape)
@@ -62,9 +67,11 @@ class LOSProjector:
         object.__setattr__(self, "chi", chi)
         object.__setattr__(self, "shift", shift)
 
-    def weight(self, kernel_names=None) -> np.ndarray:
+    def weight(self, sample_combination=None) -> np.ndarray:
         """Return the configured prefactor times selected radial kernels."""
-        if callable(self.prefactor):
+        if self.prefactor is None:
+            prefactor = self.chi**-4
+        elif callable(self.prefactor):
             prefactor = np.asarray(self.prefactor(self.z, self.chi), dtype=float)
         else:
             prefactor = np.asarray(self.prefactor, dtype=float)
@@ -78,14 +85,15 @@ class LOSProjector:
             raise ValueError("prefactor output must be finite")
 
         if self.kernels is None:
-            if kernel_names is not None and tuple(kernel_names):
+            if sample_combination is not None and tuple(sample_combination):
                 raise ValueError(
                     "kernel names were provided but no KernelSet is configured"
                 )
             return weight
 
-        names = self.kernels.names if kernel_names is None else tuple(kernel_names)
-        return weight * self.kernels.product(names, self.chi)
+        if sample_combination is None:
+            return weight
+        return weight * self.kernels.product(sample_combination, self.chi)
 
     def sample_numeric(self, evaluator, ell1, ell2, ell3, **params) -> LOSValues:
         """Evaluate a numeric 3D callable at this projector's LOS nodes."""
@@ -100,12 +108,12 @@ class LOSProjector:
             **params,
         )
 
-    def integrate_numeric(self, sampled: LOSValues, *, kernel_names=None):
+    def integrate_numeric(self, sampled: LOSValues, *, sample_combination=None):
         """Integrate values returned by sample_numeric."""
         return integrate_numeric_los(
             sampled,
             self.chi,
-            weight=self.weight(kernel_names),
+            weight=self.weight(sample_combination),
         )
 
     def project_numeric(
@@ -115,24 +123,27 @@ class LOSProjector:
         ell2,
         ell3,
         *,
-        kernel_names=None,
+        sample_combination=None,
         **params,
     ):
         """Sample and integrate a numeric 3D callable."""
         sampled = self.sample_numeric(evaluator, ell1, ell2, ell3, **params)
-        return self.integrate_numeric(sampled, kernel_names=kernel_names)
+        return self.integrate_numeric(
+            sampled,
+            sample_combination=sample_combination,
+        )
 
     def integrate_coefficients(
         self,
         coefficients,
         *,
         axis: int = -1,
-        kernel_names=None,
+        sample_combination=None,
     ):
         """Integrate route-produced coefficients along their LOS axis."""
         return integrate_coefficients(
             coefficients,
             self.chi,
-            weight=self.weight(kernel_names),
+            weight=self.weight(sample_combination),
             axis=axis,
         )
