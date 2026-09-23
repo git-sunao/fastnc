@@ -9,8 +9,8 @@ from .representations import (
     BispectrumRepresentation,
     BispectrumRepresentation2D,
     BispectrumRepresentation3D,
-    NumericExpression2D,
-    NumericExpression3D,
+    NumericRepresentation2D,
+    NumericRepresentation3D,
 )
 
 
@@ -100,7 +100,7 @@ class BispectrumTerm3D(_BispectrumTerm):
             raise TypeError("a 3D term can contain only 3D representations")
 
     def evaluate_numeric(self, k1, k2, k3, z, **params):
-        expression = self.get_representation(NumericExpression3D)
+        expression = self.get_representation(NumericRepresentation3D)
         return expression.evaluate(k1, k2, k3, z, **params)
 
     __call__ = evaluate_numeric
@@ -132,7 +132,7 @@ class BispectrumTerm2D(_BispectrumTerm):
             raise TypeError("a 2D term can contain only 2D representations")
 
     def evaluate_numeric(self, ell1, ell2, ell3, **params):
-        expression = self.get_representation(NumericExpression2D)
+        expression = self.get_representation(NumericRepresentation2D)
         return expression.evaluate(ell1, ell2, ell3, **params)
 
     __call__ = evaluate_numeric

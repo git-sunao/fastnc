@@ -17,8 +17,16 @@ class BispectrumRepresentation2D(BispectrumRepresentation):
     """Marker for representations defined from ``B(ell1, ell2, ell3)``."""
 
 
+class NumericRepresentation3D(BispectrumRepresentation3D):
+    """Capability marker for directly evaluable numeric 3D representations."""
+
+
+class NumericRepresentation2D(BispectrumRepresentation2D):
+    """Capability marker for directly evaluable numeric 2D representations."""
+
+
 @dataclass(frozen=True)
-class NumericExpression3D(BispectrumRepresentation3D):
+class NumericExpression3D(NumericRepresentation3D):
     """Direct evaluator of one term ``B(k1, k2, k3, z)``."""
 
     evaluator: Callable
@@ -34,7 +42,7 @@ class NumericExpression3D(BispectrumRepresentation3D):
 
 
 @dataclass(frozen=True)
-class NumericExpression2D(BispectrumRepresentation2D):
+class NumericExpression2D(NumericRepresentation2D):
     """Direct evaluator of one angular term ``B(ell1, ell2, ell3)``."""
 
     evaluator: Callable

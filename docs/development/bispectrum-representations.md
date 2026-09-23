@@ -222,6 +222,37 @@ bispectrum APIs. It preserves additive term names and returns a
 The numeric LOS sampling and quadrature functions remain independent internal
 array/callable primitives beneath this boundary.
 
+Native and projected angular bispectra use the same `Bispectrum2D` aggregate.
+Their construction history belongs to their term representations, not to
+separate bispectrum subclasses. A native numeric term contains a
+`NumericExpression2D`; a projected numeric term contains a
+`ProjectedNumericRepresentation2D`. Both implement the
+`NumericRepresentation2D` capability consumed by downstream calculators.
+The projected representation retains its weighted source term, exact source
+representation, projector, kernel combination, and an immutable executable
+projection-rule object. It therefore remains a deferred projection recipe
+rather than an anonymous closure or a sampled result. The current
+`NumericLOSProjectionRule` is stateless; future Slepian and semi-analytic rules
+can carry their own representation-specific projection behavior.
+
+Representation projection is type-dispatched in `projection/rules.py`:
+
+```text
+NumericRepresentation3D
+    -> ProjectedNumericRepresentation2D
+SlepianRepresentation3D
+    -> ProjectedSlepianRepresentation2D       (future)
+SemiAnalyticRepresentation3D
+    -> ProjectedSemiAnalyticRepresentation2D  (future)
+```
+
+`LOSProjector.project` applies the registered rule to every representation of
+every source term and then assembles the resulting `BispectrumTerm2D` objects.
+An unregistered representation raises `NotImplementedError`; projection must
+never silently discard a source representation. This permits native and
+projected terms to coexist in one `Bispectrum2D`, while route calculators ask
+only for the representation capability they consume.
+
 An exact fixed-redshift evaluation is constructed with
 `LOSProjector.delta_like(z=z, chi=chi)`, not with a narrow sampled
 `Kernel1D`. It is an ordinary `LOSProjector` from the caller's point of
@@ -501,7 +532,7 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.20`, steps 1--8 below are implemented. The old bispectrum
+As of version `2.0.21`, steps 1--8 below are implemented. The old bispectrum
 object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
 entry point are in `legacy/bispectrum_object_api/`. The computing Grid
 pipeline formerly under `fastnc/threepcf` is in

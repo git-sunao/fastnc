@@ -3,15 +3,18 @@ import unittest
 import numpy as np
 
 from fastnc.bispectrum import (
+    BispectrumRepresentation3D,
     Bispectrum2D,
     Bispectrum3D,
     BispectrumTerm3D,
     NumericExpression3D,
+    NumericRepresentation2D,
 )
 from fastnc.projection import (
     Kernel1D,
     KernelSet,
     LOSProjector,
+    ProjectedNumericRepresentation2D,
     angular_to_comoving,
     integrate_coefficients,
 )
@@ -126,6 +129,20 @@ class ProjectionPrimitiveTests(unittest.TestCase):
             integrate_numeric_los(sampled, self.chi, weight=expected_weight),
         )
         self.assertIsInstance(b2d, Bispectrum2D)
+        representation = b2d.terms[0].get_representation(
+            NumericRepresentation2D
+        )
+        self.assertIsInstance(
+            representation, ProjectedNumericRepresentation2D
+        )
+        self.assertIs(representation.source_term, b3d.weighted_terms[0])
+        self.assertIs(
+            representation.source_representation,
+            b3d.terms[0].representations[0],
+        )
+        self.assertIs(representation.projector, projector)
+        self.assertEqual(representation.sample_combination, ("source",))
+        self.assertEqual(representation.projection_rule.name, "numeric_los")
 
     def test_projector_integrates_route_coefficients_without_route_types(self):
         projector = LOSProjector(self.z, self.chi, prefactor=self.chi**-2)
@@ -189,6 +206,30 @@ class ProjectionPrimitiveTests(unittest.TestCase):
         self.assertIsInstance(b2d, Bispectrum2D)
         self.assertEqual(b2d.terms[0].name, "test")
         self.assertTrue(projector.is_delta_like)
+
+    def test_projection_does_not_silently_drop_unknown_representations(self):
+        class UnsupportedRepresentation3D(BispectrumRepresentation3D):
+            pass
+
+        b3d = Bispectrum3D(
+            [BispectrumTerm3D("unknown", (UnsupportedRepresentation3D(),))]
+        )
+        projector = LOSProjector.delta_like(z=0.5, chi=1000.0)
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            "UnsupportedRepresentation3D",
+        ):
+            projector.project(b3d)
+
+    def test_projected_representation_keeps_redshift_dependent_weight(self):
+        expression = NumericExpression3D(
+            lambda k1, k2, k3, z: k1 + k2 + k3
+        )
+        term = BispectrumTerm3D("weighted", (expression,))
+        b3d = Bispectrum3D([term.scaled_by(lambda z: 1.0 + z)])
+        projector = LOSProjector.delta_like(z=0.5, chi=10.0)
+        b2d = projector.project(b3d)
+        self.assertAlmostEqual(b2d(10.0, 20.0, 30.0), 9.0)
 
     def test_delta_projector_selects_one_coefficient_value(self):
         projector = LOSProjector.delta_like(z=0.7, chi=1200.0)

@@ -9,14 +9,13 @@ import numpy as np
 from fastnc.bispectrum import (
     Bispectrum2D,
     Bispectrum3D,
-    BispectrumTerm2D,
-    NumericExpression2D,
 )
 
 from .coefficient_los import integrate_coefficients
 from .geometry import validate_los_coordinates
 from .kernels import KernelSet
 from .numeric_los import evaluate_numeric_los, integrate_numeric_los
+from .rules import project_term
 
 
 LOSPrefactor = (
@@ -215,24 +214,14 @@ class LOSProjector:
             raise TypeError("bispectrum must be a Bispectrum3D")
         self.weight(sample_combination)
 
-        projected_terms = []
-        for weighted_term in bispectrum.weighted_terms:
-            def evaluate(ell1, ell2, ell3, _term=weighted_term, **params):
-                return self._evaluate_numeric(
-                    _term.evaluate_numeric,
-                    ell1,
-                    ell2,
-                    ell3,
-                    sample_combination=sample_combination,
-                    **params,
-                )
-
-            projected_terms.append(
-                BispectrumTerm2D(
-                    name=weighted_term.term.name,
-                    representations=(NumericExpression2D(evaluate),),
-                )
+        projected_terms = [
+            project_term(
+                weighted_term,
+                projector=self,
+                sample_combination=sample_combination,
             )
+            for weighted_term in bispectrum.weighted_terms
+        ]
 
         return Bispectrum2D(
             projected_terms,

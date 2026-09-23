@@ -24,6 +24,8 @@ from .representations import (
     BispectrumRepresentation3D,
     NumericExpression2D,
     NumericExpression3D,
+    NumericRepresentation2D,
+    NumericRepresentation3D,
 )
 from .support import Support2D, Support3D
 from .terms import (
@@ -51,6 +53,8 @@ __all__ = [
     "NFWOneHaloBispectrum3D",
     "NumericExpression2D",
     "NumericExpression3D",
+    "NumericRepresentation2D",
+    "NumericRepresentation3D",
     "OneHaloProductBispectrum3D",
     "SPTGalaxyBispectrum3D",
     "SPTMatterBispectrum3D",
