@@ -14,7 +14,6 @@ from fastnc.bispectrum import (
 from .coefficient_los import integrate_coefficients
 from .geometry import validate_los_coordinates
 from .kernels import KernelSet
-from .numeric_los import evaluate_numeric_los, integrate_numeric_los
 from .rules import project_term
 
 
@@ -139,69 +138,6 @@ class LOSProjector:
         if sample_combination is None:
             return weight
         return weight * self.kernels.product(sample_combination, self.chi)
-
-    def _evaluate_numeric(
-        self,
-        evaluator,
-        ell1,
-        ell2,
-        ell3,
-        *,
-        sample_combination=None,
-        **params,
-    ):
-        """Evaluate one projected numeric expression."""
-        if self._evaluate_at_point:
-            if not callable(evaluator):
-                raise TypeError(
-                    "evaluator must be callable as evaluator(k1, k2, k3, z)"
-                )
-            scalar = all(np.ndim(value) == 0 for value in (ell1, ell2, ell3))
-            ell1, ell2, ell3 = np.broadcast_arrays(
-                np.asarray(ell1, dtype=float),
-                np.asarray(ell2, dtype=float),
-                np.asarray(ell3, dtype=float),
-            )
-            output_shape = ell1.shape
-            evaluator_shape = (1,) if scalar else output_shape
-            values = np.asarray(
-                evaluator(
-                    np.reshape(
-                        (ell1 + self.shift) / self.chi[0], evaluator_shape
-                    ),
-                    np.reshape(
-                        (ell2 + self.shift) / self.chi[0], evaluator_shape
-                    ),
-                    np.reshape(
-                        (ell3 + self.shift) / self.chi[0], evaluator_shape
-                    ),
-                    self.z[0],
-                    **params,
-                )
-            )
-            try:
-                values = np.broadcast_to(values, evaluator_shape)
-            except ValueError as exc:
-                raise ValueError(
-                    "evaluator output must broadcast to the angular shape"
-                ) from exc
-            result = values.reshape(output_shape)
-            return result.item() if scalar else result
-        sampled = evaluate_numeric_los(
-            evaluator,
-            ell1,
-            ell2,
-            ell3,
-            z=self.z,
-            chi=self.chi,
-            shift=self.shift,
-            **params,
-        )
-        return integrate_numeric_los(
-            sampled,
-            self.chi,
-            weight=self.weight(sample_combination),
-        )
 
     def project(self, bispectrum, *, sample_combination=None) -> Bispectrum2D:
         """Project numeric representations from 3D into an angular bispectrum.

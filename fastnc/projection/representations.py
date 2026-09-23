@@ -42,8 +42,11 @@ class ProjectedNumericRepresentation2D(NumericRepresentation2D):
                 "sample_combination",
                 tuple(self.sample_combination),
             )
-        if not hasattr(self.projector, "_evaluate_numeric"):
-            raise TypeError("projector must provide numeric projection")
+        if not all(
+            hasattr(self.projector, name)
+            for name in ("z", "chi", "weight", "is_delta_like")
+        ):
+            raise TypeError("projector must provide LOS projection settings")
 
     def evaluate(self, ell1, ell2, ell3, **params):
         return self.projection_rule.evaluate(

@@ -9,6 +9,12 @@ from .decompose import (
     MultipoleSine,
 )
 from .halofit import Halofit
+from .interpolation import (
+    InterpolatedNumericRepresentation2D,
+    NumericInterpolation2D,
+    TriangleInterpolationCache,
+    TriangleInterpolationConfig,
+)
 from .models import (
     BiHalofitBispectrum3D,
     NFWOneHaloBispectrum3D,
@@ -45,6 +51,7 @@ __all__ = [
     "BispectrumTerm3D",
     "BiHalofitBispectrum3D",
     "Halofit",
+    "InterpolatedNumericRepresentation2D",
     "MultipoleBase",
     "MultipoleCosine",
     "MultipoleFourier",
@@ -53,6 +60,7 @@ __all__ = [
     "NFWOneHaloBispectrum3D",
     "NumericExpression2D",
     "NumericExpression3D",
+    "NumericInterpolation2D",
     "NumericRepresentation2D",
     "NumericRepresentation3D",
     "OneHaloProductBispectrum3D",
@@ -60,6 +68,8 @@ __all__ = [
     "SPTMatterBispectrum3D",
     "Support2D",
     "Support3D",
+    "TriangleInterpolationCache",
+    "TriangleInterpolationConfig",
     "WeightedTerm2D",
     "WeightedTerm3D",
     "f2_kernel",

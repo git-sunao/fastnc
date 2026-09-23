@@ -277,6 +277,42 @@ f(ell/chi, z)
 Thus `chi^(-nu_m)` belongs in the angularized or LOS-integrated coefficient,
 not in the universal Weber kernel.
 
+## Numeric 2D interpolation
+
+Interpolation is another implementation of the 2D numeric capability, not a
+new bispectrum type. `InterpolatedNumericRepresentation2D` retains its source
+`NumericRepresentation2D`, interpolation configuration, source-state token,
+and a self-owned in-memory cache. Its `evaluate(ell1, ell2, ell3)` method
+therefore has the same contract as native and projected numeric
+representations.
+
+The initial interpolation coordinates are
+`(log ell2, log ell3, mu23)`, with
+
+```text
+mu23 = (ell1^2 - ell2^2 - ell3^2) / (2 ell2 ell3).
+```
+
+This rectangularizes the closed-triangle domain used by the numeric multipole
+route without sampling invalid triples of side lengths. Values are
+interpolated linearly by default; logarithmic interpolation of the bispectrum
+value is not assumed because terms may change sign.
+
+`NumericInterpolation2D.build(b2d)` replaces each numeric term representation
+with an interpolated representation while preserving term names, term
+coefficients, non-numeric representations, and the `Bispectrum2D` interface.
+It builds term-level caches by default. Grouped or total-bispectrum caches may
+be added later as an explicit optimization; they must not silently erase the
+source term decomposition.
+
+Each representation owns a mutable private cache slot containing an immutable
+`TriangleInterpolationCache`. The cache stores the axes, sampled values,
+SciPy interpolator, and source-state token. Evaluation lazily builds a missing
+cache and rebuilds a stale cache when the source token changes. Cache mutation
+is lock-protected; the physical source, interpolation configuration, and
+representation identity remain immutable. Persistent disk caching is a
+separate future layer.
+
 ## Route algorithms
 
 ### Numeric route
@@ -532,7 +568,7 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.21`, steps 1--8 below are implemented. The old bispectrum
+As of version `2.0.22`, steps 1--8 below are implemented. The old bispectrum
 object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
 entry point are in `legacy/bispectrum_object_api/`. The computing Grid
 pipeline formerly under `fastnc/threepcf` is in
@@ -573,8 +609,8 @@ implemented yet.
 13. Implement the Slepian and Weber-Schafheitlin route on top of the new
    expression API.
 
-Interpolation and persistent disk-cache redesign are not part of the first
-step unless required to preserve existing behavior.
+Term-wise in-memory numeric 2D interpolation is implemented. Grouped
+interpolation and persistent disk-cache design remain later optimizations.
 
 ## Required tests
 
