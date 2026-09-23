@@ -224,6 +224,14 @@ No persistent fixed-redshift bispectrum object is required. The adapter may
 return a lightweight resolved representation or pass bound callables and
 arrays directly to the calculator.
 
+An exact fixed-redshift evaluation is constructed with
+`LOSProjector.delta_like(z=z, chi=chi)`, not with a narrow sampled
+`RadialKernel`. It is an ordinary `LOSProjector` from the caller's point of
+view, but performs no LOS quadrature: it evaluates the 3D expression directly
+at `k_i = ell_i / chi` and the specified `z`. Extended kernels use the regular
+constructor, whose default geometrical prefactor is `chi**-4`. The delta-like
+projector applies no such prefactor.
+
 For a Mellin expansion
 
 ```text
@@ -483,10 +491,10 @@ coordinates, kernels, an explicit prefactor, and the angular-to-comoving
 shift. Numeric and coefficient-level methods delegate to independently usable
 pure functions. It does not select representations or routes and does not own
 route caches. Following the version 2 projection convention, the prefactor
-defaults to `chi**-4`; a delta-like fixed-redshift benchmark explicitly uses
-unity. `KernelSet.delta_like(power=3)` supplies one factor whose triple
-product integrates to unity, and the same kernel name is therefore selected
-three times. The former object-based projectors remain archived.
+defaults to `chi**-4`. A fixed-redshift benchmark is created by
+`LOSProjector.delta_like(...)`; it evaluates exactly at the requested point
+without a sampled kernel, quadrature, or geometrical prefactor. The former
+object-based projectors remain archived.
 
 ## Migration from the current package
 
@@ -494,7 +502,7 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.17`, steps 1--8 below are implemented. The old bispectrum
+As of version `2.0.18`, steps 1--8 below are implemented. The old bispectrum
 object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
 entry point are in `legacy/bispectrum_object_api/`. The computing Grid
 pipeline formerly under `fastnc/threepcf` is in

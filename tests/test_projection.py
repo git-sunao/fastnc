@@ -137,25 +137,49 @@ class ProjectionPrimitiveTests(unittest.TestCase):
         projector = LOSProjector(self.z, self.chi, prefactor=1.0)
         np.testing.assert_allclose(projector.weight(), np.ones_like(self.chi))
 
-    def test_delta_like_kernel_product_is_normalized_at_requested_power(self):
-        kernels = KernelSet.delta_like(
-            z=0.5,
-            chi=1000.0,
-            width=20.0,
-            power=3,
+    def test_delta_projector_evaluates_exactly_at_requested_z_and_chi(self):
+        calls = []
+
+        def evaluator(k1, k2, k3, z, amplitude):
+            calls.append((k1, k2, k3, z))
+            return amplitude * (k1 + 2.0 * k2 + 3.0 * k3) * (1.0 + z)
+
+        projector = LOSProjector.delta_like(z=0.5, chi=1000.0)
+        actual = projector.project_numeric(
+            evaluator,
+            np.array([100.0, 200.0]),
+            300.0,
+            400.0,
+            amplitude=2.0,
         )
-        kernel = kernels["delta"]
-        product = kernels.product(("delta", "delta", "delta"), kernel.chi)
-        self.assertAlmostEqual(np.trapezoid(product, kernel.chi), 1.0)
-        projector = LOSProjector(
-            kernel.z,
-            kernel.chi,
-            kernels=kernels,
-            prefactor=1.0,
+        expected = 2.0 * (
+            np.array([0.1, 0.2]) + 2.0 * 0.3 + 3.0 * 0.4
+        ) * 1.5
+        np.testing.assert_allclose(actual, expected)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][3], 0.5)
+
+    def test_delta_projector_uses_the_ordinary_sampling_interface(self):
+        def evaluator(k1, k2, k3, z):
+            return k1 * k2 * k3 + z
+
+        projector = LOSProjector.delta_like(z=0.7, chi=1200.0, shift=0.5)
+        expected = evaluator(
+            (20.0 + 0.5) / 1200.0,
+            (30.0 + 0.5) / 1200.0,
+            (40.0 + 0.5) / 1200.0,
+            0.7,
         )
-        np.testing.assert_allclose(
-            projector.weight(("delta", "delta", "delta")),
-            product,
+        b2d = projector.as_angular_evaluator(evaluator)
+        np.testing.assert_allclose(b2d(20.0, 30.0, 40.0), expected)
+        self.assertTrue(projector.is_delta_like)
+
+    def test_delta_projector_selects_one_coefficient_value(self):
+        projector = LOSProjector.delta_like(z=0.7, chi=1200.0)
+        coefficients = np.arange(6.0).reshape(2, 1, 3)
+        np.testing.assert_array_equal(
+            projector.integrate_coefficients(coefficients, axis=1),
+            coefficients[:, 0, :],
         )
 
     def test_kernel_factories_preserve_v2_nz_and_lensing_conventions(self):

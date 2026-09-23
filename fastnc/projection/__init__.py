@@ -1,7 +1,6 @@
 """Route-independent line-of-sight projection primitives."""
 
 from .coefficient_los import integrate_coefficients
-from .fixed_redshift import angularize_numeric_3d
 from .geometry import angular_to_comoving, validate_los_coordinates
 from .kernels import KernelSet, RadialKernel
 from .numeric_los import LOSValues, evaluate_numeric_los, integrate_numeric_los
@@ -13,7 +12,6 @@ __all__ = [
     "LOSProjector",
     "RadialKernel",
     "angular_to_comoving",
-    "angularize_numeric_3d",
     "evaluate_numeric_los",
     "integrate_coefficients",
     "integrate_numeric_los",

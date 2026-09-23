@@ -1,7 +1,7 @@
 """Configured, route-independent line-of-sight projection."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
@@ -35,9 +35,24 @@ class LOSProjector:
     kernels: KernelSet | None = None
     prefactor: LOSPrefactor = None
     shift: float = 0.0
+    _evaluate_at_point: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self):
-        z, chi = validate_los_coordinates(self.z, self.chi)
+        if self._evaluate_at_point:
+            z = np.atleast_1d(np.asarray(self.z, dtype=float))
+            chi = np.atleast_1d(np.asarray(self.chi, dtype=float))
+            if z.shape != (1,) or chi.shape != (1,):
+                raise ValueError("delta_like z and chi must be scalar")
+            if not np.isfinite(z[0]):
+                raise ValueError("z must be finite")
+            if not np.isfinite(chi[0]) or chi[0] <= 0.0:
+                raise ValueError("chi must be finite and positive")
+            if self.kernels is not None:
+                raise ValueError("delta_like projector does not accept kernels")
+            if self.prefactor not in (None, 1.0):
+                raise ValueError("delta_like projector does not accept a prefactor")
+        else:
+            z, chi = validate_los_coordinates(self.z, self.chi)
         z = np.array(z, copy=True)
         chi = np.array(chi, copy=True)
         z.setflags(write=False)
@@ -67,8 +82,32 @@ class LOSProjector:
         object.__setattr__(self, "chi", chi)
         object.__setattr__(self, "shift", shift)
 
+    @classmethod
+    def delta_like(cls, *, z: float, chi: float, shift: float = 0.0):
+        """Return a projector that evaluates exactly at one ``(z, chi)``.
+
+        This is an exact fixed-redshift benchmark, not a finite-width radial
+        kernel. It applies neither LOS quadrature nor the usual ``chi**-4``
+        prefactor.
+        """
+        return cls(
+            z=z,
+            chi=chi,
+            prefactor=1.0,
+            shift=shift,
+            _evaluate_at_point=True,
+        )
+
+    @property
+    def is_delta_like(self) -> bool:
+        return self._evaluate_at_point
+
     def weight(self, sample_combination=None) -> np.ndarray:
         """Return the configured prefactor times selected radial kernels."""
+        if self._evaluate_at_point:
+            if sample_combination is not None and tuple(sample_combination):
+                raise ValueError("delta_like projector does not accept kernels")
+            return np.ones(1, dtype=float)
         if self.prefactor is None:
             prefactor = self.chi**-4
         elif callable(self.prefactor):
@@ -97,6 +136,38 @@ class LOSProjector:
 
     def sample_numeric(self, evaluator, ell1, ell2, ell3, **params) -> LOSValues:
         """Evaluate a numeric 3D callable at this projector's LOS nodes."""
+        if self._evaluate_at_point:
+            if not callable(evaluator):
+                raise TypeError(
+                    "evaluator must be callable as evaluator(k1, k2, k3, z)"
+                )
+            scalar = all(np.ndim(value) == 0 for value in (ell1, ell2, ell3))
+            ell1, ell2, ell3 = np.broadcast_arrays(
+                np.asarray(ell1, dtype=float),
+                np.asarray(ell2, dtype=float),
+                np.asarray(ell3, dtype=float),
+            )
+            output_shape = ell1.shape
+            values = np.asarray(
+                evaluator(
+                    (ell1 + self.shift) / self.chi[0],
+                    (ell2 + self.shift) / self.chi[0],
+                    (ell3 + self.shift) / self.chi[0],
+                    self.z[0],
+                    **params,
+                )
+            )
+            try:
+                values = np.broadcast_to(values, output_shape)
+            except ValueError as exc:
+                raise ValueError(
+                    "evaluator output must broadcast to the angular shape"
+                ) from exc
+            return LOSValues(
+                values=values[..., None],
+                output_shape=output_shape,
+                scalar=scalar,
+            )
         return evaluate_numeric_los(
             evaluator,
             ell1,
@@ -110,6 +181,14 @@ class LOSProjector:
 
     def integrate_numeric(self, sampled: LOSValues, *, sample_combination=None):
         """Integrate values returned by sample_numeric."""
+        if self._evaluate_at_point:
+            if not isinstance(sampled, LOSValues):
+                raise TypeError("sampled must be an LOSValues object")
+            self.weight(sample_combination)
+            if sampled.values.shape[-1] != 1:
+                raise ValueError("delta_like samples must have one LOS value")
+            result = sampled.values[..., 0].reshape(sampled.output_shape)
+            return result.item() if sampled.scalar else result
         return integrate_numeric_los(
             sampled,
             self.chi,
@@ -133,6 +212,25 @@ class LOSProjector:
             sample_combination=sample_combination,
         )
 
+    def as_angular_evaluator(self, evaluator, *, sample_combination=None):
+        """Bind a numeric 3D evaluator and return a projected 2D callable."""
+        if not callable(evaluator):
+            raise TypeError(
+                "evaluator must be callable as evaluator(k1, k2, k3, z)"
+            )
+
+        def projected(ell1, ell2, ell3, **params):
+            return self.project_numeric(
+                evaluator,
+                ell1,
+                ell2,
+                ell3,
+                sample_combination=sample_combination,
+                **params,
+            )
+
+        return projected
+
     def integrate_coefficients(
         self,
         coefficients,
@@ -141,6 +239,17 @@ class LOSProjector:
         sample_combination=None,
     ):
         """Integrate route-produced coefficients along their LOS axis."""
+        if self._evaluate_at_point:
+            self.weight(sample_combination)
+            coefficients = np.asarray(coefficients)
+            axis = np.lib.array_utils.normalize_axis_index(
+                axis, coefficients.ndim
+            )
+            if coefficients.shape[axis] != 1:
+                raise ValueError(
+                    "delta_like coefficients must have one LOS value"
+                )
+            return np.take(coefficients, 0, axis=axis)
         return integrate_coefficients(
             coefficients,
             self.chi,

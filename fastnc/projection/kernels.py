@@ -329,43 +329,6 @@ class RadialKernel:
         nla = cls.nla_from_nz(z, chi, z_nz, nz, **nla_kwargs)
         return (lensing + nla).copy(name=name)
 
-    @classmethod
-    def delta_like(
-        cls,
-        *,
-        z: float,
-        chi: float,
-        width: float | None = None,
-        power: int = 3,
-        name: str | None = None,
-    ):
-        """Construct one factor of a fixed-chi delta-like product kernel."""
-        z = float(z)
-        chi = float(chi)
-        power = int(power)
-        if chi <= 0.0:
-            raise ValueError("chi must be positive")
-        if power <= 0:
-            raise ValueError("power must be positive")
-        if width is None:
-            width = max(abs(chi) * 1.0e-6, 1.0e-8)
-        width = float(width)
-        if width <= 0.0:
-            raise ValueError("width must be positive")
-        chi_grid = np.array(
-            [chi - 0.5 * width, chi + 0.5 * width],
-            dtype=float,
-        )
-        if np.any(chi_grid <= 0.0):
-            chi_grid = np.array([chi, chi + width], dtype=float)
-        return cls(
-            z=np.array([z, z], dtype=float),
-            chi=chi_grid,
-            weight=np.full(2, width ** (-1.0 / power)),
-            name=name,
-        )
-
-
 class KernelSet:
     """Named radial kernels evaluated on a common requested LOS grid."""
 
@@ -375,28 +338,6 @@ class KernelSet:
             raise ValueError("KernelSet requires at least one radial kernel")
         if not all(isinstance(kernel, RadialKernel) for kernel in self._kernels.values()):
             raise TypeError("KernelSet values must be RadialKernel objects")
-
-    @classmethod
-    def delta_like(
-        cls,
-        name: str = "delta",
-        *,
-        z: float,
-        chi: float,
-        width: float | None = None,
-        power: int = 3,
-    ):
-        return cls(
-            {
-                name: RadialKernel.delta_like(
-                    z=z,
-                    chi=chi,
-                    width=width,
-                    power=power,
-                    name=name,
-                )
-            }
-        )
 
     @property
     def names(self) -> tuple[str, ...]:
