@@ -49,6 +49,10 @@ objects performed calculations and managed route state. Active code must not
 import from it. Keep active `fastnc/threepcf` organized into shared
 conventions and explicit route packages; new result/Grid types must be passive.
 
+The directory `legacy/compat/` contains the retired adapters for the archived
+object APIs. It is reference material only; active code must not import it or
+use it to preserve compatibility with the retired architecture.
+
 Line-of-sight kernels and geometry belong in `fastnc/projection`. Algorithms
 that map angular bispectrum representations to 3PCF products belong in
 `fastnc/threepcf/routes/{numeric,slepian,semi_analytic}`. Keep route-independent
