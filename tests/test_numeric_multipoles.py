@@ -2,7 +2,12 @@ import unittest
 
 import numpy as np
 
-from fastnc.bispectrum import NumericExpression2D
+from fastnc.bispectrum import (
+    Bispectrum3D,
+    BispectrumTerm3D,
+    NumericExpression2D,
+    NumericExpression3D,
+)
 from fastnc.projection import LOSProjector
 from fastnc.threepcf.routes.numeric import (
     NumericMultipoleCalculator,
@@ -123,7 +128,10 @@ class NumericMultipoleCalculatorTests(unittest.TestCase):
             return (1.0 + z_value) * (k1**2 + 2.0 * k2 + 3.0 * k3)
 
         projector = LOSProjector.delta_like(z=z, chi=chi)
-        angularized = projector.as_angular_evaluator(evaluator3d)
+        b3d = Bispectrum3D(
+            [BispectrumTerm3D("test", (NumericExpression3D(evaluator3d),))]
+        )
+        angularized = projector.project(b3d)
         native = NumericExpression2D(
             lambda ell1, ell2, ell3: (1.0 + z)
             * ((ell1 / chi) ** 2 + 2.0 * ell2 / chi + 3.0 * ell3 / chi)

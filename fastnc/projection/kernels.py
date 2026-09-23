@@ -11,7 +11,9 @@ from .geometry import validate_los_coordinates
 
 
 @dataclass(frozen=True)
-class RadialKernel:
+class Kernel1D:
+    """One sampled line-of-sight kernel on a ``(z, chi)`` grid."""
+
     z: np.ndarray
     chi: np.ndarray
     weight: np.ndarray
@@ -68,9 +70,9 @@ class RadialKernel:
             name=self.name if name is None else name,
         )
 
-    def resample_like(self, other: "RadialKernel", *, name=None):
-        if not isinstance(other, RadialKernel):
-            raise TypeError("other must be a RadialKernel")
+    def resample_like(self, other: "Kernel1D", *, name=None):
+        if not isinstance(other, Kernel1D):
+            raise TypeError("other must be a Kernel1D")
         return self.resample(other.z, other.chi, name=name)
 
     def integral(self):
@@ -91,7 +93,7 @@ class RadialKernel:
                 weight=operation(self.weight, float(other)),
                 name=self.name,
             )
-        if not isinstance(other, RadialKernel):
+        if not isinstance(other, Kernel1D):
             return NotImplemented
         other_weight = (
             other.weight
@@ -117,7 +119,7 @@ class RadialKernel:
     def __rsub__(self, other):
         if np.isscalar(other):
             return self.copy(weight=float(other) - self.weight)
-        if isinstance(other, RadialKernel):
+        if isinstance(other, Kernel1D):
             return other - self
         return NotImplemented
 
@@ -332,18 +334,18 @@ class RadialKernel:
 class KernelSet:
     """Named radial kernels evaluated on a common requested LOS grid."""
 
-    def __init__(self, kernels: Mapping[str, RadialKernel]):
+    def __init__(self, kernels: Mapping[str, Kernel1D]):
         self._kernels = dict(kernels)
         if not self._kernels:
             raise ValueError("KernelSet requires at least one radial kernel")
-        if not all(isinstance(kernel, RadialKernel) for kernel in self._kernels.values()):
-            raise TypeError("KernelSet values must be RadialKernel objects")
+        if not all(isinstance(kernel, Kernel1D) for kernel in self._kernels.values()):
+            raise TypeError("KernelSet values must be Kernel1D objects")
 
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(self._kernels)
 
-    def __getitem__(self, name: str) -> RadialKernel:
+    def __getitem__(self, name: str) -> Kernel1D:
         return self._kernels[name]
 
     def product(self, names, chi):

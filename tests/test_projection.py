@@ -2,15 +2,20 @@ import unittest
 
 import numpy as np
 
+from fastnc.bispectrum import (
+    Bispectrum2D,
+    Bispectrum3D,
+    BispectrumTerm3D,
+    NumericExpression3D,
+)
 from fastnc.projection import (
+    Kernel1D,
     KernelSet,
     LOSProjector,
-    RadialKernel,
     angular_to_comoving,
-    evaluate_numeric_los,
     integrate_coefficients,
-    integrate_numeric_los,
 )
+from fastnc.projection.numeric_los import evaluate_numeric_los, integrate_numeric_los
 
 
 class ProjectionPrimitiveTests(unittest.TestCase):
@@ -48,8 +53,8 @@ class ProjectionPrimitiveTests(unittest.TestCase):
         )
 
     def test_radial_kernel_set_is_route_independent(self):
-        first = RadialKernel(self.z, self.chi, np.array([1.0, 2.0, 3.0]))
-        second = RadialKernel(self.z, self.chi, np.array([2.0, 2.0, 2.0]))
+        first = Kernel1D(self.z, self.chi, np.array([1.0, 2.0, 3.0]))
+        second = Kernel1D(self.z, self.chi, np.array([2.0, 2.0, 2.0]))
         kernels = KernelSet({"a": first, "b": second})
         np.testing.assert_allclose(
             kernels.product(("a", "b"), self.chi),
@@ -68,7 +73,7 @@ class ProjectionPrimitiveTests(unittest.TestCase):
     def test_projector_composes_numeric_projection_primitives(self):
         kernels = KernelSet(
             {
-                "source": RadialKernel(
+                "source": Kernel1D(
                     self.z,
                     self.chi,
                     np.array([1.0, 2.0, 3.0]),
@@ -86,11 +91,23 @@ class ProjectionPrimitiveTests(unittest.TestCase):
         def evaluator(k1, k2, k3, z, amplitude):
             return amplitude * (k1 + k2 + k3) * (1.0 + z)
 
-        sampled = projector.sample_numeric(
+        b3d = Bispectrum3D(
+            [
+                BispectrumTerm3D(
+                    "test",
+                    (NumericExpression3D(evaluator),),
+                )
+            ]
+        )
+        b2d = projector.project(b3d, sample_combination=("source",))
+        sampled = evaluate_numeric_los(
             evaluator,
             2.0,
             3.0,
             4.0,
+            z=self.z,
+            chi=self.chi,
+            shift=0.5,
             amplitude=2.0,
         )
         expected_weight = (1.0 + self.z) / self.chi * kernels.product(
@@ -105,16 +122,10 @@ class ProjectionPrimitiveTests(unittest.TestCase):
             expected_weight,
         )
         np.testing.assert_allclose(
-            projector.project_numeric(
-                evaluator,
-                2.0,
-                3.0,
-                4.0,
-                sample_combination=("source",),
-                amplitude=2.0,
-            ),
+            b2d(2.0, 3.0, 4.0, amplitude=2.0),
             integrate_numeric_los(sampled, self.chi, weight=expected_weight),
         )
+        self.assertIsInstance(b2d, Bispectrum2D)
 
     def test_projector_integrates_route_coefficients_without_route_types(self):
         projector = LOSProjector(self.z, self.chi, prefactor=self.chi**-2)
@@ -145,12 +156,12 @@ class ProjectionPrimitiveTests(unittest.TestCase):
             return amplitude * (k1 + 2.0 * k2 + 3.0 * k3) * (1.0 + z)
 
         projector = LOSProjector.delta_like(z=0.5, chi=1000.0)
-        actual = projector.project_numeric(
-            evaluator,
-            np.array([100.0, 200.0]),
-            300.0,
-            400.0,
-            amplitude=2.0,
+        b3d = Bispectrum3D(
+            [BispectrumTerm3D("test", (NumericExpression3D(evaluator),))]
+        )
+        b2d = projector.project(b3d)
+        actual = b2d(
+            np.array([100.0, 200.0]), 300.0, 400.0, amplitude=2.0
         )
         expected = 2.0 * (
             np.array([0.1, 0.2]) + 2.0 * 0.3 + 3.0 * 0.4
@@ -159,7 +170,7 @@ class ProjectionPrimitiveTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][3], 0.5)
 
-    def test_delta_projector_uses_the_ordinary_sampling_interface(self):
+    def test_delta_projector_returns_a_bispectrum_2d(self):
         def evaluator(k1, k2, k3, z):
             return k1 * k2 * k3 + z
 
@@ -170,8 +181,13 @@ class ProjectionPrimitiveTests(unittest.TestCase):
             (40.0 + 0.5) / 1200.0,
             0.7,
         )
-        b2d = projector.as_angular_evaluator(evaluator)
+        b3d = Bispectrum3D(
+            [BispectrumTerm3D("test", (NumericExpression3D(evaluator),))]
+        )
+        b2d = projector.project(b3d)
         np.testing.assert_allclose(b2d(20.0, 30.0, 40.0), expected)
+        self.assertIsInstance(b2d, Bispectrum2D)
+        self.assertEqual(b2d.terms[0].name, "test")
         self.assertTrue(projector.is_delta_like)
 
     def test_delta_projector_selects_one_coefficient_value(self):
@@ -185,7 +201,7 @@ class ProjectionPrimitiveTests(unittest.TestCase):
     def test_kernel_factories_preserve_v2_nz_and_lensing_conventions(self):
         nz = np.array([1.0, 2.0, 1.0])
         normalized_nz = nz / np.trapezoid(nz, self.z)
-        n_chi = RadialKernel.from_nz(
+        n_chi = Kernel1D.from_nz(
             self.z,
             self.chi,
             nz,
@@ -196,7 +212,7 @@ class ProjectionPrimitiveTests(unittest.TestCase):
             normalized_nz * np.gradient(self.z, self.chi, edge_order=1),
         )
 
-        lensing = RadialKernel.lensing_from_nz(
+        lensing = Kernel1D.lensing_from_nz(
             self.z,
             self.chi,
             nz,

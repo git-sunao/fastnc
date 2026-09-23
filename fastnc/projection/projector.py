@@ -6,10 +6,17 @@ from typing import Callable
 
 import numpy as np
 
+from fastnc.bispectrum import (
+    Bispectrum2D,
+    Bispectrum3D,
+    BispectrumTerm2D,
+    NumericExpression2D,
+)
+
 from .coefficient_los import integrate_coefficients
 from .geometry import validate_los_coordinates
 from .kernels import KernelSet
-from .numeric_los import LOSValues, evaluate_numeric_los, integrate_numeric_los
+from .numeric_los import evaluate_numeric_los, integrate_numeric_los
 
 
 LOSPrefactor = (
@@ -24,10 +31,10 @@ LOSPrefactor = (
 class LOSProjector:
     """LOS coordinates and weights shared by independent calculation routes.
 
-    The projector knows neither bispectrum representations nor 3PCF routes.
-    Callers provide either a numeric evaluator or already sampled coefficient
-    arrays. By default the geometrical prefactor is chi**-4, matching the
-    standard projected-bispectrum convention used by fastnc v2.
+    Numeric projection maps a ``Bispectrum3D`` to a ``Bispectrum2D`` while
+    preserving its additive term names. The projector knows no 3PCF routes.
+    By default the geometrical prefactor is chi**-4, matching the standard
+    projected-bispectrum convention used by fastnc v2.
     """
 
     z: np.ndarray
@@ -134,8 +141,17 @@ class LOSProjector:
             return weight
         return weight * self.kernels.product(sample_combination, self.chi)
 
-    def sample_numeric(self, evaluator, ell1, ell2, ell3, **params) -> LOSValues:
-        """Evaluate a numeric 3D callable at this projector's LOS nodes."""
+    def _evaluate_numeric(
+        self,
+        evaluator,
+        ell1,
+        ell2,
+        ell3,
+        *,
+        sample_combination=None,
+        **params,
+    ):
+        """Evaluate one projected numeric expression."""
         if self._evaluate_at_point:
             if not callable(evaluator):
                 raise TypeError(
@@ -148,27 +164,31 @@ class LOSProjector:
                 np.asarray(ell3, dtype=float),
             )
             output_shape = ell1.shape
+            evaluator_shape = (1,) if scalar else output_shape
             values = np.asarray(
                 evaluator(
-                    (ell1 + self.shift) / self.chi[0],
-                    (ell2 + self.shift) / self.chi[0],
-                    (ell3 + self.shift) / self.chi[0],
+                    np.reshape(
+                        (ell1 + self.shift) / self.chi[0], evaluator_shape
+                    ),
+                    np.reshape(
+                        (ell2 + self.shift) / self.chi[0], evaluator_shape
+                    ),
+                    np.reshape(
+                        (ell3 + self.shift) / self.chi[0], evaluator_shape
+                    ),
                     self.z[0],
                     **params,
                 )
             )
             try:
-                values = np.broadcast_to(values, output_shape)
+                values = np.broadcast_to(values, evaluator_shape)
             except ValueError as exc:
                 raise ValueError(
                     "evaluator output must broadcast to the angular shape"
                 ) from exc
-            return LOSValues(
-                values=values[..., None],
-                output_shape=output_shape,
-                scalar=scalar,
-            )
-        return evaluate_numeric_los(
+            result = values.reshape(output_shape)
+            return result.item() if scalar else result
+        sampled = evaluate_numeric_los(
             evaluator,
             ell1,
             ell2,
@@ -178,58 +198,46 @@ class LOSProjector:
             shift=self.shift,
             **params,
         )
-
-    def integrate_numeric(self, sampled: LOSValues, *, sample_combination=None):
-        """Integrate values returned by sample_numeric."""
-        if self._evaluate_at_point:
-            if not isinstance(sampled, LOSValues):
-                raise TypeError("sampled must be an LOSValues object")
-            self.weight(sample_combination)
-            if sampled.values.shape[-1] != 1:
-                raise ValueError("delta_like samples must have one LOS value")
-            result = sampled.values[..., 0].reshape(sampled.output_shape)
-            return result.item() if sampled.scalar else result
         return integrate_numeric_los(
             sampled,
             self.chi,
             weight=self.weight(sample_combination),
         )
 
-    def project_numeric(
-        self,
-        evaluator,
-        ell1,
-        ell2,
-        ell3,
-        *,
-        sample_combination=None,
-        **params,
-    ):
-        """Sample and integrate a numeric 3D callable."""
-        sampled = self.sample_numeric(evaluator, ell1, ell2, ell3, **params)
-        return self.integrate_numeric(
-            sampled,
-            sample_combination=sample_combination,
+    def project(self, bispectrum, *, sample_combination=None) -> Bispectrum2D:
+        """Project numeric representations from 3D into an angular bispectrum.
+
+        Each weighted 3D term becomes a same-named 2D term. Evaluation of the
+        returned object performs either the configured LOS integral or exact
+        fixed-redshift evaluation for a delta-like projector.
+        """
+        if not isinstance(bispectrum, Bispectrum3D):
+            raise TypeError("bispectrum must be a Bispectrum3D")
+        self.weight(sample_combination)
+
+        projected_terms = []
+        for weighted_term in bispectrum.weighted_terms:
+            def evaluate(ell1, ell2, ell3, _term=weighted_term, **params):
+                return self._evaluate_numeric(
+                    _term.evaluate_numeric,
+                    ell1,
+                    ell2,
+                    ell3,
+                    sample_combination=sample_combination,
+                    **params,
+                )
+
+            projected_terms.append(
+                BispectrumTerm2D(
+                    name=weighted_term.term.name,
+                    representations=(NumericExpression2D(evaluate),),
+                )
+            )
+
+        return Bispectrum2D(
+            projected_terms,
+            _revision_sources=(lambda: bispectrum.state_token,),
         )
-
-    def as_angular_evaluator(self, evaluator, *, sample_combination=None):
-        """Bind a numeric 3D evaluator and return a projected 2D callable."""
-        if not callable(evaluator):
-            raise TypeError(
-                "evaluator must be callable as evaluator(k1, k2, k3, z)"
-            )
-
-        def projected(ell1, ell2, ell3, **params):
-            return self.project_numeric(
-                evaluator,
-                ell1,
-                ell2,
-                ell3,
-                sample_combination=sample_combination,
-                **params,
-            )
-
-        return projected
 
     def integrate_coefficients(
         self,

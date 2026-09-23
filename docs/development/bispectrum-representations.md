@@ -206,27 +206,25 @@ valuable.
 
 ## Angularization of 3D expressions
 
-Angularization is an adapter operation, not a 3PCF calculator operation. For a
-numeric expression at fixed redshift,
+Angularization is a projection/assembly operation, not a 3PCF calculator
+operation. The public API maps a typed 3D bispectrum to a typed angular
+bispectrum:
 
 ```python
-def evaluate_angularized(ell1, ell2, ell3):
-    return expression.evaluate(
-        ell1 / chi,
-        ell2 / chi,
-        ell3 / chi,
-        z,
-        state=state,
-    )
+los = LOSProjector.delta_like(z=z, chi=chi)
+b2d = los.project(b3d)
+value = b2d.evaluate_numeric(ell1, ell2, ell3)
 ```
 
-No persistent fixed-redshift bispectrum object is required. The adapter may
-return a lightweight resolved representation or pass bound callables and
-arrays directly to the calculator.
+`LOSProjector.project` is the assembly boundary that knows both the 3D and 2D
+bispectrum APIs. It preserves additive term names and returns a
+`Bispectrum2D`; it does not expose a bound closure as the projected result.
+The numeric LOS sampling and quadrature functions remain independent internal
+array/callable primitives beneath this boundary.
 
 An exact fixed-redshift evaluation is constructed with
 `LOSProjector.delta_like(z=z, chi=chi)`, not with a narrow sampled
-`RadialKernel`. It is an ordinary `LOSProjector` from the caller's point of
+`Kernel1D`. It is an ordinary `LOSProjector` from the caller's point of
 view, but performs no LOS quadrature: it evaluates the 3D expression directly
 at `k_i = ell_i / chi` and the specified `z`. Extended kernels use the regular
 constructor, whose default geometrical prefactor is `chi**-4`. The delta-like
@@ -482,16 +480,17 @@ under `threepcf/routes`, not in an ambiguous top-level `routes` package.
 Projection is top-level because converting a 3D expression into an angular or
 LOS-integrated expression is useful independently of a final 3PCF route.
 
-The active projection layer consumes arrays and callables. It does not receive
-a `Bispectrum3D`, `Bispectrum2D`, Grid, or ThreePCF instance. Its
-`LOSProjector` is a route-independent configured facade over radial kernels,
-the flat-sky `k_i = ell_i / chi` geometry, numeric callable evaluation at LOS
-nodes, and generic coefficient integration. The projector stores only LOS
-coordinates, kernels, an explicit prefactor, and the angular-to-comoving
-shift. Numeric and coefficient-level methods delegate to independently usable
-pure functions. It does not select representations or routes and does not own
-route caches. Following the version 2 projection convention, the prefactor
-defaults to `chi**-4`. A fixed-redshift benchmark is created by
+The active projection layer separates pure numerical primitives from assembly.
+`numeric_los.py` consumes only arrays and callables and contains LOS sampling
+and quadrature. These primitives are internal implementation tools rather than
+top-level user API. `LOSProjector` is the assembly boundary: its public
+`project(b3d)` method accepts a `Bispectrum3D` and returns a `Bispectrum2D`,
+preserving additive term names. It stores only LOS coordinates, `Kernel1D`
+objects, an explicit prefactor, and the angular-to-comoving shift. It does not
+select a 3PCF route or own route caches. Coefficient integration remains a
+separate public operation for future Slepian and Mellin representations.
+Following the version 2 projection convention, the prefactor defaults to
+`chi**-4`. A fixed-redshift benchmark is created by
 `LOSProjector.delta_like(...)`; it evaluates exactly at the requested point
 without a sampled kernel, quadrature, or geometrical prefactor. The former
 object-based projectors remain archived.
@@ -502,7 +501,7 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.18`, steps 1--8 below are implemented. The old bispectrum
+As of version `2.0.20`, steps 1--8 below are implemented. The old bispectrum
 object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
 entry point are in `legacy/bispectrum_object_api/`. The computing Grid
 pipeline formerly under `fastnc/threepcf` is in
