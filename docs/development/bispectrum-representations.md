@@ -438,7 +438,7 @@ therefore construct the same table directly on the requested theta bins.
 Table keys remain hashable route-supplied labels so spin/coupling key design
 can be fixed when the corresponding calculators are implemented.
 
-As of version `2.0.37`, route execution is managed by one `ThreePCF` object
+As of version `2.0.38`, route execution is managed by one `ThreePCF` object
 rather than separate calculator classes for every stage. It retains coupling
 matrices and their shared cache sessions, and later will retain the Weber and
 Mellin resources used by the Slepian route. The object is initialized with
@@ -468,13 +468,13 @@ before the common `ZetaKTable` is exposed. Route provenance may be recorded as
 diagnostic metadata, but it must not split physically identical modes into
 different result keys.
 
-Explicit epsilon requests are strict. At a vertex with `spin_i == 0`, epsilon
-does not represent a conjugation degree of freedom. A supplied `epsilon_i=-1`
-at such a vertex emits `UserWarning` and is normalized to `+1`; normalized
-duplicates are removed while preserving request order. After this scalar-spin
-normalization, the epsilon triple must belong to `SpinSpec.representative_epsilons()`.
-A conjugate but non-representative component raises `ValueError` identifying
-its representative rather than silently returning or relabeling that result.
+Explicit epsilon requests are strict and must belong exactly to
+`SpinSpec.representative_epsilons()`. At a vertex with `spin_i == 0`, epsilon
+does not represent a conjugation degree of freedom, so the representative has
+`epsilon_i=+1`; explicitly supplying `-1` raises `ValueError`. A conjugate but
+non-representative component also raises `ValueError` identifying its
+representative rather than silently returning or relabeling that result.
+Repeated valid representatives are removed while preserving request order.
 Conjugate reconstruction can be added later as an explicit API after its
 k-reversal and projection conventions are independently tested.
 

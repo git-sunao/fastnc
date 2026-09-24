@@ -225,13 +225,24 @@ class ThreePCF:
         result = []
         seen = set()
         for epsilon in requested:
-            normalized = spin_spec.normalize_epsilon(
-                tuple(epsilon),
-                warn=True,
+            epsilon = tuple(int(value) for value in epsilon)
+            spin_spec.sigma_from_epsilon(epsilon)
+            invalid_scalar_indices = tuple(
+                index
+                for index, (spin, sign) in enumerate(
+                    zip(spin_spec.spin, epsilon)
+                )
+                if spin == 0 and sign == -1
             )
-            if normalized not in representatives:
+            if invalid_scalar_indices:
+                raise ValueError(
+                    f"epsilon={epsilon} uses -1 at spin-zero vertices "
+                    f"{invalid_scalar_indices}; epsilon must be +1 where "
+                    "spin is zero"
+                )
+            if epsilon not in representatives:
                 representative, conjugated = spin_spec.canonicalize_epsilon(
-                    normalized
+                    epsilon
                 )
                 relation = (
                     "its complex-conjugate representative is"
@@ -239,13 +250,13 @@ class ThreePCF:
                     else "its representative is"
                 )
                 raise ValueError(
-                    f"epsilon={normalized} is not an independent "
+                    f"epsilon={epsilon} is not an independent "
                     f"representative for spin={spin_spec.spin}; {relation} "
                     f"{representative}"
                 )
-            if normalized not in seen:
-                result.append(normalized)
-                seen.add(normalized)
+            if epsilon not in seen:
+                result.append(epsilon)
+                seen.add(epsilon)
         return tuple(result)
 
     @staticmethod

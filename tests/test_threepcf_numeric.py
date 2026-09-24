@@ -118,12 +118,13 @@ class ThreePCFNumericTests(unittest.TestCase):
                 atol=1.0e-12,
             )
 
-    def test_scalar_epsilon_signs_warn_normalize_and_deduplicate(self):
-        with self.assertWarnsRegex(UserWarning, "spin-zero vertices"):
-            table = self.manager.hkernel(
-                epsilons=[(-1, 1, -1), (1, 1, 1)]
-            )
+    def test_scalar_epsilon_minus_is_rejected_and_duplicates_are_deduplicated(self):
+        with self.assertRaisesRegex(ValueError, "spin-zero vertices"):
+            self.manager.hkernel(epsilons=[(-1, 1, -1)])
 
+        table = self.manager.hkernel(
+            epsilons=[(1, 1, 1), (1, 1, 1)]
+        )
         expected = {ComponentModeKey((1, 1, 1), 0)}
         self.assertEqual(set(table.aliases), expected)
 

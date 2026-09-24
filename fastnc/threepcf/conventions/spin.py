@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
-import warnings
 import numpy as np
 
 
@@ -145,27 +144,13 @@ class SpinSpec:
     def normalize_epsilon(
         self,
         epsilon: tuple[int, int, int],
-        *,
-        warn: bool = False,
     ) -> tuple[int, int, int]:
         """Set epsilon to +1 at scalar vertices where conjugation is absent."""
         eps = list(_validate_epsilon(epsilon))
-        changed = tuple(
-            index
-            for index, (spin, sign) in enumerate(zip(self.spin, eps))
-            if spin == 0 and sign == -1
-        )
-        for index in changed:
-            eps[index] = 1
-        normalized = tuple(eps)
-        if warn and changed:
-            warnings.warn(
-                f"epsilon={tuple(epsilon)} uses -1 at spin-zero vertices "
-                f"{changed}; normalizing to {normalized}",
-                UserWarning,
-                stacklevel=3,
-            )
-        return normalized
+        for index, spin in enumerate(self.spin):
+            if spin == 0:
+                eps[index] = 1
+        return tuple(eps)
 
     def representative_epsilons(self) -> tuple[tuple[int, int, int], ...]:
         """Return independent epsilon representatives in component order.
