@@ -13,10 +13,11 @@ class ThreePCFStructureTests(unittest.TestCase):
         self.assertEqual(
             threepcf.__all__,
             [
+                "ComponentModeKey",
                 "HKernelKey",
                 "HKernelTable",
-                "NumericRouteConfig",
                 "ThreePCF",
+                "ThreePCFConfig",
                 "ZetaKKey",
                 "ZetaKTable",
                 "ZetaTable",
@@ -33,6 +34,10 @@ class ThreePCFStructureTests(unittest.TestCase):
         effective = EffectiveSpinTriple((2, -2, 2))
         self.assertEqual(effective.bessel_orders(1.0), (2, 0))
         self.assertEqual(SpinSpec((2, 2, 2)).n_components, 4)
+        self.assertEqual(
+            SpinSpec((0, 2, 0)).normalize_epsilon((-1, 1, -1)),
+            (1, 1, 1),
+        )
         self.assertTrue(callable(projection_factor))
 
 

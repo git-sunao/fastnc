@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
+import warnings
 import numpy as np
 
 
@@ -141,6 +142,31 @@ class SpinSpec:
         eps = _validate_epsilon(epsilon)
         return tuple(int(e * s) for e, s in zip(eps, self.spin))
 
+    def normalize_epsilon(
+        self,
+        epsilon: tuple[int, int, int],
+        *,
+        warn: bool = False,
+    ) -> tuple[int, int, int]:
+        """Set epsilon to +1 at scalar vertices where conjugation is absent."""
+        eps = list(_validate_epsilon(epsilon))
+        changed = tuple(
+            index
+            for index, (spin, sign) in enumerate(zip(self.spin, eps))
+            if spin == 0 and sign == -1
+        )
+        for index in changed:
+            eps[index] = 1
+        normalized = tuple(eps)
+        if warn and changed:
+            warnings.warn(
+                f"epsilon={tuple(epsilon)} uses -1 at spin-zero vertices "
+                f"{changed}; normalizing to {normalized}",
+                UserWarning,
+                stacklevel=3,
+            )
+        return normalized
+
     def representative_epsilons(self) -> tuple[tuple[int, int, int], ...]:
         """Return independent epsilon representatives in component order.
 
@@ -194,15 +220,12 @@ class SpinSpec:
         requested component is the complex conjugate of the stored one and the
         returned boolean is ``True``.
         """
-        eps = list(_validate_epsilon(epsilon))
-        for i, s in enumerate(self.spin):
-            if s == 0:
-                eps[i] = 1
+        eps = self.normalize_epsilon(epsilon)
 
         if self.nspin == 0:
             return (1, 1, 1), False
 
-        return self._canonicalize_active_epsilon(tuple(eps))
+        return self._canonicalize_active_epsilon(eps)
 
     def _canonicalize_active_epsilon(self, epsilon: tuple[int, int, int]) -> tuple[tuple[int, int, int], bool]:
         eps = tuple(epsilon)

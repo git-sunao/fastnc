@@ -18,6 +18,9 @@ These rules apply to all future development in this repository.
    execution path needed to understand the design. Use concise markdown to state
    what each stage establishes. If part of the feature cannot yet be exercised,
    leave a concise `#` comment in the relevant code cell explaining what remains.
+   Write development-notebook headings, explanations, and display labels in
+   Japanese. Keep Python identifiers, public API names, and established
+   mathematical notation unchanged when that makes the code easier to follow.
 4. Never add or commit Jupyter notebooks to Git. Development notebooks remain
    local, untracked files.
 

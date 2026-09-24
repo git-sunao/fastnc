@@ -438,13 +438,67 @@ therefore construct the same table directly on the requested theta bins.
 Table keys remain hashable route-supplied labels so spin/coupling key design
 can be fixed when the corresponding calculators are implemented.
 
-As of version `2.0.29`, route execution is managed by one `ThreePCF` object
+As of version `2.0.37`, route execution is managed by one `ThreePCF` object
 rather than separate calculator classes for every stage. It retains coupling
 matrices and their shared cache sessions, and later will retain the Weber and
-Mellin resources used by the Slepian route. Its `hkernel()` and
-`zetak_numeric()` methods expose intermediate stages for validation while
-sharing the same route state. Low-level operations such as the Fourier-mode
-contraction remain pure array functions.
+Mellin resources used by the Slepian route. The object is initialized with
+config, a 2D bispectrum, theta, phi, and a route, and owns the source
+coordinates and tuned FFT grid. The route is fixed at construction and may be
+changed explicitly with `set_route()`. Its `multipoles()`, `hkernel()`, and
+`zetak()`, and `zeta()` methods expose intermediate stages for validation
+while sharing the same route state. Low-level operations such as the
+Fourier-mode contraction remain pure array functions.
+
+`set_theta()` rebuilds the tuned grid and invalidates HKernel, ZetaK, and
+Zeta results. `set_phi()` preserves all radial results and invalidates only
+final Zeta assembly. `set_bispectrum()` preserves the grid and coupling
+resources while invalidating source-dependent results. Input coordinates are
+copied and made read-only. `set_route()` preserves the source, coordinates,
+grid, and reusable coupling resources, while invalidating the multipole facade
+and all route-dependent result tables.
+
+Route is execution policy, not result identity. Consequently neither the
+ZetaK cache key nor the Zeta cache key contains the route name. Both caches are
+keyed only by their requested epsilon set.
+`set_route()` clears these caches before another policy can run, so omitting
+route introduces no stale-result ambiguity. In the future mixed policy, each
+calculator contributes to the same physical `ComponentModeKey(epsilon,
+two_k)` and the numeric, Slepian, and semi-analytic contributions are summed
+before the common `ZetaKTable` is exposed. Route provenance may be recorded as
+diagnostic metadata, but it must not split physically identical modes into
+different result keys.
+
+Explicit epsilon requests are strict. At a vertex with `spin_i == 0`, epsilon
+does not represent a conjugation degree of freedom. A supplied `epsilon_i=-1`
+at such a vertex emits `UserWarning` and is normalized to `+1`; normalized
+duplicates are removed while preserving request order. After this scalar-spin
+normalization, the epsilon triple must belong to `SpinSpec.representative_epsilons()`.
+A conjugate but non-representative component raises `ValueError` identifying
+its representative rather than silently returning or relabeling that result.
+Conjugate reconstruction can be added later as an explicit API after its
+k-reversal and projection conventions are independently tested.
+
+`ThreePCF.zeta()` performs the route-independent opening-angle assembly. For
+each stored representative epsilon triple it obtains the physical k modes
+through the `ZetaKTable` alias mapping and evaluates
+
+```text
+Zeta_epsilon(theta1, theta2, phi)
+    = sum_k ZetaK_epsilon,k(theta1, theta2) exp(i nu_k phi),
+nu_k = k + (sigma3 - sigma2) / 2.
+```
+
+The canonical assembled `ZetaTable` is in the x/cross projection and stores
+the effective spin triple for every component. `ThreePCF.zeta()` defaults to
+`projection="x"`; passing `projection="ortho"` or `projection="centroid"`
+converts the cached x-projection table when the result is returned. Converted
+projections are deliberately not cached because the phase conversion is cheap.
+Equivalently,
+`ZetaTable.to_projection(projection)` applies the existing spin-aware phase
+conversion component by component and returns a new passive table. Neither API
+reruns the bispectrum, coupling, or Hankel calculations. The current assembly
+evaluates the Fourier series at the supplied phi coordinates; finite phi-bin
+averaging is not yet part of this API.
 
 The numeric implementation first asks `BispectrumMultipole` for canonical
 full-Fourier coefficients. Cosine and sine storage conventions are converted
@@ -456,7 +510,15 @@ effective spin it obtains a retained `CouplingMatrix`, computes
 H_k(ell2, ell3) = sum_L B_L(ell2, ell3) G_Lk(psi_ell),
 ```
 
-and deduplicates the result by `HKernelKey(sigma1, two_nu)`. The subsequent
+and deduplicates the result by `HKernelKey(sigma1, two_nu)`. This canonical
+storage key is not the physical component label. Both `HKernelTable` and
+`ZetaKTable` therefore retain an immutable alias mapping from
+`ComponentModeKey(epsilon=(epsilon1, epsilon2, epsilon3), two_k=2*k)` to the
+corresponding deduplicated storage key. Callers use `get_for_mode(epsilon, k)`
+for physical lookup and `get(key)` only when inspecting canonical storage.
+Only epsilon modes explicitly included when constructing the table receive an
+alias; conjugate components are not inferred until their k-sign and complex
+conjugation convention is implemented and tested. The subsequent
 double Hankel transform always replaces its `xy` option with
 `TunedFFTGrid.xy`, checks the returned full theta coordinates, and selects the
 target theta bins by integer indices. `ZetaKKey` contains the H-kernel key,
