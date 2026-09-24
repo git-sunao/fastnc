@@ -14,8 +14,9 @@ from fastnc.threepcf import (
 
 
 class FakeCoupling:
-    def __init__(self, sigma):
+    def __init__(self, sigma, basis):
         self.sigma = sigma
+        self.basis = basis
         self.calls = 0
 
     def __call__(self, mode, k, psi):
@@ -40,8 +41,8 @@ class ThreePCFNumericTests(unittest.TestCase):
     def setUp(self):
         self.created = []
 
-        def factory(sigma):
-            coupling = FakeCoupling(sigma)
+        def factory(sigma, basis):
+            coupling = FakeCoupling(sigma, basis)
             self.created.append(coupling)
             return coupling
 
@@ -74,6 +75,8 @@ class ThreePCFNumericTests(unittest.TestCase):
         second = self.manager.coupling((0, 0, 0))
         self.assertIs(first, second)
         self.assertEqual(len(self.created), 1)
+        self.assertEqual(first.basis, "fourier")
+        self.assertEqual(self.manager.multipoles().basis, first.basis)
 
         table = self.manager.hkernel()
         key = HKernelKey(sigma1=0, two_nu=0)
@@ -86,6 +89,26 @@ class ThreePCFNumericTests(unittest.TestCase):
             6.0,
             atol=1.0e-12,
         )
+
+    def test_non_fourier_basis_reaches_multipole_and_coupling_boundary(self):
+        manager = ThreePCF(
+            ThreePCFConfig(
+                basis="cosine",
+                ell_min=10.0,
+                ell_max=1.0e3,
+                n_ell=12,
+                use_coupling_cache=False,
+            ),
+            self.source,
+            self.theta,
+            self.phi,
+        )
+        self.assertEqual(manager.multipoles().basis, "cosine")
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            "coupling for basis='cosine' is not implemented",
+        ):
+            manager.coupling((0, 0, 0))
 
     def test_spin_components_keep_all_three_epsilon_entries(self):
         manager = ThreePCF(

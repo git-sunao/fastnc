@@ -33,6 +33,7 @@ from .cache import (
 from .compute import _as_two_x, coupling_delta, exact_zero_delta, two_delta_from_L_k
 
 Method = Literal["auto", "cache", "direct"]
+Basis = Literal["cosine", "sine", "fourier"]
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CouplingKernelConfig:
     sigma1: int
+    basis: Basis = "fourier"
     use_cache: bool = True
     cache_file: str | Path | None = None
     npsi: int = 1025
@@ -63,6 +65,7 @@ class CouplingKernel:
         self,
         sigma1: int,
         *,
+        basis: Basis = "fourier",
         use_cache: bool = True,
         cache_file: str | Path | None = None,
         npsi: int = 1025,
@@ -72,11 +75,18 @@ class CouplingKernel:
         atol: float = 1e-14,
         cache_session: CouplingCacheSession | None = None,
     ) -> None:
+        if basis not in {"cosine", "sine", "fourier"}:
+            raise ValueError("basis must be 'cosine', 'sine', or 'fourier'")
+        if basis != "fourier":
+            raise NotImplementedError(
+                f"coupling for basis={basis!r} is not implemented"
+            )
         if lazy is not None:
             cache_policy = "lazy" if lazy else "read_only"
 
         self.config = CouplingKernelConfig(
             sigma1=int(sigma1),
+            basis=basis,
             use_cache=bool(use_cache),
             cache_file=resolve_coupling_cache_file(cache_file),
             npsi=int(npsi),
@@ -99,6 +109,10 @@ class CouplingKernel:
         return self.config.sigma1
 
     @property
+    def basis(self) -> str:
+        return self.config.basis
+
+    @property
     def two_q(self) -> int:
         return self.sigma1
 
@@ -119,7 +133,8 @@ class CouplingKernel:
     def __repr__(self) -> str:
         mode = "cache" if self.config.use_cache else "direct"
         return (
-            f"CouplingKernel(sigma1={self.sigma1}, q={self.q}, default={mode}, "
+            f"CouplingKernel(sigma1={self.sigma1}, q={self.q}, "
+            f"basis='{self.basis}', default={mode}, "
             f"cache_file='{self.config.cache_file}', npsi={self.config.npsi}, "
             f"cache_policy='{self.config.cache_policy}')"
         )
@@ -419,6 +434,7 @@ class CouplingMatrix(CouplingKernel):
         sigma2: int,
         sigma3: int,
         *,
+        basis: Basis = "fourier",
         use_cache: bool = True,
         cache_file: str | Path | None = None,
         npsi: int = 1025,
@@ -432,6 +448,7 @@ class CouplingMatrix(CouplingKernel):
         self._sigma3 = int(sigma3)
         super().__init__(
             int(sigma1),
+            basis=basis,
             use_cache=use_cache,
             cache_file=cache_file,
             npsi=npsi,
@@ -457,7 +474,8 @@ class CouplingMatrix(CouplingKernel):
     def __repr__(self) -> str:
         mode = "cache" if self.config.use_cache else "direct"
         return (
-            f"CouplingMatrix(sigma={self.sigma}, q={self.q}, default={mode}, "
+            f"CouplingMatrix(sigma={self.sigma}, q={self.q}, "
+            f"basis='{self.basis}', default={mode}, "
             f"cache_file='{self.config.cache_file}', npsi={self.config.npsi}, "
             f"cache_policy='{self.config.cache_policy}')"
         )

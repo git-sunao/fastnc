@@ -181,24 +181,25 @@ class NumericMultipoleCalculatorTests(unittest.TestCase):
         np.testing.assert_allclose(values[0], 2.0, atol=1.0e-12)
         np.testing.assert_allclose(values[1], 1.0, rtol=2.0e-5)
 
-    def test_multipole_exposes_canonical_fourier_coefficients(self):
-        cosine = BispectrumMultipole.from_numeric(
+    def test_factory_basis_is_used_directly_without_conversion_interface(self):
+        fourier = BispectrumMultipole.from_numeric(
             self.config,
             lambda ell1, ell2, ell3: 3.0
             + (ell1**2 - ell2**2 - ell3**2) / (ell2 * ell3),
+            basis="fourier",
         )
         ell = np.array([2.0, 4.0])
         modes = np.array([-1, 0, 1])
-        values = cosine.evaluate_fourier(modes, ell, ell)
+        values = fourier.evaluate(modes, ell, ell)
         np.testing.assert_allclose(values[0], 1.0, rtol=2.0e-5)
         np.testing.assert_allclose(values[1], 3.0, atol=1.0e-12)
         np.testing.assert_allclose(values[2], 1.0, rtol=2.0e-5)
+        self.assertFalse(hasattr(fourier, "evaluate_fourier"))
 
         sine_config = NumericMultipoleConfig(
             n_angle=513,
             delta_beta_min=0.0,
             delta_beta_max=np.pi,
-            basis="sine",
         )
         sine = BispectrumMultipole.from_numeric(
             sine_config,
@@ -213,11 +214,13 @@ class NumericMultipoleCalculatorTests(unittest.TestCase):
                     0.0,
                 )
             ),
+            basis="sine",
         )
-        sine_values = sine.evaluate_fourier(modes, ell, ell)
-        np.testing.assert_allclose(sine_values[0], 0.5j, rtol=2.0e-5)
-        np.testing.assert_array_equal(sine_values[1], 0.0)
-        np.testing.assert_allclose(sine_values[2], -0.5j, rtol=2.0e-5)
+        np.testing.assert_allclose(
+            sine.evaluate(1, ell, ell),
+            1.0,
+            rtol=2.0e-5,
+        )
 
     def test_native_2d_and_fixed_redshift_3d_use_same_calculator(self):
         z = 0.7

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from fastnc.coupling import CachePolicy
 from fastnc.hankel import DoubleHankelConfig
@@ -14,6 +15,7 @@ class ThreePCFConfig:
     """Physical conventions, Fourier grid, and route settings."""
 
     spin: tuple[int, int, int] = (0, 0, 0)
+    basis: Literal["cosine", "sine", "fourier"] = "fourier"
     Lmax: int = 30
     kmax: float = 30.0
     ell_min: float = 1.0e-1
@@ -35,6 +37,8 @@ class ThreePCFConfig:
         spin = tuple(int(value) for value in self.spin)
         if len(spin) != 3:
             raise ValueError("spin must contain exactly three entries")
+        if self.basis not in {"cosine", "sine", "fourier"}:
+            raise ValueError("basis must be 'cosine', 'sine', or 'fourier'")
         if int(self.Lmax) < 0:
             raise ValueError("Lmax must be non-negative")
         if float(self.kmax) < 0.0:

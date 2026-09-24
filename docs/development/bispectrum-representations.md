@@ -584,6 +584,7 @@ The normal user entry point is a thin construction facade:
 bm = BispectrumMultipole.from_numeric(
     config,
     b2d,
+    basis="fourier",
 )
 
 value = bm.evaluate(mode, ell2, ell3)
@@ -608,10 +609,20 @@ coordinates, values, and conventions.
 A sampled multipole table is a separate future passive object. Its explicit
 mode and `ell` grids must not be folded into `BispectrumMultipole`.
 
-The basis name is validated and stored in the calculator configuration. The
-current choices are strings (`cosine`, `sine`, and `fourier`); a dedicated
-basis class is not justified until basis objects own behavior such as
-normalization, parity, reconstruction, or function evaluation.
+The basis name is a calculation-wide convention rather than a quadrature
+setting.  A standalone `BispectrumMultipole` receives it explicitly, while a
+`ThreePCF` receives it once through `ThreePCFConfig.basis` and passes the same
+value to both its multipole calculator and coupling object.  The current
+choices are strings (`cosine`, `sine`, and `fourier`); a dedicated basis class
+is not justified until basis objects own behavior such as normalization,
+parity, reconstruction, or function evaluation.
+
+Only Fourier-basis coupling is implemented at present.  Selecting `cosine` or
+`sine` still produces multipoles in that requested basis, but constructing the
+corresponding coupling raises `NotImplementedError`.  The assembly layer must
+not silently convert those coefficients to Fourier coefficients.  Consequently
+`BispectrumMultipole` exposes only `evaluate`; it has no `evaluate_fourier`
+conversion interface.
 
 The dependency direction is
 

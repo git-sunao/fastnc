@@ -58,7 +58,7 @@ class ThreePCF:
         phi,
         *,
         route: str = "numeric",
-        coupling_factory: Callable[[tuple[int, int, int]], object] | None = None,
+        coupling_factory: Callable[[tuple[int, int, int], str], object] | None = None,
     ):
         if not isinstance(config, ThreePCFConfig):
             raise TypeError("config must be a ThreePCFConfig")
@@ -189,13 +189,17 @@ class ThreePCF:
             raise ValueError("sigma must contain exactly three entries")
         if sigma not in self._couplings:
             if self._coupling_factory is not None:
-                coupling = self._coupling_factory(sigma)
+                coupling = self._coupling_factory(sigma, self.config.basis)
             else:
                 kwargs = self.config.coupling_kwargs()
                 session = self._cache_session()
                 if session is not None:
                     kwargs["cache_session"] = session
-                coupling = CouplingMatrix(*sigma, **kwargs)
+                coupling = CouplingMatrix(
+                    *sigma,
+                    basis=self.config.basis,
+                    **kwargs,
+                )
             if not callable(coupling):
                 raise TypeError("coupling_factory must return a callable object")
             self._couplings[sigma] = coupling
@@ -208,6 +212,7 @@ class ThreePCF:
             self._multipole = BispectrumMultipole.from_numeric(
                 self.config.multipole,
                 self._bispectrum,
+                basis=self.config.basis,
             )
         return self._multipole
 
@@ -281,7 +286,7 @@ class ThreePCF:
         psi = np.arctan2(ell3, ell2)
         psi_unique, inverse = np.unique(psi, return_inverse=True)
         modes = np.arange(-self.config.Lmax, self.config.Lmax + 1)
-        coefficients = self.multipoles().evaluate_fourier(modes, ell2, ell3)
+        coefficients = self.multipoles().evaluate(modes, ell2, ell3)
 
         values: dict[HKernelKey, np.ndarray] = {}
         aliases: dict[ComponentModeKey, HKernelKey] = {}

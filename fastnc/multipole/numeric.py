@@ -106,10 +106,19 @@ class NumericBispectrumMultipoleCalculator:
 
     route = "numeric"
 
-    def __init__(self, config: NumericMultipoleConfig | None = None):
+    def __init__(
+        self,
+        config: NumericMultipoleConfig | None = None,
+        *,
+        basis: str = "cosine",
+    ):
         self.config = config or NumericMultipoleConfig()
         if not isinstance(self.config, NumericMultipoleConfig):
             raise TypeError("config must be a NumericMultipoleConfig")
+        basis = "cosine" if basis == "fourier-even" else str(basis)
+        if basis not in {"cosine", "sine", "fourier"}:
+            raise ValueError("basis must be 'cosine', 'sine', or 'fourier'")
+        self.basis = basis
 
     def sample(self, evaluator, ell2, ell3, **params):
         if not callable(evaluator):
@@ -164,7 +173,7 @@ class NumericBispectrumMultipoleCalculator:
             sampled.values,
             sampled.delta_beta,
             modes,
-            basis=self.config.basis,
+            basis=self.basis,
             axis=-1,
             decomposition_angle=self.config.decomposition_angle,
             method=self.config.method,
