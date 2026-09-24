@@ -14,6 +14,10 @@ class ThreePCFStructureTests(unittest.TestCase):
             threepcf.__all__,
             [
                 "ComponentModeKey",
+                "BruteForce3PCFAdaptiveTrial",
+                "BruteForce3PCFConfig",
+                "BruteForce3PCFResult",
+                "BruteForceX3PCF",
                 "HKernelKey",
                 "HKernelTable",
                 "ThreePCF",
@@ -21,6 +25,7 @@ class ThreePCFStructureTests(unittest.TestCase):
                 "ZetaKKey",
                 "ZetaKTable",
                 "ZetaTable",
+                "bruteforce",
                 "config",
                 "conventions",
                 "numeric",

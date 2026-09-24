@@ -848,3 +848,23 @@ These open questions do not change the fixed boundaries above: 3D expressions
 are functions of `(k1, k2, k3, z)`, 2D expressions are functions of
 `(ell1, ell2, ell3)`, angular calculators operate only on `ell`, and the
 `k_i = ell_i / chi(z)` substitution belongs to the adapter/projection layer.
+
+## Independent brute-force validation
+
+`fastnc.threepcf.bruteforce` is the active reference calculation for checking
+the numeric route.  `BruteForceX3PCF` accepts the same current `Bispectrum2D`
+object used by `ThreePCF`, but deliberately bypasses bispectrum multipoles,
+the multipole coupling matrix, HKernel, and the two-dimensional FFTLog.  It
+instead performs a one-dimensional FFTLog in the common Fourier scale and
+direct numerical quadrature over the two triangle-angle variables.  Agreement
+therefore tests the assembled numeric route against an algorithmically
+independent calculation.
+
+The brute-force solver returns the X-projection for one representative spin
+component selected by the active `SpinSpec` convention.  Its ell interval,
+radial FFTLog resolution, angular quadrature resolution, and optional adaptive
+refinement are explicit in `BruteForce3PCFConfig`.  Numerical comparisons must
+converge both calculations separately before attributing a discrepancy to the
+formalism.  This module was recovered from
+`legacy/threepcf_grid_pipeline/fastnc/threepcf/bruteforce.py`, but the active
+implementation imports no legacy code and the archive remains reference-only.

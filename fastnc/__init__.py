@@ -21,6 +21,6 @@ __all__ = [
     "threepcf",
 ]
 
-__version__ = "2.0.38"
+__version__ = "2.0.39"
 __author__ = 'Sunao Sugiyama, Rafael Heringer Gomes'
 __url__ = 'https://github.com/git-sunao/fastnc'
