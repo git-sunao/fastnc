@@ -626,6 +626,21 @@ couplings remain real; sine coupling is generally purely imaginary.  The
 Fourier cache remains real-valued in every case.  `BispectrumMultipole`
 exposes only `evaluate`; it has no basis-conversion convenience interface.
 
+The sine coupling convention is the odd sector of the full-angle real Fourier
+basis on `[0, 2 pi)` and its finite Fourier resummation is generally purely
+imaginary.  A length-only `Bispectrum2D(ell1, ell2, ell3)` is even in the signed
+relative angle and therefore has no physical full-angle sine component.  The
+current numeric sine decomposer is still a half-range `[0, pi]` diagnostic;
+until an orientation-aware 2D source representation exists, an end-to-end
+sine `ThreePCF` must not be interpreted as the full-angle odd sector.
+
+The basis resummations are tested independently against direct quadrature of
+the original angular coupling integral below, at, and above `psi=pi/4`.
+End-to-end Fourier, cosine, and Legendre calculations agree through HKernel,
+ZetaK, and Zeta for a finite Legendre-mode source.  A Gaussian radial toy
+bispectrum with only `L=0,+/-2` also gives agreement between the numeric and
+brute-force 3PCF routes at better than one percent on the validation grid.
+
 The dependency direction is
 
 ```text

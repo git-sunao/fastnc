@@ -34,9 +34,8 @@ Internally all half-integer labels are stored exactly with integer keys:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 from math import comb, cos, pi, sin
-from typing import Dict, Iterable
+from typing import Iterable
 
 import numpy as np
 from scipy.integrate import quad
@@ -323,36 +322,3 @@ def b_array_from_two_q(two_q: int, two_p_values: Iterable[int], psi_values: Iter
             out[i, j] = spin_phase_coeff_from_keys(int(two_q), int(two_p), float(x), atol=atol)
     out[np.abs(out) < 10 * np.finfo(float).eps] = 0.0
     return out
-
-
-# Finite Laurent expansion of P_L((z+z^{-1})/2).  The 3PCF pipeline uses
-# these coefficients to map inner-angle Legendre bispectrum multipoles onto
-# the existing outer-angle Fourier coupling kernel.  They remain independent
-# of spin and therefore contain no coupling-specific approximation.
-@lru_cache(maxsize=None)
-def legendre_laurent_coeffs(L: int) -> Dict[int, float]:
-    if L < 0:
-        raise ValueError("Legacy Legendre L must be non-negative.")
-    if L == 0:
-        return {0: 1.0}
-    if L == 1:
-        return {-1: 0.5, 1: 0.5}
-    Pm1 = {0: 1.0}
-    P0 = {-1: 0.5, 1: 0.5}
-    x_coeff = {-1: 0.5, 1: 0.5}
-    for ell in range(1, L):
-        xP: Dict[int, float] = {}
-        for a, ca in x_coeff.items():
-            for b, cb in P0.items():
-                xP[a + b] = xP.get(a + b, 0.0) + ca * cb
-        P1: Dict[int, float] = {}
-        for j, c in xP.items():
-            P1[j] = P1.get(j, 0.0) + (2 * ell + 1) * c / (ell + 1)
-        for j, c in Pm1.items():
-            P1[j] = P1.get(j, 0.0) - ell * c / (ell + 1)
-        Pm1, P0 = P0, {j: c for j, c in P1.items() if abs(c) > 0.0}
-    return P0
-
-
-def legendre_support(L: int) -> tuple[int, ...]:
-    return tuple(range(-L, L + 1, 2))

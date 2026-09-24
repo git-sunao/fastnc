@@ -543,7 +543,7 @@ class CouplingMatrix(CouplingKernel):
             term = coefficient * primitive
             result = term if result is None else result + term
         assert result is not None
-        return result.item() if np.ndim(result) == 0 else result
+        return np.asarray(result).item() if np.ndim(result) == 0 else result
 
     def ensure_cache_for(self, L: int, k: int | float, *, npsi: int | None = None) -> None:
         delta = self.delta(int(L), k)

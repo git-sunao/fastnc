@@ -137,9 +137,10 @@ class ThreePCFNumericTests(unittest.TestCase):
     def test_fourier_cosine_and_legendre_hkernels_are_consistent(self):
         def finite_source(ell1, ell2, ell3):
             mu = (ell1**2 - ell2**2 - ell3**2) / (2.0 * ell2 * ell3)
-            return 2.0 + 1.5 * (3.0 * mu**2 - 1.0)
+            radial = np.exp(-(ell2 + ell3) / 1000.0)
+            return radial * (2.0 + 1.5 * (3.0 * mu**2 - 1.0))
 
-        tables = {}
+        products = {}
         for basis in ("fourier", "cosine", "legendre"):
             manager = ThreePCF(
                 ThreePCFConfig(
@@ -147,9 +148,9 @@ class ThreePCFNumericTests(unittest.TestCase):
                     basis=basis,
                     Lmax=2,
                     kmax=1.0,
-                    ell_min=10.0,
-                    ell_max=1.0e3,
-                    n_ell=12,
+                    ell_min=1.0,
+                    ell_max=1.0e4,
+                    n_ell=64,
                     multipole=NumericMultipoleConfig(
                         n_angle=257,
                         delta_beta_min=0.0,
@@ -161,20 +162,39 @@ class ThreePCFNumericTests(unittest.TestCase):
                 self.theta,
                 self.phi,
             )
-            tables[basis] = manager.hkernel()
+            products[basis] = (
+                manager.hkernel(),
+                manager.zetak(),
+                manager.zeta(),
+            )
 
-        for key in tables["fourier"].keys:
+        fourier_hkernel = products["fourier"][0]
+        for key in fourier_hkernel.keys:
             np.testing.assert_allclose(
-                tables["cosine"].get(key),
-                tables["fourier"].get(key),
+                products["cosine"][0].get(key),
+                fourier_hkernel.get(key),
                 rtol=1.0e-12,
                 atol=1.0e-12,
             )
             np.testing.assert_allclose(
-                tables["legendre"].get(key),
-                tables["fourier"].get(key),
+                products["legendre"][0].get(key),
+                fourier_hkernel.get(key),
                 rtol=3.0e-5,
                 atol=1.0e-10,
+            )
+
+        for product_index in (1, 2):
+            np.testing.assert_allclose(
+                products["cosine"][product_index].values,
+                products["fourier"][product_index].values,
+                rtol=1.0e-12,
+                atol=1.0e-6,
+            )
+            np.testing.assert_allclose(
+                products["legendre"][product_index].values,
+                products["fourier"][product_index].values,
+                rtol=1.0e-4,
+                atol=1.0e-6,
             )
 
     def test_spin_components_keep_all_three_epsilon_entries(self):

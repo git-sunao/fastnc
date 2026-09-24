@@ -7,7 +7,13 @@ from fastnc.bispectrum import (
     BispectrumTerm2D,
     NumericExpression2D,
 )
-from fastnc.threepcf import BruteForce3PCFConfig, BruteForceX3PCF
+from fastnc.multipole import NumericMultipoleConfig
+from fastnc.threepcf import (
+    BruteForce3PCFConfig,
+    BruteForceX3PCF,
+    ThreePCF,
+    ThreePCFConfig,
+)
 
 
 def _small_config(**overrides):
@@ -28,7 +34,110 @@ def _small_config(**overrides):
     return BruteForce3PCFConfig(**values)
 
 
+def _validation_brute_config(**overrides):
+    values = {
+        "ell_min": 0.01,
+        "ell_max": 3000.0,
+        "n_ell": 128,
+        "radial_cache_padding_factor": 16.0,
+        "n_psi": 16,
+        "n_delta_beta": 32,
+        "interpolation_bounds": "raise",
+        "angular_mode": "fixed",
+        "n_processes": 1,
+        "parallel_prepare": False,
+        "parallel_compute": False,
+    }
+    values.update(overrides)
+    return BruteForce3PCFConfig(**values)
+
+
+def _validation_threepcf_config(*, Lmax, kmax):
+    return ThreePCFConfig(
+        basis="fourier",
+        Lmax=Lmax,
+        kmax=kmax,
+        ell_min=0.01,
+        ell_max=3000.0,
+        n_ell=128,
+        multipole=NumericMultipoleConfig(
+            n_angle=129,
+            delta_beta_min=0.0,
+            delta_beta_max=np.pi,
+        ),
+        use_coupling_cache=False,
+    )
+
+
 class BruteForce3PCFTests(unittest.TestCase):
+    def test_scalar_separable_model_matches_analytic_hankel_product(self):
+        scale = 300.0
+
+        def radial(ell):
+            return np.exp(-0.5 * (ell / scale) ** 2)
+
+        def source(ell1, ell2, ell3):
+            return radial(ell2) * radial(ell3)
+
+        theta = np.geomspace(0.001, 0.006, 4)
+        phi = np.array([0.3, 1.0])
+        radial_transform = (
+            scale**2
+            / (2.0 * np.pi)
+            * np.exp(-0.5 * (scale * theta) ** 2)
+        )
+        expected = radial_transform[:, None] * radial_transform[None, :]
+
+        numeric = ThreePCF(
+            _validation_threepcf_config(Lmax=0, kmax=0.0),
+            source,
+            theta,
+            phi,
+        ).zeta().values[0, :, :, 0].real
+        brute = BruteForceX3PCF(
+            source,
+            spin=(0, 0, 0),
+            config=_validation_brute_config(),
+        ).compute(theta, theta, phi).value.real
+
+        np.testing.assert_allclose(numeric, expected, rtol=0.02, atol=1.0)
+        np.testing.assert_allclose(brute[:, :, 0], expected, rtol=0.03, atol=1.0)
+        np.testing.assert_allclose(
+            brute[:, :, 0], numeric, rtol=0.01, atol=1.0
+        )
+        self.assertLess(
+            np.max(np.ptp(brute, axis=2)) / np.max(expected),
+            2.0e-4,
+        )
+
+    def test_finite_angular_modes_match_numeric_route(self):
+        scale = 300.0
+
+        def source(ell1, ell2, ell3):
+            mu = (ell1**2 - ell2**2 - ell3**2) / (2.0 * ell2 * ell3)
+            radial = np.exp(
+                -0.5 * (ell2 / scale) ** 2
+                -0.5 * (ell3 / scale) ** 2
+            )
+            return radial * (1.0 + 0.2 * (2.0 * mu**2 - 1.0))
+
+        theta = np.geomspace(0.001, 0.006, 4)
+        phi = np.array([0.3, 1.0, 2.0])
+        numeric = ThreePCF(
+            _validation_threepcf_config(Lmax=2, kmax=2.0),
+            source,
+            theta,
+            phi,
+        ).zeta().values[0]
+        brute = BruteForceX3PCF(
+            source,
+            spin=(0, 0, 0),
+            config=_validation_brute_config(n_psi=24, n_delta_beta=64),
+        ).compute(theta, theta, phi).value
+
+        scale_value = max(np.max(np.abs(numeric)), np.max(np.abs(brute)))
+        self.assertLess(np.max(np.abs(numeric - brute)) / scale_value, 0.01)
+
     def test_current_bispectrum2d_is_a_direct_source(self):
         first = BispectrumTerm2D(
             "first",
