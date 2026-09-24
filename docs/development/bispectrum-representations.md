@@ -405,6 +405,64 @@ LOS strategy:
 The optimized LOS strategies must reproduce the transparent reference
 strategy within configured numerical tolerance.
 
+## 3PCF tables and tuned FFT grids
+
+`HKernelTable`, `ZetaKTable`, and `ZetaTable` are passive calculated results.
+They do not know which route produced them and do not run coupling, FFTLog,
+Slepian, or angular-assembly algorithms. Concrete route calculators construct
+these tables.
+
+The numeric route uses `fastnc.hankel.TunedFFTGrid`. Given the final evenly
+log-spaced target theta bins, this object creates a higher-resolution FFTLog
+ell grid and matching full theta grid such that the target bins occur at the
+integer `down_sampler` indices. Numeric assembly creates this grid before the
+HKernel calculation, passes its full ell axis to the HKernel calculator, uses
+the same `xy` and axes for the double FFTLog, and downsamples both theta axes
+without interpolation.
+
+`HKernelTable` retains the `TunedFFTGrid` because its values live on the full
+FFTLog ell grid. `ZetaKTable` retains only the final target theta coordinates
+and downsampled values. This is the common route boundary:
+
+```text
+numeric:
+    BispectrumMultipole -> HKernelTable -> ZetaKTable -> ZetaTable
+
+Slepian:
+    Bispectrum3D + LOSProjector -> ZetaKTable -> ZetaTable
+```
+
+The full numeric FFTLog theta array is an intermediate calculator result, not
+part of the route-independent `ZetaKTable` contract. A Slepian calculator can
+therefore construct the same table directly on the requested theta bins.
+Table keys remain hashable route-supplied labels so spin/coupling key design
+can be fixed when the corresponding calculators are implemented.
+
+As of version `2.0.29`, route execution is managed by one `ThreePCF` object
+rather than separate calculator classes for every stage. It retains coupling
+matrices and their shared cache sessions, and later will retain the Weber and
+Mellin resources used by the Slepian route. Its `hkernel()` and
+`zetak_numeric()` methods expose intermediate stages for validation while
+sharing the same route state. Low-level operations such as the Fourier-mode
+contraction remain pure array functions.
+
+The numeric implementation first asks `BispectrumMultipole` for canonical
+full-Fourier coefficients. Cosine and sine storage conventions are converted
+inside the multipole package; the 3PCF manager therefore contracts only
+coefficients satisfying the common complex Fourier convention. For each
+effective spin it obtains a retained `CouplingMatrix`, computes
+
+```text
+H_k(ell2, ell3) = sum_L B_L(ell2, ell3) G_Lk(psi_ell),
+```
+
+and deduplicates the result by `HKernelKey(sigma1, two_nu)`. The subsequent
+double Hankel transform always replaces its `xy` option with
+`TunedFFTGrid.xy`, checks the returned full theta coordinates, and selects the
+target theta bins by integer indices. `ZetaKKey` contains the H-kernel key,
+the two Bessel orders, and the total effective spin, so direct Slepian output
+can later use the same route-independent labels.
+
 ## Planned public API
 
 Direct 2D angular bispectrum:
@@ -450,10 +508,67 @@ Requesting an intermediate product is independent of the route selected for
 the final 3PCF. For example, a Slepian final calculation may still compute
 numeric bispectrum multipoles for validation.
 
+## Bispectrum multipoles
+
+Angular bispectrum multipoles are route-independent mathematical objects. They
+live in the top-level `fastnc/multipole` package rather than in either
+`fastnc/bispectrum` or a 3PCF route. `BispectrumMultipole` stores the source
+bispectrum, basis convention, and calculator object. It does not require an
+`ell` grid or mode range and does no numerical evaluation at construction.
+
+The normal user entry point is a thin construction facade:
+
+```python
+bm = BispectrumMultipole.from_numeric(
+    config,
+    b2d,
+)
+
+value = bm.evaluate(mode, ell2, ell3)
+values = bm.evaluate(modes, ell2, ell3)
+```
+
+`from_numeric` constructs and retains a
+`NumericBispectrumMultipoleCalculator`; it does not call the numerical kernel.
+`evaluate` delegates to that concrete calculator only when values are
+requested. A scalar mode returns the broadcast `ell` shape; a one-dimensional
+mode array returns `(n_modes, *ell_shape)` and evaluates all requested modes in
+one sampling pass. Future `from_slepian` and `from_semi_analytic` constructors
+construct their own concrete calculators. All route-dependent work remains in
+those calculator objects.
+
+No generic calculator protocol, calculator factory, or intermediate evaluated
+data class is introduced. A calculator returns an `ndarray` directly because
+the caller already supplied the modes and coordinates. If an explicit sampled
+table is later needed, it will be a separate passive object carrying modes,
+coordinates, values, and conventions.
+
+A sampled multipole table is a separate future passive object. Its explicit
+mode and `ell` grids must not be folded into `BispectrumMultipole`.
+
+The basis name is validated and stored in the calculator configuration. The
+current choices are strings (`cosine`, `sine`, and `fourier`); a dedicated
+basis class is not justified until basis objects own behavior such as
+normalization, parity, reconstruction, or function evaluation.
+
+The dependency direction is
+
+```text
+Bispectrum2D or another supported source
+    -> route-specific multipole calculator
+    -> BispectrumMultipole
+    -> HKernel calculator
+```
+
+`Bispectrum2D` has no multipole convenience method and does not import the
+multipole package.
+
 ## Calculator and storage boundaries
 
-Route calculators operate on angular representations and `ell` arrays. They do
-not receive a `Bispectrum3D`, `Bispectrum2D`, Grid, or ThreePCF instance.
+Low-level numerical kernels operate on angular values and `ell` arrays. They do
+not receive a `Bispectrum3D`, `Bispectrum2D`, Grid, or ThreePCF instance. A
+calculator facade may receive a typed domain object at the assembly boundary,
+extract its callable capability, and then invoke those kernels.
 
 Pure numerical kernels have signatures conceptually similar to
 
@@ -484,7 +599,6 @@ fastnc/bispectrum/
     terms.py            # indivisible terms and typed weighted terms
     representations.py  # alternative mathematical descriptions of a term
     support.py           # domain/support value types
-    decompose.py         # standalone angular basis definitions
     halofit.py           # standalone Halofit/BiHalofit numerical model
     models/              # SPT, BiHalofit, one-halo, and later models
 ```
@@ -527,9 +641,9 @@ bispectrum object graph are replaced.
 - `halofit.py` is a standalone physical/numerical implementation and remains
   usable. Moving it under a later `models` or `physics` namespace is optional
   and is not required for the representation refactor.
-- The basis definitions and pure transforms in `decompose.py` are reusable.
-  Callers coupled to old bispectrum or multipole objects are not part of the
-  retained interface.
+- The basis definitions and pure transforms formerly in `bispectrum/decompose.py`
+  are reusable and now live in `multipole/decompose.py`. Callers coupled to old
+  bispectrum or multipole objects are not part of the retained interface.
 - Coordinate transforms, grid preparation, packing, and interpolation kernels
   in the archived `interpolate.py` may later be extracted as array-based
   functions. The old interpolated bispectrum wrappers do not define the new
@@ -544,7 +658,7 @@ bispectrum object graph are replaced.
 - LOS geometry, windows, and quadrature are projection concerns and move out
   of `bispectrum/`. Route-independent projection kernels belong in a projection
   package. Numeric node evaluation, Mellin-coefficient integration, and other
-  route-specific assembly belong to their respective route packages.
+  route-specific assembly belong to their respective route modules.
 - Grid classes are passive storage for coordinates, values, labels, and
   provenance. Calculator methods are removed from them rather than migrated.
 
@@ -553,17 +667,19 @@ The intended high-level ownership is therefore
 ```text
 fastnc/
     bispectrum/          physical terms, representations, state, and support
+    multipole/           route-independent multipole results and producers
     projection/          LOS kernels, geometry, and projection primitives
     threepcf/
         conventions/     shared spin and projection conventions
-        routes/
-            numeric/     B2D -> multipoles -> H -> ZetaK -> Zeta
-            slepian/     angular Slepian expression -> ZetaK -> Zeta
-            semi_analytic/  angular U/V/W expression -> multipoles -> ...
+        numeric.py       numeric 3PCF route assembly
+        slepian.py       angular Slepian expression -> ZetaK -> Zeta
+        semi_analytic.py angular U/V/W expression -> multipoles -> ...
 ```
 
-The routes are specifically bispectrum-to-3PCF algorithms and therefore live
-under `threepcf/routes`, not in an ambiguous top-level `routes` package.
+The route modules are specifically bispectrum-to-3PCF algorithms and therefore
+live directly under `threepcf`, not in an ambiguous top-level `routes` package.
+Multipole production is top-level because it produces a reusable mathematical
+object rather than a 3PCF result.
 Projection is top-level because converting a 3D expression into an angular or
 LOS-integrated expression is useful independently of a final 3PCF route.
 
@@ -588,16 +704,17 @@ The refactor remains incremental, but preservation of an old wrapper is not a
 design objective. Existing implementations remain temporarily available only
 until their reusable kernels and numerical behavior have replacement tests.
 
-As of version `2.0.23`, steps 1--8 below are implemented. The old bispectrum
+As of version `2.0.24`, steps 1--8 below are implemented. The old bispectrum
 object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
 entry point are in `legacy/bispectrum_object_api/`. The computing Grid
 pipeline formerly under `fastnc/threepcf` is in
 `legacy/threepcf_grid_pipeline/`. Neither archive is an active import.
 Route-independent projection primitives have been extracted into
 `fastnc/projection`, and the new route ownership exists under
-`fastnc/threepcf/routes`. Shared spin and output-projection conventions live
-under `fastnc/threepcf/conventions`. No Slepian or semi-analytic route is
-implemented yet.
+`fastnc/threepcf`. Shared spin and output-projection conventions live under
+`fastnc/threepcf/conventions`. Route-independent multipole products and their
+numeric producer live under `fastnc/multipole`. No Slepian or semi-analytic
+route is implemented yet.
 
 1. Introduce representation value types and weighted term composition without
    changing existing model behavior.

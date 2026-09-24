@@ -9,8 +9,25 @@ from fastnc.threepcf.conventions import (
 
 
 class ThreePCFStructureTests(unittest.TestCase):
-    def test_top_level_exposes_only_conventions_and_routes(self):
-        self.assertEqual(threepcf.__all__, ["conventions", "routes"])
+    def test_top_level_exposes_conventions_and_flat_route_modules(self):
+        self.assertEqual(
+            threepcf.__all__,
+            [
+                "HKernelKey",
+                "HKernelTable",
+                "NumericRouteConfig",
+                "ThreePCF",
+                "ZetaKKey",
+                "ZetaKTable",
+                "ZetaTable",
+                "config",
+                "conventions",
+                "numeric",
+                "semi_analytic",
+                "slepian",
+                "tables",
+            ],
+        )
 
     def test_spin_conventions_remain_active_without_grid_pipeline(self):
         effective = EffectiveSpinTriple((2, -2, 2))

@@ -46,15 +46,16 @@ into the active architecture and adding an independent test for its contract.
 The directory `legacy/threepcf_grid_pipeline/` is also a non-importable
 reference archive. It contains the retired 3PCF prototype in which Grid
 objects performed calculations and managed route state. Active code must not
-import from it. Keep active `fastnc/threepcf` organized into shared
-conventions and explicit route packages; new result/Grid types must be passive.
+import from it. Keep active `fastnc/threepcf` organized into shared conventions
+and explicit route modules; new result/Grid types must be passive.
 
 The directory `legacy/compat/` contains the retired adapters for the archived
 object APIs. It is reference material only; active code must not import it or
 use it to preserve compatibility with the retired architecture.
 
-Line-of-sight kernels and geometry belong in `fastnc/projection`. Algorithms
-that map angular bispectrum representations to 3PCF products belong in
-`fastnc/threepcf/routes/{numeric,slepian,semi_analytic}`. Keep route-independent
-projection code out of route packages, and keep physical bispectrum models out
-of both projection and route packages.
+Line-of-sight kernels and geometry belong in `fastnc/projection`.
+Route-independent multipole products and producers belong in
+`fastnc/multipole`. Algorithms that map angular representations to 3PCF
+products belong in the flat `fastnc/threepcf/{numeric,slepian,semi_analytic}`
+modules. Keep route-independent projection code out of route modules, and keep
+physical bispectrum models out of both projection and route modules.

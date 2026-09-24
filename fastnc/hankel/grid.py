@@ -31,6 +31,62 @@ class TunedFFTGrid:
     down_sampler: np.ndarray
     xy: float
 
+    def __post_init__(self):
+        ell = np.asarray(self.ell, dtype=float)
+        theta = np.asarray(self.theta, dtype=float)
+        down_sampler = np.asarray(self.down_sampler, dtype=int)
+        if ell.ndim != 1 or ell.size < 2:
+            raise ValueError("ell must be a one-dimensional grid with at least two points")
+        if theta.ndim != 1 or theta.size != ell.size:
+            raise ValueError("theta must be one-dimensional and match ell.size")
+        if down_sampler.ndim != 1 or down_sampler.size < 1:
+            raise ValueError("down_sampler must be a non-empty one-dimensional array")
+        if np.any(~np.isfinite(ell)) or np.any(ell <= 0.0):
+            raise ValueError("ell must contain finite positive values")
+        if np.any(~np.isfinite(theta)) or np.any(theta <= 0.0):
+            raise ValueError("theta must contain finite positive values")
+        if np.any(np.diff(ell) <= 0.0) or np.any(np.diff(theta) <= 0.0):
+            raise ValueError("ell and theta must be strictly increasing")
+        if np.any(down_sampler < 0) or np.any(down_sampler >= theta.size):
+            raise ValueError("down_sampler contains an out-of-range index")
+        if np.any(np.diff(down_sampler) <= 0):
+            raise ValueError("down_sampler must be strictly increasing")
+        xy = float(self.xy)
+        if not np.isfinite(xy) or xy <= 0.0:
+            raise ValueError("xy must be finite and positive")
+        ell = np.array(ell, copy=True)
+        theta = np.array(theta, copy=True)
+        down_sampler = np.array(down_sampler, copy=True)
+        for array in (ell, theta, down_sampler):
+            array.setflags(write=False)
+        object.__setattr__(self, "ell", ell)
+        object.__setattr__(self, "theta", theta)
+        object.__setattr__(self, "down_sampler", down_sampler)
+        object.__setattr__(self, "xy", xy)
+
+    @property
+    def target_theta(self) -> np.ndarray:
+        """Requested theta bins embedded exactly in the full FFTLog grid."""
+        out = self.theta[self.down_sampler]
+        out.setflags(write=False)
+        return out
+
+    def downsample_2d(self, values, *, axis1: int = -2, axis2: int = -1):
+        """Select target theta bins along two full-grid axes."""
+        values = np.asarray(values)
+        if values.ndim < 2:
+            raise ValueError("values must have at least two dimensions")
+        axis1 %= values.ndim
+        axis2 %= values.ndim
+        if axis1 == axis2:
+            raise ValueError("axis1 and axis2 must be distinct")
+        if values.shape[axis1] != self.theta.size:
+            raise ValueError("axis1 does not match the full theta grid")
+        if values.shape[axis2] != self.theta.size:
+            raise ValueError("axis2 does not match the full theta grid")
+        out = np.take(values, self.down_sampler, axis=axis1)
+        return np.take(out, self.down_sampler, axis=axis2)
+
 
 def tune_fft_grid_size(lmin: float, lmax: float, nfft_min: int, dt: float):
     """Tune a linear grid in log-space to align with a target bin spacing.

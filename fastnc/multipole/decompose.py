@@ -1,4 +1,4 @@
-"""One-dimensional multipole decomposers.
+"""Pure one-dimensional multipole decomposers.
 
 These classes implement the interpolation-coefficient projection used in
 Sugiyama et al. rather than a naive Riemann sum.  The input samples are

@@ -2,25 +2,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
 
 @dataclass(frozen=True)
 class NumericMultipoleConfig:
-    """Angular quadrature and Fourier-basis conventions."""
+    """Angular sampling, quadrature, and basis conventions."""
 
-    mode_max: int = 30
     n_angle: int = 257
     delta_beta_min: float = 5.0e-4
     delta_beta_max: float = np.pi - 5.0e-4
-    basis: str = "fourier-even"
+    basis: Literal["cosine", "sine", "fourier"] = "cosine"
     decomposition_angle: str = "outer"
     method: str = "gauss-legendre"
 
     def __post_init__(self):
-        if int(self.mode_max) < 0:
-            raise ValueError("mode_max must be non-negative")
         if int(self.n_angle) < 2:
             raise ValueError("n_angle must be at least two")
         if not (
@@ -31,20 +29,17 @@ class NumericMultipoleConfig:
             raise ValueError(
                 "require 0 <= delta_beta_min < delta_beta_max <= pi"
             )
-        if self.basis not in {"fourier-even", "fourier"}:
-            raise ValueError("basis must be 'fourier-even' or 'fourier'")
+        basis = "cosine" if self.basis == "fourier-even" else self.basis
+        if basis not in {"cosine", "sine", "fourier"}:
+            raise ValueError("basis must be 'cosine', 'sine', or 'fourier'")
         if self.decomposition_angle not in {"outer", "inner"}:
             raise ValueError("decomposition_angle must be 'outer' or 'inner'")
         if self.method not in {"gauss-legendre", "linear", "riemann"}:
             raise ValueError("unsupported decomposition method")
-        object.__setattr__(self, "mode_max", int(self.mode_max))
         object.__setattr__(self, "n_angle", int(self.n_angle))
-        object.__setattr__(
-            self, "delta_beta_min", float(self.delta_beta_min)
-        )
-        object.__setattr__(
-            self, "delta_beta_max", float(self.delta_beta_max)
-        )
+        object.__setattr__(self, "delta_beta_min", float(self.delta_beta_min))
+        object.__setattr__(self, "delta_beta_max", float(self.delta_beta_max))
+        object.__setattr__(self, "basis", basis)
 
     @property
     def delta_beta(self) -> np.ndarray:
@@ -53,9 +48,3 @@ class NumericMultipoleConfig:
             self.delta_beta_max,
             self.n_angle,
         )
-
-    @property
-    def modes(self) -> np.ndarray:
-        if self.basis == "fourier":
-            return np.arange(-self.mode_max, self.mode_max + 1)
-        return np.arange(0, self.mode_max + 1)

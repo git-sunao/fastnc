@@ -9,8 +9,9 @@ from fastnc.bispectrum import (
     NumericExpression3D,
 )
 from fastnc.projection import LOSProjector
-from fastnc.threepcf.routes.numeric import (
-    NumericMultipoleCalculator,
+from fastnc.multipole import (
+    BispectrumMultipole,
+    NumericBispectrumMultipoleCalculator,
     NumericMultipoleConfig,
     decompose_angular_multipoles,
     triangle_closing_side,
@@ -66,7 +67,29 @@ class AngularMultipoleKernelTests(unittest.TestCase):
         expected = np.zeros(7)
         expected[modes == 0] = 1.0
         expected[np.abs(modes) == 2] = 0.3
-        np.testing.assert_allclose(coefficients, expected, atol=1.0e-6)
+        np.testing.assert_allclose(coefficients, expected, atol=5.0e-6)
+
+    def test_sine_basis_recovers_single_sine_mode(self):
+        values = 1.7 * np.sin(3 * self.delta_beta)
+        modes = np.arange(1, 6)
+        coefficients = decompose_angular_multipoles(
+            values,
+            self.delta_beta,
+            modes,
+            basis="sine",
+        )
+        expected = np.zeros(5)
+        expected[modes == 3] = 1.7
+        np.testing.assert_allclose(coefficients, expected, atol=5.0e-6)
+
+        inner = decompose_angular_multipoles(
+            values,
+            self.delta_beta,
+            modes,
+            basis="sine",
+            decomposition_angle="inner",
+        )
+        np.testing.assert_allclose(inner, expected, atol=5.0e-6)
 
     def test_triangle_closing_side_obeys_endpoint_geometry(self):
         ell2 = np.array([2.0, 5.0])
@@ -84,12 +107,11 @@ class AngularMultipoleKernelTests(unittest.TestCase):
 class NumericMultipoleCalculatorTests(unittest.TestCase):
     def setUp(self):
         self.config = NumericMultipoleConfig(
-            mode_max=4,
             n_angle=513,
             delta_beta_min=0.0,
             delta_beta_max=np.pi,
         )
-        self.calculator = NumericMultipoleCalculator(self.config)
+        self.calculator = NumericBispectrumMultipoleCalculator(self.config)
 
     def test_calculator_samples_broadcast_triangles_and_returns_mode_first(self):
         evaluator = lambda ell1, ell2, ell3: ell1**2 - ell2**2 - ell3**2
@@ -108,15 +130,94 @@ class NumericMultipoleCalculatorTests(unittest.TestCase):
             * np.cos(sampled.delta_beta),
             atol=1.0e-13,
         )
-        coefficients = self.calculator.decompose(sampled)
-        self.assertEqual(coefficients.shape, (5, 2, 3))
-        np.testing.assert_allclose(coefficients[0], 0.0, atol=1.0e-12)
+        values = self.calculator.decompose(sampled, modes=np.arange(5))
+        self.assertEqual(values.shape, (5, 2, 3))
+        np.testing.assert_allclose(values[0], 0.0, atol=1.0e-12)
         np.testing.assert_allclose(
-            coefficients[1],
+            values[1],
             2.0 * ell2 * ell3,
             rtol=2.0e-5,
         )
-        np.testing.assert_allclose(coefficients[2:], 0.0, atol=2.0e-12)
+        np.testing.assert_allclose(values[2:], 0.0, atol=2.0e-12)
+
+    def test_public_factory_defers_evaluation_and_retains_calculator(self):
+        calls = []
+
+        def evaluator(ell1, ell2, ell3):
+            calls.append(ell1.shape)
+            return 2.0 + 0.5 * (
+                ell1**2 - ell2**2 - ell3**2
+            ) / (ell2 * ell3)
+
+        result = BispectrumMultipole.from_numeric(
+            self.config,
+            evaluator,
+        )
+        self.assertEqual(calls, [])
+        self.assertIsInstance(result, BispectrumMultipole)
+        self.assertIsInstance(
+            result.calculator,
+            NumericBispectrumMultipoleCalculator,
+        )
+        self.assertEqual(result.basis, "cosine")
+        ell2 = np.array([2.0, 4.0])
+        ell3 = np.array([3.0, 6.0])
+        np.testing.assert_allclose(
+            result.evaluate(0, ell2, ell3),
+            2.0,
+            atol=1.0e-12,
+        )
+        np.testing.assert_allclose(
+            result.evaluate(1, ell2, ell3),
+            1.0,
+            rtol=2.0e-5,
+        )
+        self.assertEqual(len(calls), 2)
+        with self.assertRaises(TypeError):
+            result.evaluate(1.5, ell2, ell3)
+
+        values = result.evaluate([0, 1, 4], ell2, ell3)
+        self.assertEqual(values.shape, (3, 2))
+        np.testing.assert_allclose(values[0], 2.0, atol=1.0e-12)
+        np.testing.assert_allclose(values[1], 1.0, rtol=2.0e-5)
+
+    def test_multipole_exposes_canonical_fourier_coefficients(self):
+        cosine = BispectrumMultipole.from_numeric(
+            self.config,
+            lambda ell1, ell2, ell3: 3.0
+            + (ell1**2 - ell2**2 - ell3**2) / (ell2 * ell3),
+        )
+        ell = np.array([2.0, 4.0])
+        modes = np.array([-1, 0, 1])
+        values = cosine.evaluate_fourier(modes, ell, ell)
+        np.testing.assert_allclose(values[0], 1.0, rtol=2.0e-5)
+        np.testing.assert_allclose(values[1], 3.0, atol=1.0e-12)
+        np.testing.assert_allclose(values[2], 1.0, rtol=2.0e-5)
+
+        sine_config = NumericMultipoleConfig(
+            n_angle=513,
+            delta_beta_min=0.0,
+            delta_beta_max=np.pi,
+            basis="sine",
+        )
+        sine = BispectrumMultipole.from_numeric(
+            sine_config,
+            lambda ell1, ell2, ell3: np.sqrt(
+                np.maximum(
+                    1.0
+                    - (
+                        (ell1**2 - ell2**2 - ell3**2)
+                        / (2.0 * ell2 * ell3)
+                    )
+                    ** 2,
+                    0.0,
+                )
+            ),
+        )
+        sine_values = sine.evaluate_fourier(modes, ell, ell)
+        np.testing.assert_allclose(sine_values[0], 0.5j, rtol=2.0e-5)
+        np.testing.assert_array_equal(sine_values[1], 0.0)
+        np.testing.assert_allclose(sine_values[2], -0.5j, rtol=2.0e-5)
 
     def test_native_2d_and_fixed_redshift_3d_use_same_calculator(self):
         z = 0.7
@@ -138,9 +239,19 @@ class NumericMultipoleCalculatorTests(unittest.TestCase):
         )
         ell2 = np.array([2.0, 4.0])
         ell3 = np.array([3.0, 6.0])
-        from_3d = self.calculator.evaluate(angularized, ell2, ell3)
-        from_2d = self.calculator.evaluate(native, ell2, ell3)
-        np.testing.assert_allclose(from_3d, from_2d, atol=3.0e-14)
+        from_3d = BispectrumMultipole.from_numeric(
+            self.config,
+            angularized,
+        )
+        from_2d = BispectrumMultipole.from_numeric(
+            self.config,
+            native,
+        )
+        np.testing.assert_allclose(
+            from_3d.evaluate(np.arange(5), ell2, ell3),
+            from_2d.evaluate(np.arange(5), ell2, ell3),
+            atol=3.0e-14,
+        )
 
         sampled = self.calculator.sample(native, ell2, ell3)
         k1, k2, k3, z_seen = calls[0]

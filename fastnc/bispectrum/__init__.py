@@ -1,13 +1,6 @@
 """Bispectrum domain objects, representations, models, and pure kernels."""
 
 from .bispectrum import Bispectrum2D, Bispectrum3D
-from .decompose import (
-    MultipoleBase,
-    MultipoleCosine,
-    MultipoleFourier,
-    MultipoleLegendre,
-    MultipoleSine,
-)
 from .halofit import Halofit
 from .composition import NumericSumRepresentation2D
 from .interpolation import (
@@ -52,11 +45,6 @@ __all__ = [
     "BiHalofitBispectrum3D",
     "Halofit",
     "InterpolatedNumericRepresentation2D",
-    "MultipoleBase",
-    "MultipoleCosine",
-    "MultipoleFourier",
-    "MultipoleLegendre",
-    "MultipoleSine",
     "NFWOneHaloBispectrum3D",
     "NumericExpression2D",
     "NumericExpression3D",
