@@ -90,7 +90,7 @@ class ThreePCFNumericTests(unittest.TestCase):
             atol=1.0e-12,
         )
 
-    def test_non_fourier_basis_reaches_multipole_and_coupling_boundary(self):
+    def test_non_fourier_basis_is_shared_by_multipole_and_coupling(self):
         manager = ThreePCF(
             ThreePCFConfig(
                 basis="cosine",
@@ -104,11 +104,78 @@ class ThreePCFNumericTests(unittest.TestCase):
             self.phi,
         )
         self.assertEqual(manager.multipoles().basis, "cosine")
-        with self.assertRaisesRegex(
-            NotImplementedError,
-            "coupling for basis='cosine' is not implemented",
-        ):
-            manager.coupling((0, 0, 0))
+        self.assertEqual(manager.coupling((0, 0, 0)).basis, "cosine")
+
+    def test_sine_basis_keeps_complex_coupling_in_hkernel(self):
+        def sine_source(ell1, ell2, ell3):
+            cosine = (ell1**2 - ell2**2 - ell3**2) / (2.0 * ell2 * ell3)
+            return np.sqrt(np.maximum(1.0 - cosine**2, 0.0))
+
+        manager = ThreePCF(
+            ThreePCFConfig(
+                basis="sine",
+                Lmax=1,
+                kmax=1.0,
+                ell_min=10.0,
+                ell_max=1.0e3,
+                n_ell=12,
+                multipole=NumericMultipoleConfig(
+                    n_angle=65,
+                    delta_beta_min=0.0,
+                    delta_beta_max=np.pi,
+                ),
+                use_coupling_cache=False,
+            ),
+            sine_source,
+            self.theta,
+            self.phi,
+        )
+        table = manager.hkernel()
+        self.assertTrue(np.iscomplexobj(table.values))
+        self.assertGreater(np.max(np.abs(table.values.imag)), 0.0)
+
+    def test_fourier_cosine_and_legendre_hkernels_are_consistent(self):
+        def finite_source(ell1, ell2, ell3):
+            mu = (ell1**2 - ell2**2 - ell3**2) / (2.0 * ell2 * ell3)
+            return 2.0 + 1.5 * (3.0 * mu**2 - 1.0)
+
+        tables = {}
+        for basis in ("fourier", "cosine", "legendre"):
+            manager = ThreePCF(
+                ThreePCFConfig(
+                    spin=(2, 0, 0),
+                    basis=basis,
+                    Lmax=2,
+                    kmax=1.0,
+                    ell_min=10.0,
+                    ell_max=1.0e3,
+                    n_ell=12,
+                    multipole=NumericMultipoleConfig(
+                        n_angle=257,
+                        delta_beta_min=0.0,
+                        delta_beta_max=np.pi,
+                    ),
+                    use_coupling_cache=False,
+                ),
+                finite_source,
+                self.theta,
+                self.phi,
+            )
+            tables[basis] = manager.hkernel()
+
+        for key in tables["fourier"].keys:
+            np.testing.assert_allclose(
+                tables["cosine"].get(key),
+                tables["fourier"].get(key),
+                rtol=1.0e-12,
+                atol=1.0e-12,
+            )
+            np.testing.assert_allclose(
+                tables["legendre"].get(key),
+                tables["fourier"].get(key),
+                rtol=3.0e-5,
+                atol=1.0e-10,
+            )
 
     def test_spin_components_keep_all_three_epsilon_entries(self):
         manager = ThreePCF(

@@ -1,5 +1,7 @@
 """Spin coupling package for the Fourier-basis 3PCF formula."""
 
+from .basis import CouplingBasis, basis_fourier_terms
+
 from .compute import (
     CouplingIndex,
     allowed_k,
@@ -31,6 +33,7 @@ __all__ = [
     "CachePolicy",
     "CouplingCache",
     "CouplingCacheSession",
+    "CouplingBasis",
     "default_cache_dir",
     "default_coupling_cache_file",
     "resolve_coupling_cache_file",
@@ -40,6 +43,7 @@ __all__ = [
     "CouplingMatrix",
     "CouplingMatrixConfig",
     "allowed_k",
+    "basis_fourier_terms",
     "bar_beta",
     "coupling_delta",
     "coupling_delta_float",

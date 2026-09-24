@@ -613,16 +613,18 @@ The basis name is a calculation-wide convention rather than a quadrature
 setting.  A standalone `BispectrumMultipole` receives it explicitly, while a
 `ThreePCF` receives it once through `ThreePCFConfig.basis` and passes the same
 value to both its multipole calculator and coupling object.  The current
-choices are strings (`cosine`, `sine`, and `fourier`); a dedicated basis class
-is not justified until basis objects own behavior such as normalization,
-parity, reconstruction, or function evaluation.
+choices are strings (`cosine`, `sine`, `fourier`, and `legendre`); a dedicated
+basis class is not justified until basis objects own behavior beyond their
+finite Fourier expansion.
 
-Only Fourier-basis coupling is implemented at present.  Selecting `cosine` or
-`sine` still produces multipoles in that requested basis, but constructing the
-corresponding coupling raises `NotImplementedError`.  The assembly layer must
-not silently convert those coefficients to Fourier coefficients.  Consequently
-`BispectrumMultipole` exposes only `evaluate`; it has no `evaluate_fourier`
-conversion interface.
+`CouplingKernel` is the real-valued Fourier primitive and is the only layer
+that owns coupling cache and exact-support zeros.  `CouplingMatrix` expands a
+requested cosine, sine, Fourier, or Legendre mode into a finite set of Fourier
+modes, evaluates those primitives, and resums them.  No new-basis zero test or
+small-value threshold is applied after resummation.  Cosine and Legendre
+couplings remain real; sine coupling is generally purely imaginary.  The
+Fourier cache remains real-valued in every case.  `BispectrumMultipole`
+exposes only `evaluate`; it has no basis-conversion convenience interface.
 
 The dependency direction is
 

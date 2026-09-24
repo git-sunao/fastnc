@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .config import NumericMultipoleConfig
-from .decompose import MultipoleCosine, MultipoleSine
+from .decompose import MultipoleCosine, MultipoleLegendre, MultipoleSine
 
 
 def triangle_closing_side(ell2, ell3, delta_beta):
@@ -65,8 +65,16 @@ def decompose_angular_multipoles(
         projected_modes = np.abs(modes)
         normalization = np.full(modes.shape, 1.0 / np.pi)
         decomposer_type = MultipoleCosine
+    elif basis == "legendre":
+        if np.any(modes < 0):
+            raise ValueError("Legendre modes must be non-negative")
+        projected_modes = modes
+        normalization = np.ones(modes.shape)
+        decomposer_type = MultipoleLegendre
     else:
-        raise ValueError("basis must be 'cosine', 'sine', or 'fourier'")
+        raise ValueError(
+            "basis must be 'cosine', 'sine', 'fourier', or 'legendre'"
+        )
 
     if decomposition_angle == "outer":
         angle = delta_beta
@@ -80,11 +88,17 @@ def decompose_angular_multipoles(
     else:
         raise ValueError("decomposition_angle must be 'outer' or 'inner'")
 
+    coordinate = angle
+    decomposer_values = sampled
+    if basis == "legendre":
+        coordinate = np.cos(angle)[::-1]
+        decomposer_values = np.flip(sampled, axis=axis)
+
     raw = decomposer_type(
-        angle,
+        coordinate,
         max(int(np.max(projected_modes)), 0),
         method=method,
-    ).decompose(sampled, projected_modes, axis=axis)
+    ).decompose(decomposer_values, projected_modes, axis=axis)
     reshape = (modes.size,) + (1,) * (raw.ndim - 1)
     return raw * (normalization * sign).reshape(reshape)
 
@@ -116,8 +130,10 @@ class NumericBispectrumMultipoleCalculator:
         if not isinstance(self.config, NumericMultipoleConfig):
             raise TypeError("config must be a NumericMultipoleConfig")
         basis = "cosine" if basis == "fourier-even" else str(basis)
-        if basis not in {"cosine", "sine", "fourier"}:
-            raise ValueError("basis must be 'cosine', 'sine', or 'fourier'")
+        if basis not in {"cosine", "sine", "fourier", "legendre"}:
+            raise ValueError(
+                "basis must be 'cosine', 'sine', 'fourier', or 'legendre'"
+            )
         self.basis = basis
 
     def sample(self, evaluator, ell2, ell3, **params):

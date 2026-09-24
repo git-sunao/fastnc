@@ -1,13 +1,13 @@
-"""Callable objects for the Fourier-basis spin coupling kernel.
+"""Fourier primitive kernels and finite-resummed basis couplings.
 
 This module provides two callable objects:
 
 - CouplingKernel(sigma1): natural API for the X1-reference Fourier-basis
   kernel G_delta(sigma1; psi), where delta = L - nu_k.
 
-- CouplingMatrix(sigma1, sigma2, sigma3): backward-compatible API that
-  accepts (L, k) at call time, converts them to delta = L - nu_k, and then
-  delegates to CouplingKernel.
+- CouplingMatrix(sigma1, sigma2, sigma3, basis): accepts a mode in the
+  requested basis, expands that basis function into finitely many Fourier
+  modes, and delegates every primitive evaluation to CouplingKernel.
 
 The important implementation detail is that CouplingKernel.strength() uses
 _call_delta() rather than self(...).  This avoids accidental dispatch to
@@ -30,10 +30,10 @@ from .cache import (
     CouplingCacheSession,
     resolve_coupling_cache_file,
 )
+from .basis import CouplingBasis, basis_fourier_terms
 from .compute import _as_two_x, coupling_delta, exact_zero_delta, two_delta_from_L_k
 
 Method = Literal["auto", "cache", "direct"]
-Basis = Literal["cosine", "sine", "fourier"]
 
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,6 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CouplingKernelConfig:
     sigma1: int
-    basis: Basis = "fourier"
     use_cache: bool = True
     cache_file: str | Path | None = None
     npsi: int = 1025
@@ -65,7 +64,6 @@ class CouplingKernel:
         self,
         sigma1: int,
         *,
-        basis: Basis = "fourier",
         use_cache: bool = True,
         cache_file: str | Path | None = None,
         npsi: int = 1025,
@@ -75,18 +73,11 @@ class CouplingKernel:
         atol: float = 1e-14,
         cache_session: CouplingCacheSession | None = None,
     ) -> None:
-        if basis not in {"cosine", "sine", "fourier"}:
-            raise ValueError("basis must be 'cosine', 'sine', or 'fourier'")
-        if basis != "fourier":
-            raise NotImplementedError(
-                f"coupling for basis={basis!r} is not implemented"
-            )
         if lazy is not None:
             cache_policy = "lazy" if lazy else "read_only"
 
         self.config = CouplingKernelConfig(
             sigma1=int(sigma1),
-            basis=basis,
             use_cache=bool(use_cache),
             cache_file=resolve_coupling_cache_file(cache_file),
             npsi=int(npsi),
@@ -109,10 +100,6 @@ class CouplingKernel:
         return self.config.sigma1
 
     @property
-    def basis(self) -> str:
-        return self.config.basis
-
-    @property
     def two_q(self) -> int:
         return self.sigma1
 
@@ -133,8 +120,7 @@ class CouplingKernel:
     def __repr__(self) -> str:
         mode = "cache" if self.config.use_cache else "direct"
         return (
-            f"CouplingKernel(sigma1={self.sigma1}, q={self.q}, "
-            f"basis='{self.basis}', default={mode}, "
+            f"CouplingKernel(sigma1={self.sigma1}, q={self.q}, default={mode}, "
             f"cache_file='{self.config.cache_file}', npsi={self.config.npsi}, "
             f"cache_policy='{self.config.cache_policy}')"
         )
@@ -434,7 +420,7 @@ class CouplingMatrix(CouplingKernel):
         sigma2: int,
         sigma3: int,
         *,
-        basis: Basis = "fourier",
+        basis: CouplingBasis = "fourier",
         use_cache: bool = True,
         cache_file: str | Path | None = None,
         npsi: int = 1025,
@@ -444,11 +430,15 @@ class CouplingMatrix(CouplingKernel):
         atol: float = 1e-14,
         cache_session: CouplingCacheSession | None = None,
     ) -> None:
+        if basis not in {"cosine", "sine", "fourier", "legendre"}:
+            raise ValueError(
+                "basis must be 'cosine', 'sine', 'fourier', or 'legendre'"
+            )
+        self._basis = basis
         self._sigma2 = int(sigma2)
         self._sigma3 = int(sigma3)
         super().__init__(
             int(sigma1),
-            basis=basis,
             use_cache=use_cache,
             cache_file=cache_file,
             npsi=npsi,
@@ -471,6 +461,10 @@ class CouplingMatrix(CouplingKernel):
     def sigma(self) -> tuple[int, int, int]:
         return (self.sigma1, self.sigma2, self.sigma3)
 
+    @property
+    def basis(self) -> str:
+        return self._basis
+
     def __repr__(self) -> str:
         mode = "cache" if self.config.use_cache else "direct"
         return (
@@ -486,7 +480,7 @@ class CouplingMatrix(CouplingKernel):
             return None
         return 0.5 * two_delta
 
-    def __call__(
+    def _call_fourier(
         self,
         L: int,
         k: int | float,
@@ -516,6 +510,40 @@ class CouplingMatrix(CouplingKernel):
             lazy=lazy,
             fallback_direct=fallback_direct,
         )
+
+    def __call__(
+        self,
+        mode: int,
+        k: int | float,
+        psi: float | np.ndarray,
+        *,
+        method: Method | None = None,
+        use_cache: bool | None = None,
+        cache_file: str | Path | None = None,
+        npsi: int | None = None,
+        cache_policy: CachePolicy | None = None,
+        lazy: bool | None = None,
+        fallback_direct: bool | None = None,
+    ) -> float | complex | np.ndarray:
+        """Evaluate one coupling mode in the configured angular basis."""
+        result = None
+        for fourier_mode, coefficient in basis_fourier_terms(mode, self.basis):
+            primitive = self._call_fourier(
+                fourier_mode,
+                k,
+                psi,
+                method=method,
+                use_cache=use_cache,
+                cache_file=cache_file,
+                npsi=npsi,
+                cache_policy=cache_policy,
+                lazy=lazy,
+                fallback_direct=fallback_direct,
+            )
+            term = coefficient * primitive
+            result = term if result is None else result + term
+        assert result is not None
+        return result.item() if np.ndim(result) == 0 else result
 
     def ensure_cache_for(self, L: int, k: int | float, *, npsi: int | None = None) -> None:
         delta = self.delta(int(L), k)

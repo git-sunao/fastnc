@@ -91,6 +91,20 @@ class AngularMultipoleKernelTests(unittest.TestCase):
         )
         np.testing.assert_allclose(inner, expected, atol=5.0e-6)
 
+    def test_legendre_basis_recovers_polynomial_modes(self):
+        mu = np.cos(self.delta_beta)
+        values = 2.0 + 3.0 * np.polynomial.legendre.Legendre.basis(2)(mu)
+        coefficients = decompose_angular_multipoles(
+            values,
+            self.delta_beta,
+            modes=np.arange(5),
+            basis="legendre",
+        )
+        expected = np.zeros(5)
+        expected[0] = 2.0
+        expected[2] = 3.0
+        np.testing.assert_allclose(coefficients, expected, atol=1.0e-5)
+
     def test_triangle_closing_side_obeys_endpoint_geometry(self):
         ell2 = np.array([2.0, 5.0])
         ell3 = np.array([3.0, 1.0])

@@ -15,7 +15,7 @@ class ThreePCFConfig:
     """Physical conventions, Fourier grid, and route settings."""
 
     spin: tuple[int, int, int] = (0, 0, 0)
-    basis: Literal["cosine", "sine", "fourier"] = "fourier"
+    basis: Literal["cosine", "sine", "fourier", "legendre"] = "fourier"
     Lmax: int = 30
     kmax: float = 30.0
     ell_min: float = 1.0e-1
@@ -37,10 +37,14 @@ class ThreePCFConfig:
         spin = tuple(int(value) for value in self.spin)
         if len(spin) != 3:
             raise ValueError("spin must contain exactly three entries")
-        if self.basis not in {"cosine", "sine", "fourier"}:
-            raise ValueError("basis must be 'cosine', 'sine', or 'fourier'")
+        if self.basis not in {"cosine", "sine", "fourier", "legendre"}:
+            raise ValueError(
+                "basis must be 'cosine', 'sine', 'fourier', or 'legendre'"
+            )
         if int(self.Lmax) < 0:
             raise ValueError("Lmax must be non-negative")
+        if self.basis == "sine" and int(self.Lmax) < 1:
+            raise ValueError("Lmax must be at least one for the sine basis")
         if float(self.kmax) < 0.0:
             raise ValueError("kmax must be non-negative")
         if float(self.ell_min) <= 0.0:

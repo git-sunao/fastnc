@@ -270,6 +270,15 @@ class ThreePCF:
         two_nu = int(round(2.0 * float(effective.nu(k))))
         return HKernelKey(sigma1=effective.sigma1, two_nu=two_nu)
 
+    def _multipole_modes(self) -> np.ndarray:
+        if self.config.basis == "fourier":
+            return np.arange(-self.config.Lmax, self.config.Lmax + 1)
+        if self.config.basis in {"cosine", "legendre"}:
+            return np.arange(self.config.Lmax + 1)
+        if self.config.basis == "sine":
+            return np.arange(1, self.config.Lmax + 1)
+        raise ValueError(f"unsupported basis: {self.config.basis!r}")
+
     def hkernel(
         self,
         *,
@@ -285,7 +294,7 @@ class ThreePCF:
         ell2, ell3 = np.meshgrid(self.grid.ell, self.grid.ell, indexing="ij")
         psi = np.arctan2(ell3, ell2)
         psi_unique, inverse = np.unique(psi, return_inverse=True)
-        modes = np.arange(-self.config.Lmax, self.config.Lmax + 1)
+        modes = self._multipole_modes()
         coefficients = self.multipoles().evaluate(modes, ell2, ell3)
 
         values: dict[HKernelKey, np.ndarray] = {}
@@ -299,12 +308,14 @@ class ThreePCF:
                 aliases[ComponentModeKey.from_epsilon_k(epsilon, k)] = key
                 if key in values:
                     continue
-                coupling_values = np.empty(coefficients.shape, dtype=float)
-                for index, mode in enumerate(modes):
-                    sampled = np.asarray(
-                        coupling(int(mode), float(k), psi_unique), dtype=float
-                    )
-                    coupling_values[index] = sampled[inverse].reshape(psi.shape)
+                coupling_values = np.stack(
+                    [
+                        np.asarray(
+                            coupling(int(mode), float(k), psi_unique)
+                        )[inverse].reshape(psi.shape)
+                        for mode in modes
+                    ]
+                )
                 values[key] = contract_hkernel(
                     coefficients, coupling_values
                 )
