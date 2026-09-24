@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 
 import numpy as np
 
@@ -70,6 +71,53 @@ def _validation_threepcf_config(*, Lmax, kmax):
 
 
 class BruteForce3PCFTests(unittest.TestCase):
+    def test_single_spin_placements_match_numeric_route(self):
+        scale = 300.0
+
+        def source(ell1, ell2, ell3):
+            mu = (ell1**2 - ell2**2 - ell3**2) / (2.0 * ell2 * ell3)
+            radial = np.exp(
+                -0.5 * (ell2 / scale) ** 2
+                -0.5 * (ell3 / scale) ** 2
+            )
+            return radial * (1.0 + 0.2 * (2.0 * mu**2 - 1.0))
+
+        theta = np.geomspace(0.001, 0.005, 3)
+        phi = np.array([0.4, 1.4])
+        for spin in ((2, 0, 0), (0, 2, 0), (0, 0, 2)):
+            with self.subTest(spin=spin):
+                config = _validation_threepcf_config(Lmax=2, kmax=4.0)
+                config = replace(
+                    config,
+                    spin=spin,
+                    n_ell=64,
+                    multipole=NumericMultipoleConfig(
+                        n_angle=65,
+                        delta_beta_min=0.0,
+                        delta_beta_max=np.pi,
+                    ),
+                )
+                numeric = ThreePCF(
+                    config,
+                    source,
+                    theta,
+                    phi,
+                ).zeta().values[0]
+                brute = BruteForceX3PCF(
+                    source,
+                    spin=spin,
+                    component=0,
+                    config=_validation_brute_config(),
+                ).compute(theta, theta, phi).value
+
+                scale_value = max(
+                    np.max(np.abs(numeric)), np.max(np.abs(brute))
+                )
+                self.assertLess(
+                    np.max(np.abs(numeric - brute)) / scale_value,
+                    0.012,
+                )
+
     def test_scalar_separable_model_matches_analytic_hankel_product(self):
         scale = 300.0
 
