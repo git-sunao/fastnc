@@ -22,6 +22,7 @@ class ThreePCFStructureTests(unittest.TestCase):
                 "HKernelTable",
                 "ThreePCF",
                 "ThreePCFConfig",
+                "SlepianConfig",
                 "ZetaKKey",
                 "ZetaKTable",
                 "ZetaTable",

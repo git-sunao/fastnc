@@ -11,6 +11,47 @@ from fastnc.multipole import NumericMultipoleConfig
 
 
 @dataclass(frozen=True)
+class SlepianConfig:
+    """Numerical controls for FFTLog and Weber-Schafheitlin transforms."""
+
+    bias: float = 0.0
+    taper_fraction: float = 0.0
+    window_fraction: float = 0.0
+    weber_rtol: float = 1.0e-12
+    weber_method: Literal["direct", "interpolated"] = "direct"
+    weber_interpolation_nodes: int = 64
+    weber_interpolation_max_ratio: float = 0.8
+    diagonal_correction: Literal["brute", "none"] = "brute"
+
+    def __post_init__(self):
+        for name in ("taper_fraction", "window_fraction"):
+            value = float(getattr(self, name))
+            if not 0.0 <= value < 0.5:
+                raise ValueError(f"{name} must lie in [0, 0.5)")
+            object.__setattr__(self, name, value)
+        if float(self.weber_rtol) <= 0.0:
+            raise ValueError("weber_rtol must be positive")
+        if self.weber_method not in {"direct", "interpolated"}:
+            raise ValueError("weber_method must be 'direct' or 'interpolated'")
+        if int(self.weber_interpolation_nodes) < 4:
+            raise ValueError("weber_interpolation_nodes must be at least four")
+        if not 0.0 < float(self.weber_interpolation_max_ratio) < 1.0:
+            raise ValueError("weber_interpolation_max_ratio must lie in (0, 1)")
+        if self.diagonal_correction not in {"brute", "none"}:
+            raise ValueError("diagonal_correction must be 'brute' or 'none'")
+        object.__setattr__(self, "bias", float(self.bias))
+        object.__setattr__(self, "weber_rtol", float(self.weber_rtol))
+        object.__setattr__(
+            self, "weber_interpolation_nodes", int(self.weber_interpolation_nodes)
+        )
+        object.__setattr__(
+            self,
+            "weber_interpolation_max_ratio",
+            float(self.weber_interpolation_max_ratio),
+        )
+
+
+@dataclass(frozen=True)
 class ThreePCFConfig:
     """Physical conventions, Fourier grid, and route settings."""
 
@@ -31,6 +72,7 @@ class ThreePCFConfig:
     coupling_fallback_direct: bool = True
     coupling_atol: float = 1.0e-14
     hankel: DoubleHankelConfig = field(default_factory=DoubleHankelConfig)
+    slepian: SlepianConfig = field(default_factory=SlepianConfig)
     bin_width_logtheta: float | None = None
 
     def __post_init__(self):
@@ -55,6 +97,8 @@ class ThreePCFConfig:
             raise ValueError("n_ell must be at least two")
         if not isinstance(self.multipole, NumericMultipoleConfig):
             raise TypeError("multipole must be a NumericMultipoleConfig")
+        if not isinstance(self.slepian, SlepianConfig):
+            raise TypeError("slepian must be a SlepianConfig")
         if int(self.coupling_npsi) < 3:
             raise ValueError("coupling_npsi must be at least three")
         if self.coupling_cache_policy not in {"read_only", "lazy", "refresh"}:

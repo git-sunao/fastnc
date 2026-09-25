@@ -11,6 +11,8 @@ from fastnc.bispectrum import (
     NFWOneHaloBispectrum3D,
     NumericExpression2D,
     NumericExpression3D,
+    SlepianExpression2D,
+    SlepianRadialFactor2D,
     SPTGalaxyBispectrum3D,
     SPTMatterBispectrum3D,
 )
@@ -18,6 +20,23 @@ from fastnc.bispectrum.models.spt import _pair_cosine, f2_kernel, tidal_kernel
 
 
 class BispectrumRepresentationTests(unittest.TestCase):
+    def test_slepian_expression_keeps_mathematical_factorization(self):
+        factor = SlepianRadialFactor2D(lambda ell: np.exp(-np.asarray(ell)))
+        constant = SlepianRadialFactor2D.constant()
+        expression = SlepianExpression2D(
+            coefficient=2.0,
+            radial_factors=(factor, factor, constant),
+            angular_orders=(1, -1, 0),
+        )
+        self.assertEqual(expression.constant_legs, (2,))
+        np.testing.assert_allclose(constant([1.0, 2.0]), 1.0)
+        with self.assertRaisesRegex(ValueError, "sum to zero"):
+            SlepianExpression2D(
+                1.0,
+                (factor, factor, constant),
+                (1, 0, 0),
+            )
+
     def test_numeric_expressions_evaluate_directly(self):
         expression3d = NumericExpression3D(
             lambda k1, k2, k3, z: (k1 + k2 + k3) * (1.0 + z)

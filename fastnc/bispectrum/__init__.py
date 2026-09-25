@@ -25,6 +25,9 @@ from .representations import (
     NumericExpression3D,
     NumericRepresentation2D,
     NumericRepresentation3D,
+    SlepianExpression2D,
+    SlepianRadialFactor2D,
+    SlepianRepresentation2D,
 )
 from .support import Support2D, Support3D
 from .terms import (
@@ -51,6 +54,9 @@ __all__ = [
     "NumericSumRepresentation2D",
     "NumericRepresentation2D",
     "NumericRepresentation3D",
+    "SlepianExpression2D",
+    "SlepianRadialFactor2D",
+    "SlepianRepresentation2D",
     "OneHaloProductBispectrum3D",
     "SPTGalaxyBispectrum3D",
     "SPTMatterBispectrum3D",

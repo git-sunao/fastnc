@@ -404,7 +404,7 @@ class ThreePCFNumericTests(unittest.TestCase):
         self.assertEqual(self.manager._hkernel_tables, {})
         self.assertEqual(self.manager._zetak_tables, {})
         self.assertEqual(self.manager._zeta_tables, {})
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaisesRegex(TypeError, "requires a Bispectrum2D"):
             self.manager.zetak()
 
         self.manager.set_route("numeric")

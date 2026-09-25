@@ -7,7 +7,7 @@ from .bruteforce import (
     BruteForce3PCFResult,
     BruteForceX3PCF,
 )
-from .config import ThreePCFConfig
+from .config import SlepianConfig, ThreePCFConfig
 from .tables import (
     ComponentModeKey,
     HKernelKey,
@@ -28,6 +28,7 @@ __all__ = [
     "HKernelTable",
     "ThreePCF",
     "ThreePCFConfig",
+    "SlepianConfig",
     "ZetaKKey",
     "ZetaKTable",
     "ZetaTable",

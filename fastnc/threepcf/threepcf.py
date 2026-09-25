@@ -16,6 +16,7 @@ from .config import ThreePCFConfig
 from .conventions import SpinSpec, as_effective_spin_triple
 from .conventions.projection import _projection_name
 from .numeric import contract_hkernel
+from .slepian import SlepianCalculator
 from .tables import (
     ComponentModeKey,
     HKernelKey,
@@ -76,6 +77,7 @@ class ThreePCF:
         self._coupling_cache_sessions: dict[Path, CouplingCacheSession] = {}
         self._couplings: dict[tuple[int, int, int], object] = {}
         self._multipole: BispectrumMultipole | None = None
+        self._slepian_calculator: SlepianCalculator | None = None
         self._hkernel_tables: dict[
             tuple[tuple[int, int, int], ...], HKernelTable
         ] = {}
@@ -125,6 +127,7 @@ class ThreePCF:
 
     def _clear_route_results(self) -> None:
         self._multipole = None
+        self._slepian_calculator = None
         self._clear_grid_results()
 
     def _source_state_token(self):
@@ -137,6 +140,7 @@ class ThreePCF:
             return
         self._bispectrum_state_token = token
         self._multipole = None
+        self._slepian_calculator = None
         self._clear_grid_results()
 
     def set_theta(self, theta) -> None:
@@ -146,6 +150,7 @@ class ThreePCF:
             return
         self._theta = updated
         self.grid = self._make_grid()
+        self._slepian_calculator = None
         self._clear_grid_results()
 
     def set_phi(self, phi) -> None:
@@ -339,13 +344,16 @@ class ThreePCF:
     ) -> ZetaKTable:
         """Return opening-angle modes using the retained route policy."""
         self._sync_source_state()
-        if self.route != "numeric":
+        if self.route == "semi_analytic":
             raise NotImplementedError(
                 f"route={self.route!r} is not implemented"
             )
         requested_epsilons = self._epsilons(epsilons)
         if requested_epsilons in self._zetak_tables:
             return self._zetak_tables[requested_epsilons]
+
+        if self.route == "slepian":
+            return self._zetak_slepian(requested_epsilons)
 
         spin_spec = SpinSpec(self.config.spin)
         htable = self.hkernel(epsilons=requested_epsilons)
@@ -382,6 +390,50 @@ class ThreePCF:
                         "double Hankel output does not match the tuned theta grid"
                     )
                 values[key] = self.grid.downsample_2d(full)
+
+        keys = tuple(values)
+        table = ZetaKTable(
+            self.theta,
+            keys,
+            np.stack([values[key] for key in keys]),
+            aliases=aliases,
+        )
+        self._zetak_tables[requested_epsilons] = table
+        return table
+
+    def _zetak_slepian(
+        self,
+        requested_epsilons: tuple[tuple[int, int, int], ...],
+    ) -> ZetaKTable:
+        if self.config.spin != (0, 0, 0):
+            raise NotImplementedError(
+                "the initial Slepian route supports spin=(0, 0, 0) only"
+            )
+        if self._slepian_calculator is None:
+            self._slepian_calculator = SlepianCalculator(self.config.slepian)
+
+        epsilon = (1, 1, 1)
+        if requested_epsilons != (epsilon,):
+            raise ValueError(
+                "the scalar Slepian route has only epsilon=(1, 1, 1)"
+            )
+        effective = as_effective_spin_triple(self.config.spin)
+        k_values = effective.k_values(self.config.kmax)
+        mode_values = self._slepian_calculator.evaluate_modes(
+            self._bispectrum,
+            self.grid.ell,
+            self.theta,
+            k_values,
+        )
+
+        values: dict[ZetaKKey, np.ndarray] = {}
+        aliases: dict[ComponentModeKey, ZetaKKey] = {}
+        for k in k_values:
+            hkey = self._hkey(self.config.spin, float(k))
+            m, n = effective.bessel_orders(float(k))
+            key = ZetaKKey(hkey, m, n, effective.Sigma)
+            aliases[ComponentModeKey.from_epsilon_k(epsilon, k)] = key
+            values[key] = mode_values[int(k)]
 
         keys = tuple(values)
         table = ZetaKTable(
