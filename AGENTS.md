@@ -23,36 +23,70 @@ These rules apply to all future development in this repository.
    mathematical notation unchanged when that makes the code easier to follow.
 4. Never add or commit Jupyter notebooks to Git. Development notebooks remain
    local, untracked files.
+5. Keep exploratory notebooks and calculation records under `dev/`, grouped by
+   topic. Place notebooks, Python helpers, data, and final PDFs directly in the
+   topic directory; only TeX sources belong in a `tex/` subdirectory. Reserve
+   `tutorials/` for polished examples of the supported public API; never place
+   development notebooks there. The entire `dev/` tree is local working state
+   and must remain excluded from Git because notebooks, figures, data, and
+   helper scripts change frequently. Preserve durable design decisions in
+   `docs/design/`; promote reusable code and regression coverage into
+   `fastnc/` and `tests/` rather than tracking selected files from `dev/`.
 
 Changes limited to documentation, tests, notebooks, Git configuration, or
 these development rules do not by themselves require a version increment or a
 new validation notebook.
 
+## Development environment
+
+Run tests, validation scripts, and development notebooks with
+`/Users/sugiyamasunao/miniforge3/envs/fastnc/bin/python`. Prefer the executable
+directly so execution does not depend on shell activation.
+
 ## Architecture
 
 Before modifying bispectrum, projection, route, multipole, interpolation, LOS,
-or Grid code, read `docs/development/bispectrum-representations.md` and follow
-the architecture and migration decisions recorded there.
+or Grid code, read `docs/design/architecture.md` and follow its normative
+contracts. Read `docs/notes/bispectrum-refactor.md` when the task requires
+historical reasoning, migration context, rejected alternatives, or detailed
+test plans.
 
-Treat that document as the authoritative source for this refactor; do not
+Before modifying the Slepian route, Weber evaluation, constant-leg kernels, or
+Mellin contractions, also read `docs/design/slepian.md`.
+Follow its staged implementation order and preserve every established slower
+method as a selectable benchmark for the next optimization. In particular, do
+not combine Weber interpolation, full `F_ab` construction, and low-rank
+compression in one implementation step.
+
+Read `docs/notes/slepian-performance.md` when detailed derivations, experiment
+history, or benchmark interpretation are needed. Notes are non-normative; when
+they conflict with `docs/design/`, the design document wins.
+
+Before planning or starting new implementation work, read `docs/todo.md` and
+check whether the change resolves, depends on,
+or must preserve a recorded deferred issue. Update the TODO when new evidence
+changes the scope or acceptance criteria of an item.
+
+Treat `docs/design/` as the authoritative source for this refactor; do not
 duplicate its detailed design in `AGENTS.md`. If an implementation requires a
-change to an agreed architectural decision, update the design document first
-and explain the proposed change to the maintainer before changing the
-architecture.
+change to an agreed architectural decision, update the relevant design
+document first and explain the proposed change to the maintainer before
+changing the architecture.
 
-The directory `legacy/bispectrum_object_api/` is a non-importable reference
+The local directory `dev/legacy/fastnc-v2/bispectrum-object-api/` is a
+non-importable reference
 archive for the retired bispectrum object graph and the unfinished,
 unvalidated semi-analytic implementation. Active code must never import from
 that directory. Recover a useful numerical component only by extracting it
 into the active architecture and adding an independent test for its contract.
 
-The directory `legacy/threepcf_grid_pipeline/` is also a non-importable
+The local directory `dev/legacy/fastnc-v2/threepcf-grid-pipeline/` is also a non-importable
 reference archive. It contains the retired 3PCF prototype in which Grid
 objects performed calculations and managed route state. Active code must not
 import from it. Keep active `fastnc/threepcf` organized into shared conventions
 and explicit route modules; new result/Grid types must be passive.
 
-The directory `legacy/compat/` contains the retired adapters for the archived
+The local directory `dev/legacy/fastnc-v2/compat/` contains the retired adapters for the archived
 object APIs. It is reference material only; active code must not import it or
 use it to preserve compatibility with the retired architecture.
 

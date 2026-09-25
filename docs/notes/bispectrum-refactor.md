@@ -1,5 +1,13 @@
 # Bispectrum representation refactor
 
+Status: Development note; non-normative.
+
+Authoritative design: `docs/design/architecture.md`.
+
+Purpose: Preserve detailed reasoning, migration history, alternatives, test
+plans, and implementation context for future development. If this note
+conflicts with the authoritative design, the design document wins.
+
 ## Status and goal
 
 This document records the design agreed before implementing the Slepian and
@@ -92,6 +100,51 @@ A native 2D Slepian expression contains the corresponding functions of
 `ell_i` directly. The Slepian calculator uses this representation to obtain
 Mellin coefficients, Weber-Schafheitlin kernels, and `ZetaK` without passing
 through angular bispectrum multipoles or `HKernel`.
+
+The initial native-2D implementation is deliberately narrower than this
+general contract. `SlepianExpression2D` stores a coefficient, three explicit
+`SlepianRadialFactor2D` objects, and three integer angular orders. Constant
+factors are marked structurally with `SlepianRadialFactor2D.constant()`; the
+calculator never infers a contact term from nearly constant samples. The
+expression validates rotational invariance through `sum(angular_orders) = 0`.
+FFTLog settings, Mellin coefficients, and Weber kernels are calculation state
+and therefore remain in `SlepianCalculator`, not in the bispectrum term.
+
+As the first validated vertical slice, the calculator accepts native
+`Bispectrum2D` objects with scalar spin and terms whose third radial leg is
+constant. For a term
+
+```text
+B(ell1, ell2, ell3)
+  = C f1(ell1) f2(ell2)
+    exp[i (n1 phi1 + n2 phi2 + n3 phi3)],
+```
+
+the constant third leg collapses its equal-order Weber kernel to a contact
+term. For scalar opening-angle mode `k`, `m = k` and `n = -k`, and the two
+remaining transforms are
+
+```text
+R1(theta) = int dlog(ell) ell^2 f1(ell) J_n1(ell theta),
+R2(x, theta) = int dlog(ell) ell^2 f2(ell)
+               J_(n2-m)(ell x) J_m(ell theta).
+```
+
+When the canonical orders `n3-n` and `n` agree, the result is assembled at
+`x = theta` and written directly to the shared `ZetaKTable`. It does not
+construct `BispectrumMultipole` or `HKernelTable`. Unsupported spin,
+non-contact constant-leg cases, and fully non-constant three-leg expressions
+raise explicitly; no numeric fallback is selected implicitly at this stage.
+
+Unlike the numeric 2D FFTLog route, the Slepian route evaluates directly on
+the requested theta bins. It uses the tuned grid only for its logarithmic ell
+samples and does not evaluate on or downsample from the full FFTLog theta
+grid. A `WeberGeometry` separates every coordinate pair into
+`scale=max(x, theta)` and `ratio=min(x, theta)/scale`. The expensive unit
+Weber function is evaluated only for unique log-ratios; scale powers reconstruct
+the full matrix. `SlepianCalculator` owns reusable geometry, FFTLog power-sum,
+and primitive Weber-kernel caches. Factor-dependent diagonal brute corrections
+remain outside the primitive cache.
 
 ### Semi-analytic expression
 
@@ -713,7 +766,8 @@ state. Their numeric evaluation is the sum of the selected numeric
 representations. SPT, one-halo, and BiHalofit models must be migrated to this
 structure before new Slepian model classes are added.
 
-The old object graph is stored under `legacy/bispectrum_object_api/`. This is
+The old object graph is available locally under
+`dev/legacy/fastnc-v2/bispectrum-object-api/`. This is
 a non-importable reference archive, not a compatibility layer. It contains the
 former evaluator bases and wrappers, the unfinished and unvalidated
 `bispectrum/analytic` implementation, and the old high-level `ThreePCF` API.
@@ -796,9 +850,9 @@ until their reusable kernels and numerical behavior have replacement tests.
 
 As of version `2.0.24`, steps 1--8 below are implemented. The old bispectrum
 object graph, unfinished semi-analytic package, and old high-level `ThreePCF`
-entry point are in `legacy/bispectrum_object_api/`. The computing Grid
+entry point are in `dev/legacy/fastnc-v2/bispectrum-object-api/`. The computing Grid
 pipeline formerly under `fastnc/threepcf` is in
-`legacy/threepcf_grid_pipeline/`. Neither archive is an active import.
+`dev/legacy/fastnc-v2/threepcf-grid-pipeline/`. Neither archive is an active import.
 Route-independent projection primitives have been extracted into
 `fastnc/projection`, and the new route ownership exists under
 `fastnc/threepcf`. Shared spin and output-projection conventions live under
@@ -894,5 +948,5 @@ radial FFTLog resolution, angular quadrature resolution, and optional adaptive
 refinement are explicit in `BruteForce3PCFConfig`.  Numerical comparisons must
 converge both calculations separately before attributing a discrepancy to the
 formalism.  This module was recovered from
-`legacy/threepcf_grid_pipeline/fastnc/threepcf/bruteforce.py`, but the active
+`dev/legacy/fastnc-v2/threepcf-grid-pipeline/fastnc/threepcf/bruteforce.py`, but the active
 implementation imports no legacy code and the archive remains reference-only.
