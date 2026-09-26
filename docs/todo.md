@@ -92,3 +92,118 @@ Completion requires an inventory of names exported from package `__init__`
 modules, docstrings for every supported public name, and a documentation or
 introspection test that detects missing public docstrings. Do not document
 legacy modules as supported API.
+
+## User tutorials
+
+**Status:** Not started. Begin after the public API and route-selection
+contracts are sufficiently stable.
+
+The codebase has grown beyond what can reasonably be learned from class names
+and docstrings alone. Add a small, ordered tutorial set for users. These are
+supported user documents and belong under `tutorials/`, unlike exploratory
+notebooks under ignored `dev/` directories.
+
+The first tutorial must be a minimal quick start that works through the full
+public workflow
+
+```text
+Bispectrum3D + LOSProjector -> Bispectrum2D -> ThreePCF
+```
+
+without exposing internal calculators or cache objects. It should use one
+maintained model, one concise LOS setup, one route, and one final 3PCF plot.
+Optional alternatives must not obscure the shortest working path.
+
+Follow the quick start with focused tutorials covering:
+
+- bispectra: native 3D and 2D objects, terms and representations, model
+  architecture, composition, projection provenance, and relevant config;
+- LOS projection: `Kernel1D`, `KernelSet`, exact delta-like evaluation,
+  finite-width kernels, lensing and intrinsic-alignment kernels, LOS grids,
+  weights, and projector architecture;
+- 3PCF calculation: numeric, Slepian, semi-analytic, and future hybrid routes,
+  route-independent result tables, theta/phi grids, spin/epsilon conventions,
+  config, and cache behavior.
+
+Tutorial markdown is Japanese only when explicitly intended as a private
+development aid; supported package tutorials and their code/output labels must
+use the documentation project's chosen public language consistently. Every
+tutorial must run in CI against the current public API. Completion requires a
+clean-environment execution test and no imports from `dev/` or legacy code.
+
+## Generated documentation and Read the Docs
+
+**Status:** Not started. Depends on the public-docstring and tutorial passes.
+
+Build a maintained documentation site, hosted through Read the Docs, from a
+single source tree. Generate API reference pages from public docstrings and
+include the supported tutorials in the same navigation. Prefer a standard
+Python documentation stack with reproducible pinned build dependencies; do
+not copy docstrings manually into separate pages.
+
+The documentation build must:
+
+- distinguish normative architecture, user tutorials, API reference, and
+  historical development notes;
+- omit `dev/`, `legacy`, private helpers, and unsupported experimental APIs;
+- execute or otherwise verify tutorial code during CI;
+- fail on broken internal links, missing public API pages, and documentation
+  build warnings that indicate invalid references;
+- build locally with the same command and dependency set used by Read the
+  Docs.
+
+## Physical models and representation coverage
+
+**Status:** Not started systematically. Numeric representations exist broadly;
+Slepian and semi-analytic coverage remains model- and term-dependent.
+
+Add alternative representations to the maintained models term by term. Each
+term must keep its numeric representation as the universal reference and may
+add Slepian or semi-analytic information only when the mathematical expression
+is complete and independently validated. Shared Weber, Mellin, coupling, and
+transform caches belong to route calculators rather than model terms.
+
+For every added representation, test the representation against the numeric
+form at the bispectrum level and compare its final 3PCF contribution through
+an independent route. Record unsupported terms explicitly instead of silently
+approximating or dropping them. Start with one simple SPT matter term before
+expanding to permutations, bias terms, one-halo, or fitted models.
+
+## Term-wise hybrid route planning
+
+**Status:** Not implemented. `ThreePCF` currently selects one route for the
+whole bispectrum; projected representations can coexist on terms, but there is
+no completed term-wise hybrid planner and assembler.
+
+Implement an explicit route-selection policy for bispectra containing multiple
+terms with different available representations. Under a `hybrid` policy, each
+term should use the highest-priority supported route selected by configuration.
+For example, when three terms support only numeric, Slepian, and semi-analytic
+evaluation respectively, the assembled result must evaluate those terms with
+their corresponding routes and add their contributions into one shared
+`ZetaKTable`. A term without its preferred representation must follow an
+explicit fallback order, ultimately reaching numeric when a numeric
+representation exists.
+
+The planner must operate on terms, not on the bispectrum as an indivisible
+object. It must prevent double counting when one term exposes several
+representations, preserve term coefficients and projection provenance, and
+raise an informative error when no allowed route can evaluate a term. Route
+labels must not enter physical result keys; contributions from different
+routes with the same component/mode key must be summed.
+
+Before implementation, define:
+
+- configurable route priority and whether fallback is automatic or strict;
+- the capability query used to determine whether a projected or native term
+  supports a route;
+- grouping rules for terms that must be evaluated together;
+- cache ownership and invalidation when a term changes representation or
+  selected route;
+- diagnostics exposing the selected route for each term without making route
+  identity part of the result.
+
+Completion requires mixed-term tests for all representation combinations,
+permutation-invariant assembly, equality with manually summed single-route
+calculations, explicit missing-capability failures, and preservation of
+source-independent caches across model updates.
