@@ -259,6 +259,17 @@ valuable.
 
 ## Angularization of 3D expressions
 
+> **Design update:** the examples in this section describe the currently
+> implemented `LOSProjector`, which combines physical projection and LOS
+> discretization. The canonical target design is now documented in
+> `docs/design/architecture.md` and `docs/notes/state-and-cache-management.md`:
+> `LOSProjector` consistently owns both projection physics and its immutable
+> LOS grid. Projected representations retain the configured projector, while
+> representation-specific route calculators choose whether projection occurs
+> at the bispectrum, result, or coefficient stage. New implementation work
+> must follow that design; the material below remains as implementation
+> history where it assumes numeric projection only.
+
 Angularization is a projection/assembly operation, not a 3PCF calculator
 operation. The public API maps a typed 3D bispectrum to a typed angular
 bispectrum:

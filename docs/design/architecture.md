@@ -63,11 +63,40 @@ coordinate invalidates only dependent state.
 Projection is independent of the 3PCF route. Projection code belongs in
 `fastnc/projection`, not in bispectrum models or route modules.
 
+`LOSProjector` is a configured projection operator. It consistently owns both
+the physical projection rule and its immutable numerical LOS grid: kernels,
+the geometrical prefactor, the angular-to-comoving mapping, `z` and `chi`
+nodes, and the quadrature rule. These concerns should remain distinguishable
+inside the object for signatures and cache invalidation, but they do not have
+different public owners.
+
+Projecting a source constructs representation-specific deferred recipes.
+Consequently, standalone numeric projection remains convenient:
+
+```python
+b2d = los.project(b3d, sample_combination=samples)
+b2d.evaluate_numeric(ell1, ell2, ell3)
+```
+
+The returned projected `Bispectrum2D` owns a deferred recipe containing its
+source and projector. A projected numeric representation performs LOS
+integration at bispectrum evaluation. Projected Slepian and semi-analytic
+representations retain redshift-dependent source information and expose the
+same projector to their route calculators, which apply LOS integration at the
+result or coefficient stage. The projector itself does not know the route.
+
+Native and projected representations may coexist in one `Bispectrum2D`.
+`ThreePCF` must not branch on a bispectrum-wide `is_projected` flag. It
+dispatches on explicit representation capabilities or types: native
+representations require no LOS operation, while projected representations
+provide their source and projector. This keeps route selection local to each
+term and permits mixed construction histories.
+
 `Kernel1D` stores an unnormalized radial kernel. `KernelSet` groups the kernels
-and uses the ordinary LOS prefactor, conventionally `chi**-4`, unless an exact
-fixed-redshift projector is requested. `LOSProjector.delta_like(...)` performs
-exact evaluation at the specified redshift/distance and does not approximate a
-delta function with a narrow sampled window.
+and uses the ordinary LOS prefactor, conventionally `chi**-4`, unless exact
+fixed-redshift evaluation is requested. The fixed-redshift constructor binds a
+single exact `(z, chi)` point and does not approximate a delta function with a
+narrow sampled window.
 
 Projecting a `Bispectrum3D` constructs a `Bispectrum2D`. Each projected term
 retains the representations supported by a mathematically valid projection
