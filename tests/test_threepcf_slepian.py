@@ -9,6 +9,7 @@ from fastnc.bispectrum import (
     BispectrumTerm2D,
     BispectrumTerm3D,
     NumericExpression2D,
+    NumericExpression3D,
     SlepianExpression2D,
     SlepianExpression3D,
     SlepianRadialFactor2D,
@@ -588,6 +589,76 @@ class SlepianRouteTests(unittest.TestCase):
         ).zetak().get_for_mode((1, 1, 1), 0.0)
         relative = np.max(np.abs(slepian - numeric)) / np.max(np.abs(numeric))
         self.assertLess(relative, 3.0e-2)
+
+    def test_finite_width_projected_zetak_agrees_with_numeric_route(self):
+        z = np.linspace(0.3, 0.8, 9)
+        chi = 500.0 + 1200.0 * z
+        projector = LOSProjector(
+            z=z,
+            chi=chi,
+            prefactor=np.exp(-0.5 * ((z - 0.55) / 0.16) ** 2),
+        )
+
+        def radial(k, z_value, center):
+            center_at_z = center * (1.0 + 0.1 * np.asarray(z_value))
+            k = np.asarray(k)
+            safe_k = np.maximum(k, np.finfo(float).tiny)
+            return np.where(
+                k > 0.0,
+                np.exp(-0.5 * np.log(safe_k / center_at_z) ** 2),
+                0.0,
+            )
+
+        def coefficient(z_value):
+            return 1.2 * (1.0 + np.asarray(z_value))
+
+        slepian = SlepianExpression3D(
+            coefficient=coefficient,
+            radial_factors=(
+                SlepianRadialFactor3D(
+                    lambda k, z_value: radial(k, z_value, 0.035)
+                ),
+                SlepianRadialFactor3D(
+                    lambda k, z_value: radial(k, z_value, 0.055)
+                ),
+                SlepianRadialFactor3D.constant(),
+            ),
+        )
+        numeric = NumericExpression3D(
+            lambda k1, k2, k3, z_value: coefficient(z_value)
+            * radial(k1, z_value, 0.035)
+            * radial(k2, z_value, 0.055)
+        )
+        b3d = Bispectrum3D(
+            (BispectrumTerm3D("finite-los-benchmark", (numeric, slepian)),)
+        )
+        b2d = projector.project(b3d)
+        theta = np.geomspace(0.02, 0.08, 3)
+        config = ThreePCFConfig(
+            Lmax=12,
+            kmax=0.0,
+            ell_min=0.3,
+            ell_max=3.0e3,
+            n_ell=64,
+            use_coupling_cache=False,
+            multipole=NumericMultipoleConfig(
+                n_angle=513,
+                delta_beta_min=0.0,
+                delta_beta_max=np.pi,
+            ),
+        )
+        phi = np.linspace(0.0, np.pi, 4)
+        numeric_zetak = ThreePCF(
+            config, b2d, theta, phi, route="numeric"
+        ).zetak().get_for_mode((1, 1, 1), 0.0)
+        slepian_zetak = ThreePCF(
+            config, b2d, theta, phi, route="slepian"
+        ).zetak().get_for_mode((1, 1, 1), 0.0)
+
+        relative = np.max(np.abs(slepian_zetak - numeric_zetak)) / np.max(
+            np.abs(numeric_zetak)
+        )
+        self.assertLess(relative, 6.0e-2)
 
     def test_weber_geometry_evaluates_only_unique_log_grid_ratios(self):
         theta = np.geomspace(1.0e-2, 1.0e-1, 4)
