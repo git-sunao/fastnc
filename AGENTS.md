@@ -51,6 +51,11 @@ Changes limited to documentation, tests, notebooks, Git configuration, or
 these development rules do not by themselves require a version increment or a
 new validation notebook.
 
+## Docstrings
+
+Follow [`docs/docstring.md`](docs/docstring.md) when adding or modifying Python
+docstrings.
+
 ## Development environment
 
 Run tests, validation scripts, and development notebooks with
