@@ -9,6 +9,23 @@ implementation decisions. It is not a general wishlist. Keep completed items
 in the relevant design document or Git history rather than accumulating them
 here.
 
+## Structured calculation logging
+
+**Status:** Deferred until the numerical routes and cache lifecycle stabilize.
+
+Design logging as one coherent facility rather than adding isolated messages
+inside individual kernels. For the Slepian low-rank route, record at least the
+requested rank or matrix tolerance, the retained rank, the maximum available
+rank, and the matrix reconstruction error whenever a compressed matrix is
+created. Cache hits should not repeat construction messages.
+
+The broader pass should identify similarly useful events across routes:
+expensive table construction versus cache reuse, selected numerical method,
+grid dimensions and ranges, automatic truncation choices, recomputation after
+state changes, and measured stage timings. Define consistent log levels and
+message fields, keep default library operation quiet, and avoid logging large
+arrays or one message per inner-loop evaluation.
+
 ## Weber evaluator stability at large imaginary Mellin index
 
 **Status:** Deferred. This is a known numerical residual in the current direct
@@ -47,7 +64,7 @@ Completion requires:
 - retention of a slower independent reference method.
 
 The local diagnostic notebook is
-`dev/slepian/threepcf_slepian_weber_interpolation.ipynb`; notebooks
+`dev/slepian-old/threepcf_slepian_weber_interpolation.ipynb`; notebooks
 remain excluded from Git.
 
 ## Public API docstrings

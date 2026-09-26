@@ -18,9 +18,23 @@ These rules apply to all future development in this repository.
    execution path needed to understand the design. Use concise markdown to state
    what each stage establishes. If part of the feature cannot yet be exercised,
    leave a concise `#` comment in the relevant code cell explaining what remains.
-   Write development-notebook headings, explanations, and display labels in
-   Japanese. Keep Python identifiers, public API names, and established
-   mathematical notation unchanged when that makes the code easier to follow.
+   Write development-notebook Markdown headings and explanations in Japanese.
+   Inside code cells, use English for identifiers, string literals, plot titles,
+   axis labels, legends, printed messages, and other displayed text so that
+   rendering does not depend on Japanese fonts. Code comments may be Japanese.
+   Keep public API names and established mathematical notation unchanged when
+   that makes the code easier to follow.
+   When comparing numerical methods, do not present only scalar residuals or a
+   residual plot. Also plot the compared quantities themselves as functions of
+   their arguments so that both the mathematical behavior and agreement are
+   visible. Overlay methods for a one-dimensional function-versus-argument
+   comparison. For a two-dimensional function, use three heatmap panels:
+   benchmark, candidate, and residual. Use a shared symmetric color range with
+   `vmax = max(abs(benchmark), abs(candidate))`, `vmin = -vmax`, and the `bwr`
+   colormap. Put different indices or modes in separate figures rather than
+   combining them into one crowded multipanel figure. For complex quantities,
+   inspect the real and imaginary parts when both matter. Keep numerical residual summaries
+   as supplementary diagnostics.
 4. Never add or commit Jupyter notebooks to Git. Development notebooks remain
    local, untracked files.
 5. Keep exploratory notebooks and calculation records under `dev/`, grouped by
