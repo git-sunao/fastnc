@@ -22,6 +22,13 @@ class SlepianConfig:
     weber_interpolation_nodes: int = 64
     weber_interpolation_max_ratio: float = 0.8
     diagonal_correction: Literal["brute", "none"] = "brute"
+    regular_method: Literal[
+        "quadrature", "full_matrix", "low_rank"
+    ] = "quadrature"
+    regular_n_x: int = 256
+    regular_x_padding: float = 20.0
+    regular_low_rank_rank: int | None = None
+    regular_low_rank_rtol: float = 1.0e-6
 
     def __post_init__(self):
         for name in ("taper_fraction", "window_fraction"):
@@ -39,6 +46,21 @@ class SlepianConfig:
             raise ValueError("weber_interpolation_max_ratio must lie in (0, 1)")
         if self.diagonal_correction not in {"brute", "none"}:
             raise ValueError("diagonal_correction must be 'brute' or 'none'")
+        if self.regular_method not in {"quadrature", "full_matrix", "low_rank"}:
+            raise ValueError(
+                "regular_method must be 'quadrature', 'full_matrix', or 'low_rank'"
+            )
+        if (
+            self.regular_low_rank_rank is not None
+            and int(self.regular_low_rank_rank) < 1
+        ):
+            raise ValueError("regular_low_rank_rank must be positive")
+        if not 0.0 < float(self.regular_low_rank_rtol) < 1.0:
+            raise ValueError("regular_low_rank_rtol must lie in (0, 1)")
+        if int(self.regular_n_x) < 16:
+            raise ValueError("regular_n_x must be at least 16")
+        if float(self.regular_x_padding) <= 1.0:
+            raise ValueError("regular_x_padding must be greater than one")
         object.__setattr__(self, "bias", float(self.bias))
         object.__setattr__(self, "weber_rtol", float(self.weber_rtol))
         object.__setattr__(
@@ -48,6 +70,17 @@ class SlepianConfig:
             self,
             "weber_interpolation_max_ratio",
             float(self.weber_interpolation_max_ratio),
+        )
+        object.__setattr__(self, "regular_n_x", int(self.regular_n_x))
+        object.__setattr__(
+            self, "regular_x_padding", float(self.regular_x_padding)
+        )
+        if self.regular_low_rank_rank is not None:
+            object.__setattr__(
+                self, "regular_low_rank_rank", int(self.regular_low_rank_rank)
+            )
+        object.__setattr__(
+            self, "regular_low_rank_rtol", float(self.regular_low_rank_rtol)
         )
 
 

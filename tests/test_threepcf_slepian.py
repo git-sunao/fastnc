@@ -17,11 +17,21 @@ from fastnc.threepcf import (
     ThreePCFConfig,
 )
 from fastnc.threepcf.slepian import (
+    ConstantLegKernel,
+    LowRankRegularMellinMatrix,
+    RegularMellinMatrix,
     SlepianCalculator,
     WeberGeometry,
+    _contact_coefficient,
     _interpolated_weber_unit_power,
     _powerlaw_double_kernel,
+    _regular_quadrature_supported,
     _weber_unit_power,
+    constant_leg_kernel,
+    contract_low_rank_regular_mellin_matrix,
+    contract_regular_mellin_matrix,
+    compress_regular_mellin_matrix,
+    regular_mellin_matrix,
 )
 from fastnc.multipole import NumericMultipoleConfig
 
@@ -101,6 +111,309 @@ class SlepianRouteTests(unittest.TestCase):
             SlepianConfig(weber_method="unknown")
         with self.assertRaisesRegex(ValueError, "at least four"):
             SlepianConfig(weber_interpolation_nodes=3)
+        self.assertEqual(
+            SlepianConfig(regular_method="full_matrix").regular_method,
+            "full_matrix",
+        )
+        self.assertEqual(
+            SlepianConfig(regular_method="low_rank").regular_method,
+            "low_rank",
+        )
+        with self.assertRaisesRegex(ValueError, "regular_low_rank_rank"):
+            SlepianConfig(regular_low_rank_rank=0)
+        with self.assertRaisesRegex(ValueError, "regular_low_rank_rtol"):
+            SlepianConfig(regular_low_rank_rtol=1.0)
+        with self.assertRaisesRegex(ValueError, "regular_n_x"):
+            SlepianConfig(regular_n_x=8)
+
+    def test_constant_leg_contact_coefficient_uses_exact_order_parity(self):
+        expected = {
+            (0, 0): 1,
+            (-1, 1): -1,
+            (0, 2): -1,
+            (1, -3): 1,
+            (0, 1): 0,
+            (-2, 1): 0,
+        }
+        for orders, coefficient in expected.items():
+            with self.subTest(orders=orders):
+                self.assertEqual(_contact_coefficient(*orders), coefficient)
+
+    def test_equal_order_constant_leg_is_contact_only(self):
+        coordinates = np.geomspace(0.5, 2.0, 4)
+        kernel = constant_leg_kernel(
+            2, 2, coordinates, coordinates, SlepianConfig()
+        )
+        self.assertIsInstance(kernel, ConstantLegKernel)
+        self.assertEqual(kernel.contact_coefficient, 1)
+        self.assertFalse(kernel.has_regular)
+        np.testing.assert_array_equal(kernel.regular_less, 0.0)
+        np.testing.assert_array_equal(kernel.regular_greater, 0.0)
+
+    def test_unequal_order_constant_leg_separates_heaviside_support(self):
+        x = np.array([0.5, 1.0, 2.0])
+        theta = np.array([0.75, 1.5])
+        geometry = WeberGeometry.from_coordinates(x, theta)
+        full_regular = _powerlaw_double_kernel(
+            0.0,
+            0,
+            2,
+            x,
+            theta,
+            rtol=1.0e-12,
+            omit_diagonal=True,
+            geometry=geometry,
+        )
+        kernel = constant_leg_kernel(
+            0, 2, x, theta, SlepianConfig(), geometry=geometry
+        )
+        less = x[:, None] < theta[None, :]
+        greater = x[:, None] > theta[None, :]
+
+        self.assertEqual(kernel.contact_coefficient, -1)
+        self.assertTrue(kernel.has_regular)
+        np.testing.assert_allclose(kernel.regular_less[less], full_regular[less])
+        expected_less = np.broadcast_to(
+            2.0 / theta[None, :] ** 2, kernel.regular_less.shape
+        )
+        np.testing.assert_allclose(
+            kernel.regular_less[less], expected_less[less]
+        )
+        np.testing.assert_array_equal(kernel.regular_less[~less], 0.0)
+        np.testing.assert_allclose(
+            kernel.regular_greater[greater], full_regular[greater]
+        )
+        np.testing.assert_array_equal(kernel.regular_greater, 0.0)
+
+    def test_odd_order_difference_has_no_contact_but_both_regular_sides(self):
+        x = np.array([0.5, 2.0])
+        theta = np.array([0.75, 1.5])
+        kernel = constant_leg_kernel(0, 1, x, theta, SlepianConfig())
+
+        self.assertEqual(kernel.contact_coefficient, 0)
+        self.assertTrue(np.any(kernel.regular_less != 0.0))
+        self.assertTrue(np.any(kernel.regular_greater != 0.0))
+
+    def test_regular_classification_does_not_depend_on_sampled_off_diagonal(self):
+        kernel = constant_leg_kernel(
+            0, 1, np.array([1.0]), np.array([1.0]), SlepianConfig()
+        )
+        self.assertTrue(kernel.has_regular)
+        np.testing.assert_array_equal(kernel.regular_less, 0.0)
+        np.testing.assert_array_equal(kernel.regular_greater, 0.0)
+
+    def test_regular_quadrature_support_is_explicit(self):
+        self.assertTrue(_regular_quadrature_supported(0, 2))
+        self.assertTrue(_regular_quadrature_supported(4, -2))
+        self.assertFalse(_regular_quadrature_supported(0, 0))
+        self.assertFalse(_regular_quadrature_supported(-1, 1))
+        self.assertFalse(_regular_quadrature_supported(0, 1))
+
+    def test_regular_x_grid_contains_targets_and_padded_range(self):
+        config = SlepianConfig(regular_n_x=16, regular_x_padding=5.0)
+        calculator = SlepianCalculator(config)
+        theta = np.array([0.5, 1.0, 2.0])
+        x = calculator._regular_x_grid(theta)
+
+        self.assertEqual(x[0], theta[0] / 5.0)
+        self.assertEqual(x[-1], theta[-1] * 5.0)
+        for target in theta:
+            self.assertTrue(np.any(x == target))
+        self.assertTrue(np.all(np.diff(x) > 0.0))
+
+    def test_regular_quadrature_contracts_x_and_both_theta_axes(self):
+        radial = SlepianRadialFactor2D(lambda ell: np.exp(-np.asarray(ell)))
+        expression = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(radial, radial, SlepianRadialFactor2D.constant()),
+            angular_orders=(-2, 0, 2),
+        )
+        bispectrum = Bispectrum2D(
+            (BispectrumTerm2D("regular", (expression,)),)
+        )
+        calculator = SlepianCalculator(SlepianConfig(regular_n_x=16))
+        ell = np.geomspace(1.0, 10.0, 12)
+        theta = np.array([0.5, 1.0])
+        x = np.array([0.25, 0.75, 1.5])
+        radial1 = np.array([2.0, 3.0, 5.0])
+        radial2 = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        regular = np.array([[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]])
+        sampled = ConstantLegKernel(0, regular, np.zeros_like(regular), True)
+        diagonal = ConstantLegKernel(
+            0, np.zeros((2, 2)), np.zeros((2, 2)), True
+        )
+
+        with (
+            patch.object(calculator, "_regular_x_grid", return_value=x),
+            patch.object(
+                calculator,
+                "_constant_leg_kernel",
+                side_effect=(diagonal, sampled),
+            ),
+            patch(
+                "fastnc.threepcf.slepian.single_radial_transform",
+                return_value=radial1,
+            ),
+            patch(
+                "fastnc.threepcf.slepian.double_radial_transform",
+                return_value=radial2,
+            ),
+        ):
+            result = calculator.evaluate_modes(bispectrum, ell, theta, [0])[0]
+
+        integrand = (
+            x[:, None, None]
+            * radial1[:, None, None]
+            * radial2[:, :, None]
+            * regular[:, None, :]
+        )
+        expected = np.trapezoid(integrand, x, axis=0) / (2.0 * np.pi) ** 2
+        np.testing.assert_allclose(result, expected)
+
+    def test_regular_quadrature_rejects_two_sided_odd_order_kernel(self):
+        radial = SlepianRadialFactor2D(lambda ell: np.exp(-np.asarray(ell)))
+        expression = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(radial, radial, SlepianRadialFactor2D.constant()),
+            angular_orders=(-1, 0, 1),
+        )
+        bispectrum = Bispectrum2D(
+            (BispectrumTerm2D("two-sided", (expression,)),)
+        )
+        with self.assertRaisesRegex(NotImplementedError, "positive even"):
+            SlepianCalculator(SlepianConfig()).evaluate_modes(
+                bispectrum, np.geomspace(1.0, 10.0, 12), np.array([0.5]), [0]
+            )
+
+    def test_full_matrix_contraction_validates_coefficient_shapes(self):
+        matrix = RegularMellinMatrix(
+            np.ones((2, 3, 1, 1)),
+            np.array([0.0, 1.0j]),
+            np.array([0.0, 1.0j, -1.0j]),
+            np.array([0.5, 1.0]),
+            np.array([1.0]),
+            0,
+            (0, 0),
+            (0, 2),
+        )
+        result = contract_regular_mellin_matrix(
+            matrix,
+            np.array([1.0, 2.0, 3.0]),
+            np.array([4.0, 5.0]),
+        )
+        np.testing.assert_allclose(result, 54.0)
+        with self.assertRaisesRegex(ValueError, "single_coefficients"):
+            contract_regular_mellin_matrix(matrix, np.ones(2), np.ones(2))
+
+    def test_low_rank_matrix_reconstructs_and_contracts_full_rank(self):
+        rng = np.random.default_rng(42)
+        values = rng.normal(size=(3, 4, 2, 2)) + 1j * rng.normal(
+            size=(3, 4, 2, 2)
+        )
+        matrix = RegularMellinMatrix(
+            values,
+            1j * np.arange(3),
+            1j * np.arange(4),
+            np.array([0.5, 1.0]),
+            np.array([1.0, 2.0]),
+            0,
+            (0, 0),
+            (0, 2),
+        )
+        compressed = compress_regular_mellin_matrix(matrix, rank=3)
+        self.assertIsInstance(compressed, LowRankRegularMellinMatrix)
+        self.assertEqual(compressed.retained_rank, 3)
+        self.assertLess(compressed.relative_reconstruction_error, 1.0e-14)
+        single = rng.normal(size=4) + 1j * rng.normal(size=4)
+        double = rng.normal(size=3) + 1j * rng.normal(size=3)
+        expected = contract_regular_mellin_matrix(matrix, single, double)
+        actual = contract_low_rank_regular_mellin_matrix(
+            compressed, single, double
+        )
+        np.testing.assert_allclose(actual, expected, rtol=2.0e-14, atol=2.0e-14)
+        automatic = compress_regular_mellin_matrix(matrix, rtol=1.0e-12)
+        self.assertLessEqual(automatic.relative_reconstruction_error, 1.0e-12)
+
+    def test_full_matrix_matches_quadrature_and_is_cached(self):
+        radial1 = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 8.0) ** 2)
+        )
+        radial2 = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 15.0) ** 2)
+        )
+        expression = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(
+                radial1,
+                radial2,
+                SlepianRadialFactor2D.constant(),
+            ),
+            angular_orders=(-2, 0, 2),
+        )
+        bispectrum = Bispectrum2D(
+            (BispectrumTerm2D("regular-matrix", (expression,)),)
+        )
+        ell = np.geomspace(1.0e-2, 1.0e3, 16)
+        theta = np.geomspace(2.0e-2, 2.0e-1, 4)
+        common = dict(regular_n_x=32, regular_x_padding=10.0)
+        quadrature = SlepianCalculator(
+            SlepianConfig(**common, regular_method="quadrature")
+        ).evaluate_modes(bispectrum, ell, theta, [0])[0]
+        calculator = SlepianCalculator(
+            SlepianConfig(**common, regular_method="full_matrix")
+        )
+        with patch(
+            "fastnc.threepcf.slepian.regular_mellin_matrix",
+            wraps=regular_mellin_matrix,
+        ) as build:
+            full_matrix = calculator.evaluate_modes(
+                bispectrum, ell, theta, [0]
+            )[0]
+            repeated = calculator.evaluate_modes(bispectrum, ell, theta, [0])[0]
+
+        np.testing.assert_allclose(full_matrix, quadrature, rtol=2.0e-12)
+        np.testing.assert_allclose(repeated, full_matrix)
+        self.assertEqual(build.call_count, 1)
+        self.assertEqual(len(calculator._regular_mellin_matrices), 1)
+
+    def test_low_rank_route_matches_full_matrix_and_is_cached(self):
+        radial1 = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 8.0) ** 2)
+        )
+        radial2 = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 15.0) ** 2)
+        )
+        expression = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(
+                radial1,
+                radial2,
+                SlepianRadialFactor2D.constant(),
+            ),
+            angular_orders=(-2, 0, 2),
+        )
+        bispectrum = Bispectrum2D(
+            (BispectrumTerm2D("low-rank-matrix", (expression,)),)
+        )
+        ell = np.geomspace(1.0e-2, 1.0e3, 16)
+        theta = np.geomspace(2.0e-2, 2.0e-1, 4)
+        common = dict(regular_n_x=32, regular_x_padding=10.0)
+        full = SlepianCalculator(
+            SlepianConfig(**common, regular_method="full_matrix")
+        ).evaluate_modes(bispectrum, ell, theta, [0])[0]
+        calculator = SlepianCalculator(
+            SlepianConfig(
+                **common,
+                regular_method="low_rank",
+                regular_low_rank_rank=16,
+            )
+        )
+        low_rank = calculator.evaluate_modes(bispectrum, ell, theta, [0])[0]
+        repeated = calculator.evaluate_modes(bispectrum, ell, theta, [0])[0]
+        np.testing.assert_allclose(low_rank, full, rtol=2.0e-12)
+        np.testing.assert_allclose(repeated, low_rank)
+        self.assertEqual(len(calculator._low_rank_regular_mellin_matrices), 1)
+        self.assertEqual(calculator._regular_mellin_matrices, {})
 
     def test_route_rejects_non_scalar_spin(self):
         manager = ThreePCF(

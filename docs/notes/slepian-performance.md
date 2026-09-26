@@ -62,6 +62,105 @@ order 0.1 seconds for ten target bins. This is diagnostic, not an API timing
 guarantee. A pointwise Weber test and a numeric-route comparison protect the
 result numerically.
 
+## Constant-leg distribution and unequal orders
+
+Suppose the third separable radial factor is constant. After the angular
+algebra, its two Bessel orders will be denoted by the signed integers `p` and
+`q`. The kernel entering the remaining radial calculation is
+
+```text
+C_pq(x, theta) = integral_0^infinity d ell ell
+                 J_p(ell x) J_q(ell theta).
+```
+
+Here and below, `x` is the variable integrated by the later radial assembly and
+`theta` is the requested output separation. Earlier experiments sometimes
+called these variables `y` and `rho`; those aliases are retired because they
+obscure which coordinate is integrated and which is external.
+
+This integral is a distribution, not an ordinary function at `x = theta`.
+Its useful decomposition is
+
+```text
+C_pq(x, theta)
+  = c_delta(p, q) delta(x - theta) / x
+  + Theta(theta - x) C_pq^<(x, theta)
+  + Theta(x - theta) C_pq^>(x, theta).
+```
+
+The contact coefficient follows from the nonoscillatory part of the common
+large-argument Bessel asymptotics. Since
+
+```text
+J_p(z) approximately sqrt(2 / (pi z))
+                 cos(z - pi p / 2 - pi / 4),
+```
+
+the phase difference of the product is `pi(p-q)/2`, giving
+
+```text
+c_delta(p, q) = cos[pi (p - q) / 2].
+```
+
+For integer orders this coefficient must be computed exactly from
+`(p-q) mod 4`: it is `+1` for a difference divisible by four, `-1` for a
+difference congruent to two modulo four, and zero for an odd difference. This
+also incorporates `J_-n(z) = (-1)^n J_n(z)` without separately canonicalizing
+the two orders. Thus a contact term can survive for unequal orders of the same
+parity; equality of canonical orders is sufficient but not necessary.
+
+For `p = q`, Bessel closure gives only the contact distribution and both
+regular pieces vanish. The same is true, up to the exact sign, for the signed
+equal-canonical-order cases already accepted by the current implementation.
+For general unequal orders, the Weber-Schafheitlin continuation gives ordinary
+functions away from the diagonal. The formula differs between `x < theta` and
+`x > theta` because the small-argument Bessel order changes with orientation.
+These are the two Heaviside-supported regular pieces above. Their exact
+normalization and the order pairs for which either side vanishes must be
+validated against the source derivation and high-precision integration before
+being promoted to the normative formula.
+
+The current `SlepianCalculator` reaches a constant third leg with
+`p = n3 - n` and `q = n`. It calls `_contact_sign(p, q)`, which returns a sign
+only when the canonical orders are equal. That historical implementation was
+limited to the contact-only subset. The current implementation replaces this
+check with an explicit constant-leg decomposition and adds direct regular
+quadrature for one-sided kernels.
+
+The implemented low-level decomposition object is independent of
+`SlepianCalculator`. Its mathematical payload is:
+
+```text
+contact_coefficient : exact integer in {-1, 0, +1}
+regular_less        : C_pq^<(x, theta), supported only on x < theta
+regular_greater     : C_pq^>(x, theta), supported only on x > theta
+```
+
+No finite-band diagonal replacement belongs in this object. It neither
+contracts Mellin coefficients nor performs the outer `x` integration. The
+calculator consumes the contact piece separately and contracts the regular
+pieces with `regular_method="quadrature"` using
+
+```text
+integral dx x R_single(x) R_double(x, theta1) C_reg(x, theta2).
+```
+
+The logarithmic integration grid extends beyond the requested theta range by
+`regular_x_padding` and includes every requested theta point. The number of
+base logarithmic samples is `regular_n_x`. Tests protect the unchanged
+equal-order result, signed contact parity, one-sided and two-sided support, the
+analytic `(p,q)=(0,2)` regular kernel, and the axis ordering and measure of the
+quadrature contraction.
+
+The kernel primitive can expose odd canonical-order differences, for which
+both orientations are nonzero, but the first calculator quadrature deliberately
+rejects them. A toy convergence scan grew rather than converged when samples
+approached `x=theta`; an ordinary trapezoidal rule does not define this
+singular diagonal limit. Production quadrature is therefore restricted to a
+positive even canonical-order difference and one-sided support. Odd differences
+require a separate distributional or principal-value derivation before they
+can be treated as an ordinary `x` integral.
+
 ## Low-rank experiment
 
 The proposed low-rank approximation acts on a reusable matrix over pairs of
@@ -79,15 +178,17 @@ found rapid singular-value decay. Rank 6 typically gave pair-level errors near
 few `1e-3`. One-time matrix/SVD preparation took about 14 seconds, while later
 contractions were millisecond-scale.
 
-Low-rank compression is **not in the current production route**. The experiment
-predates `SlepianRepresentation2D` and `SlepianCalculator` and covers only the
-constant-leg regular SPT case. Promotion requires:
+Low-rank compression is now implemented for the supported constant-leg regular
+kernel. The earlier experiment predates `SlepianRepresentation2D` and
+`SlepianCalculator`; its numerical observations remain historical context.
+The production implementation provides explicit-rank and matrix-tolerance
+selection, compressed-factor caching without retaining the full matrix, and
+comparison against both the uncompressed matrix and direct `x` quadrature.
 
-- an error contract on final `ZetaK`, not only matrix norms;
-- rank selection across terms, modes, and geometries;
-- cache invalidation and memory accounting in the current calculator;
-- benchmarks against the already-fast unique-ratio implementation;
-- support or an explicit rejection policy for non-contact and projected terms.
+The matrix tolerance is not a final-`ZetaK` error contract. Current toy terms
+show that coefficient weighting can amplify discarded singular directions, so
+rank scans must continue to report both errors. Non-contact and projected terms
+remain outside the current implementation scope.
 
 The implementation order is fixed as follows. Unequal Bessel orders on a
 constant leg produce a regular Heaviside-supported contribution in addition to
@@ -95,8 +196,8 @@ any contact delta contribution. Implement that regular contribution first with
 the exact, uncompressed matrix
 
 ```text
-F_ab(rho) = integral dy K_a^double(y, rho)
-                        y^(-mu_b-1) C_reg(y).
+F_ab(theta) = integral dx K_a^double(x, theta)
+                          x^(-mu_b-1) C_reg(x).
 ```
 
 Cache `F_ab` as geometry/order/exponent state and validate its full contraction
@@ -149,22 +250,22 @@ The required development order is:
    `docs/todo.md`. Until that repair is complete, neither direct
    fallback above `0.8` nor an interpolation table sampled from it should be
    interpreted as a high-accuracy result over the full FFTLog index range.
-2. **Constant-leg kernel decomposition.** Replace upper-level equality checks
+2. **Constant-leg kernel decomposition.** Implemented. Replace upper-level equality checks
    on Bessel orders with a kernel primitive that exposes contact coefficient,
    regular contribution, and Heaviside support. The existing equal-order
    contact result remains unchanged and is the regression benchmark.
-3. **Direct regular quadrature.** For `regular_method="quadrature"`, first
+3. **Direct regular quadrature.** Implemented. For `regular_method="quadrature"`, first
    reconstruct the single and double radial transforms from their Mellin sums,
    then perform the remaining `x` integral. This deliberately slower path is
    the independent reference for `F_ab` assembly.
-4. **Full Mellin matrix.** For `regular_method="full_matrix"`, exchange the
+4. **Full Mellin matrix.** Implemented. For `regular_method="full_matrix"`, exchange the
    Mellin sums and the regular radial integral, construct the exact uncompressed
-   `F_ab(rho)`, cache it by geometry/order/exponent state, and perform the full
-   contraction. Validate final `ZetaK` against `"quadrature"` before proceeding.
-5. **Low-rank matrix.** Only after the full matrix contract is established,
-   add `regular_method="low_rank"`. Keep `"full_matrix"` permanently
-   selectable. Validate both matrix reconstruction and final `ZetaK`; do not
-   select rank solely from a Frobenius-norm error.
+   `F_ab(theta1, theta2)`, cache it by geometry/order/exponent state, and perform
+   the full contraction. Final `ZetaK` is tested directly against `"quadrature"`.
+5. **Low-rank matrix.** Implemented. `regular_method="low_rank"` caches the
+   truncated SVD factors and leaves `"full_matrix"` permanently selectable.
+   Validation reports both matrix reconstruction and final `ZetaK`; rank is not
+   accepted solely from a Frobenius-norm error.
 
 The permanent reference ladders are therefore
 
@@ -181,8 +282,8 @@ never returned under another evaluator's cache key.
 
 ## Canonical validation path
 
-Use `dev/slepian/threepcf_slepian_toy.ipynb` for current code. It
+Use `dev/slepian-old/threepcf_slepian_toy.ipynb` for the earlier end-to-end implementation. It
 defines one native-2D term with numeric and Slepian representations, compares
 the `ZetaK` modes, and reports target-grid and cache behavior. Files under
-`dev/slepian` contains historical development evidence, not the public
+`dev/slepian-old` contains historical development evidence, not the public
 route API.
