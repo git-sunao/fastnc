@@ -184,9 +184,25 @@ Projection may be inserted at three different stages.
    redshift and integrates those results. New LOS nodes require new per-node
    source results, but not new transform kernels.
 3. Coefficient-level projection evaluates redshift-dependent Mellin
-   coefficients, integrates them, and contracts them with source-independent
-   `F_ab`. New LOS nodes invalidate coefficient samples and their contraction,
-   while `F_ab` is retained.
+   coefficients and contracts them directly with the low-rank factors of the
+   source-independent `F_ab` at each LOS node. It then integrates the reduced
+   rank-space integrand. A dense LOS-integrated matrix `bar_C_ab` is never
+   constructed or cached. New LOS nodes invalidate coefficient samples and
+   their reduced contractions, while `F_ab` is retained.
+
+If `F_ab = sum_r s_r u_ar v_br` and the coefficient matrix at one redshift is
+`c_a(z) d_b(z)`, the implemented order is
+
+```text
+alpha_r(z) = sum_a u_ar c_a(z)
+beta_r(z)  = sum_b v_br d_b(z)
+integrand(z) = sum_r s_r alpha_r(z) beta_r(z)
+result = LOS_integral[integrand(z)]
+```
+
+The formal matrix `bar_C_ab = LOS_integral[c_a(z) d_b(z)]` generally has rank
+up to the number of LOS nodes. Materializing it would discard the useful
+quadrature factorization and reduce the speed benefit of low-rank `F_ab`.
 
 Accordingly, state signatures must be granular even though their owner is
 shared: `projector.grid_signature`, `projector.physical_state_token`, and

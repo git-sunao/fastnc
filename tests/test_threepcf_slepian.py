@@ -5,11 +5,17 @@ import numpy as np
 
 from fastnc.bispectrum import (
     Bispectrum2D,
+    Bispectrum3D,
     BispectrumTerm2D,
+    BispectrumTerm3D,
     NumericExpression2D,
     SlepianExpression2D,
+    SlepianExpression3D,
     SlepianRadialFactor2D,
+    SlepianRadialFactor3D,
+    SlepianRepresentation3D,
 )
+from fastnc.projection import LOSProjector
 from fastnc.threepcf import (
     ComponentModeKey,
     SlepianConfig,
@@ -18,6 +24,7 @@ from fastnc.threepcf import (
 )
 from fastnc.threepcf.slepian import (
     ConstantLegKernel,
+    LOSMellinFactors,
     LowRankRegularMellinMatrix,
     RegularMellinMatrix,
     SlepianCalculator,
@@ -29,6 +36,7 @@ from fastnc.threepcf.slepian import (
     _weber_unit_power,
     constant_leg_kernel,
     contract_low_rank_regular_mellin_matrix,
+    contract_low_rank_regular_mellin_matrix_los,
     contract_regular_mellin_matrix,
     compress_regular_mellin_matrix,
     regular_mellin_matrix,
@@ -333,6 +341,90 @@ class SlepianRouteTests(unittest.TestCase):
         np.testing.assert_allclose(actual, expected, rtol=2.0e-14, atol=2.0e-14)
         automatic = compress_regular_mellin_matrix(matrix, rtol=1.0e-12)
         self.assertLessEqual(automatic.relative_reconstruction_error, 1.0e-12)
+
+    def test_low_rank_los_contraction_avoids_dense_coefficient_matrix(self):
+        rng = np.random.default_rng(123)
+        values = rng.normal(size=(3, 4, 2, 2)) + 1j * rng.normal(
+            size=(3, 4, 2, 2)
+        )
+        double_exponents = 1j * np.arange(3)
+        single_exponents = 1j * np.arange(4)
+        matrix = RegularMellinMatrix(
+            values,
+            double_exponents,
+            single_exponents,
+            np.array([0.5, 1.0]),
+            np.array([1.0, 2.0]),
+            0,
+            (0, 0),
+            (0, 2),
+        )
+        compressed = compress_regular_mellin_matrix(matrix, rank=3)
+        z = np.linspace(0.2, 1.0, 6)
+        chi = np.geomspace(500.0, 2500.0, z.size)
+        weight = (1.0 + z) / chi**2
+        single = rng.normal(size=(z.size, 4)) + 1j * rng.normal(
+            size=(z.size, 4)
+        )
+        double = rng.normal(size=(z.size, 3)) + 1j * rng.normal(
+            size=(z.size, 3)
+        )
+        factors = LOSMellinFactors(
+            z=z,
+            chi=chi,
+            weight=weight,
+            single_coefficients=single,
+            double_coefficients=double,
+            single_exponents=single_exponents,
+            double_exponents=double_exponents,
+        )
+
+        per_node = np.stack(
+            [
+                contract_regular_mellin_matrix(matrix, single[i], double[i])
+                for i in range(z.size)
+            ]
+        )
+        expected = np.trapezoid(
+            weight[:, None, None] * per_node,
+            chi,
+            axis=0,
+        )
+        dense_coefficients = np.trapezoid(
+            weight[:, None, None]
+            * double[:, :, None]
+            * single[:, None, :],
+            chi,
+            axis=0,
+        )
+        dense_result = np.einsum(
+            "ab,abij->ij",
+            dense_coefficients,
+            matrix.values,
+        )
+        actual = contract_low_rank_regular_mellin_matrix_los(
+            compressed,
+            factors,
+        )
+
+        np.testing.assert_allclose(dense_result, expected, rtol=2e-14, atol=2e-14)
+        np.testing.assert_allclose(actual, expected, rtol=2e-14, atol=2e-14)
+        self.assertFalse(factors.single_coefficients.flags.writeable)
+        self.assertFalse(factors.double_coefficients.flags.writeable)
+        mismatched = LOSMellinFactors(
+            z=z,
+            chi=chi,
+            weight=weight,
+            single_coefficients=single,
+            double_coefficients=double,
+            single_exponents=single_exponents + 1.0,
+            double_exponents=double_exponents,
+        )
+        with self.assertRaisesRegex(ValueError, "single_exponents"):
+            contract_low_rank_regular_mellin_matrix_los(
+                compressed,
+                mismatched,
+            )
 
     def test_full_matrix_matches_quadrature_and_is_cached(self):
         radial1 = SlepianRadialFactor2D(
@@ -646,6 +738,92 @@ class SlepianRouteTests(unittest.TestCase):
             )
         self.assertGreater(first_calls, 0)
         self.assertEqual(kernel.call_count, first_calls)
+
+    def test_projected_slepian_dispatch_is_explicitly_deferred(self):
+        class ToySlepianRepresentation3D(SlepianRepresentation3D):
+            pass
+
+        b3d = Bispectrum3D(
+            [
+                BispectrumTerm3D(
+                    "projected-slepian",
+                    (ToySlepianRepresentation3D(),),
+                )
+            ]
+        )
+        b2d = LOSProjector(
+            z=np.array([0.4, 0.6]),
+            chi=np.array([900.0, 1100.0]),
+        ).project(b3d)
+        calculator = SlepianCalculator(self.manager.config.slepian)
+
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            "coefficient-level LOS implementation",
+        ):
+            calculator.evaluate_modes(
+                b2d,
+                self.manager.grid.ell,
+                self.theta,
+                [0],
+            )
+
+    def test_delta_projected_slepian_matches_native_2d_expression(self):
+        z0 = 0.5
+        chi0 = 1000.0
+        shift = 0.5
+
+        def radial(value, center):
+            value = np.asarray(value, dtype=float)
+            return np.exp(-0.5 * np.log(value / center) ** 2)
+
+        expression3d = SlepianExpression3D(
+            coefficient=lambda z: 2.0 * (1.0 + z),
+            radial_factors=(
+                SlepianRadialFactor3D(
+                    lambda k, z: radial(k, 30.0 / chi0)
+                ),
+                SlepianRadialFactor3D(
+                    lambda k, z: radial(k, 50.0 / chi0)
+                ),
+                SlepianRadialFactor3D.constant(),
+            ),
+        )
+        term3d = BispectrumTerm3D("toy-3d", (expression3d,)).scaled_by(
+            lambda z: 3.0 - z
+        )
+        projected = LOSProjector.delta_like(
+            z=z0,
+            chi=chi0,
+            shift=shift,
+        ).project(Bispectrum3D((term3d,)))
+
+        native = Bispectrum2D(
+            (
+                BispectrumTerm2D(
+                    "toy-2d",
+                    (
+                        SlepianExpression2D(
+                            coefficient=(3.0 - z0) * 2.0 * (1.0 + z0),
+                            radial_factors=(
+                                SlepianRadialFactor2D(
+                                    lambda ell: radial(ell + shift, 30.0)
+                                ),
+                                SlepianRadialFactor2D(
+                                    lambda ell: radial(ell + shift, 50.0)
+                                ),
+                                SlepianRadialFactor2D.constant(),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+        calculator = SlepianCalculator(self.manager.config.slepian)
+        ell = self.manager.grid.ell
+        expected = calculator.evaluate_modes(native, ell, self.theta, [0])[0]
+        actual = calculator.evaluate_modes(projected, ell, self.theta, [0])[0]
+        np.testing.assert_allclose(actual, expected, rtol=1.0e-12, atol=1.0e-12)
 
 
 if __name__ == "__main__":

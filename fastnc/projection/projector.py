@@ -107,6 +107,49 @@ class LOSProjector:
     def is_delta_like(self) -> bool:
         return self._evaluate_at_point
 
+    @staticmethod
+    def _array_signature(values) -> tuple:
+        values = np.ascontiguousarray(np.asarray(values))
+        return values.dtype.str, values.shape, values.tobytes()
+
+    @property
+    def grid_signature(self) -> tuple:
+        """Immutable signature of the LOS nodes and quadrature convention."""
+        return (
+            "los-grid-v1",
+            self._array_signature(self.z),
+            self._array_signature(self.chi),
+            "point" if self.is_delta_like else "trapezoid-chi",
+        )
+
+    @property
+    def physical_state_token(self) -> tuple:
+        """Signature of projection values at fixed LOS nodes."""
+        if callable(self.prefactor):
+            prefactor = ("callable", id(self.prefactor))
+        elif self.prefactor is None:
+            prefactor = ("default-chi^-4",)
+        else:
+            prefactor = ("values", self._array_signature(self.prefactor))
+        kernels = None
+        if self.kernels is not None:
+            kernels = tuple(
+                (
+                    name,
+                    self._array_signature(self.kernels[name].z),
+                    self._array_signature(self.kernels[name].chi),
+                    self._array_signature(self.kernels[name].weight),
+                )
+                for name in self.kernels.names
+            )
+        return (
+            "los-physics-v1",
+            float(self.shift),
+            prefactor,
+            kernels,
+            bool(self.is_delta_like),
+        )
+
     def weight(self, sample_combination=None) -> np.ndarray:
         """Return the configured prefactor times selected radial kernels."""
         if self._evaluate_at_point:
@@ -140,11 +183,11 @@ class LOSProjector:
         return weight * self.kernels.product(sample_combination, self.chi)
 
     def project(self, bispectrum, *, sample_combination=None) -> Bispectrum2D:
-        """Project numeric representations from 3D into an angular bispectrum.
+        """Assemble supported 3D representations into angular recipes.
 
-        Each weighted 3D term becomes a same-named 2D term. Evaluation of the
-        returned object performs either the configured LOS integral or exact
-        fixed-redshift evaluation for a delta-like projector.
+        Each weighted 3D term becomes a same-named 2D term. Numeric evaluation
+        performs the configured LOS integral immediately. Route-specific
+        projected representations retain this projector for later integration.
         """
         if not isinstance(bispectrum, Bispectrum3D):
             raise TypeError("bispectrum must be a Bispectrum3D")

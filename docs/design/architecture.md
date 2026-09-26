@@ -85,6 +85,13 @@ representations retain redshift-dependent source information and expose the
 same projector to their route calculators, which apply LOS integration at the
 result or coefficient stage. The projector itself does not know the route.
 
+Coefficient-level projection preserves the factorized LOS structure. At each
+node it contracts the redshift-dependent one-dimensional Mellin coefficients
+with the low-rank factors of `F_ab`, then performs LOS quadrature only on the
+reduced rank-space integrand. It must not materialize or cache a dense
+LOS-integrated coefficient matrix `bar_C_ab`. That matrix remains a useful
+mathematical identity, not a runtime data object.
+
 Native and projected representations may coexist in one `Bispectrum2D`.
 `ThreePCF` must not branch on a bispectrum-wide `is_projected` flag. It
 dispatches on explicit representation capabilities or types: native

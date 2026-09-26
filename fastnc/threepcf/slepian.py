@@ -8,7 +8,15 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.special import jv, loggamma, rgamma
 
-from fastnc.bispectrum import Bispectrum2D, SlepianRepresentation2D
+from fastnc.bispectrum import (
+    Bispectrum2D,
+    BispectrumTerm2D,
+    SlepianExpression2D,
+    SlepianExpression3D,
+    SlepianRadialFactor2D,
+    SlepianRepresentation2D,
+)
+from fastnc.projection import ProjectedSlepianRepresentation2D
 
 from .config import SlepianConfig
 
@@ -116,6 +124,8 @@ class LowRankRegularMellinMatrix:
     left_vectors: np.ndarray
     singular_values: np.ndarray
     right_vectors: np.ndarray
+    double_exponents: np.ndarray
+    single_exponents: np.ndarray
     retained_rank: int
     relative_reconstruction_error: float
 
@@ -123,6 +133,8 @@ class LowRankRegularMellinMatrix:
         left = np.asarray(self.left_vectors, dtype=complex)
         singular = np.asarray(self.singular_values, dtype=float)
         right = np.asarray(self.right_vectors, dtype=complex)
+        double_exponents = np.asarray(self.double_exponents, dtype=complex)
+        single_exponents = np.asarray(self.single_exponents, dtype=complex)
         if left.ndim != 4 or singular.ndim != 3 or right.ndim != 4:
             raise ValueError("low-rank factors have incompatible dimensions")
         n_theta1, n_theta2, n_double, rank = left.shape
@@ -130,15 +142,77 @@ class LowRankRegularMellinMatrix:
             raise ValueError("singular_values have the wrong shape")
         if right.shape[:3] != (n_theta1, n_theta2, rank):
             raise ValueError("right_vectors have the wrong shape")
+        if double_exponents.shape != (n_double,):
+            raise ValueError("double_exponents have the wrong shape")
+        if single_exponents.shape != (right.shape[3],):
+            raise ValueError("single_exponents have the wrong shape")
         object.__setattr__(self, "left_vectors", left)
         object.__setattr__(self, "singular_values", singular)
         object.__setattr__(self, "right_vectors", right)
+        object.__setattr__(self, "double_exponents", double_exponents)
+        object.__setattr__(self, "single_exponents", single_exponents)
         object.__setattr__(self, "retained_rank", int(self.retained_rank))
         object.__setattr__(
             self,
             "relative_reconstruction_error",
             float(self.relative_reconstruction_error),
         )
+
+
+@dataclass(frozen=True)
+class LOSMellinFactors:
+    """Factorized Mellin coefficients sampled on one immutable LOS grid."""
+
+    z: np.ndarray
+    chi: np.ndarray
+    weight: np.ndarray
+    single_coefficients: np.ndarray
+    double_coefficients: np.ndarray
+    single_exponents: np.ndarray
+    double_exponents: np.ndarray
+
+    def __post_init__(self):
+        z = np.asarray(self.z, dtype=float)
+        chi = np.asarray(self.chi, dtype=float)
+        weight = np.asarray(self.weight, dtype=float)
+        single = np.asarray(self.single_coefficients, dtype=complex)
+        double = np.asarray(self.double_coefficients, dtype=complex)
+        single_exponents = np.asarray(self.single_exponents, dtype=complex)
+        double_exponents = np.asarray(self.double_exponents, dtype=complex)
+        if z.ndim != 1 or z.size < 2:
+            raise ValueError("z must contain at least two LOS nodes")
+        if z.shape != chi.shape or z.shape != weight.shape:
+            raise ValueError("z, chi, and weight must have the same shape")
+        if np.any(np.diff(chi) <= 0.0):
+            raise ValueError("chi must be strictly increasing")
+        if single.shape != (z.size, single_exponents.size):
+            raise ValueError("single_coefficients have the wrong shape")
+        if double.shape != (z.size, double_exponents.size):
+            raise ValueError("double_coefficients have the wrong shape")
+        arrays = (
+            z,
+            chi,
+            weight,
+            single,
+            double,
+            single_exponents,
+            double_exponents,
+        )
+        if any(np.any(~np.isfinite(values)) for values in arrays):
+            raise ValueError("LOS Mellin data must be finite")
+        names = (
+            "z",
+            "chi",
+            "weight",
+            "single_coefficients",
+            "double_coefficients",
+            "single_exponents",
+            "double_exponents",
+        )
+        for name, values in zip(names, arrays):
+            values = np.array(values, copy=True)
+            values.setflags(write=False)
+            object.__setattr__(self, name, values)
 
 
 def _log_edge_taper(size: int, fraction: float) -> np.ndarray:
@@ -612,6 +686,8 @@ def compress_regular_mellin_matrix(
         left,
         singular,
         right,
+        matrix.double_exponents,
+        matrix.single_exponents,
         retained_rank,
         relative_error,
     )
@@ -638,6 +714,49 @@ def contract_low_rank_regular_mellin_matrix(
         matrix.singular_values,
         matrix.right_vectors,
         single,
+    )
+
+
+def contract_low_rank_regular_mellin_matrix_los(
+    matrix: LowRankRegularMellinMatrix,
+    factors: LOSMellinFactors,
+):
+    """Contract low-rank ``F_ab`` before LOS quadrature.
+
+    The dense LOS-integrated coefficient matrix is never materialized.
+    """
+    if not isinstance(matrix, LowRankRegularMellinMatrix):
+        raise TypeError("matrix must be a LowRankRegularMellinMatrix")
+    if not isinstance(factors, LOSMellinFactors):
+        raise TypeError("factors must be LOSMellinFactors")
+    if factors.double_coefficients.shape[1] != matrix.left_vectors.shape[2]:
+        raise ValueError("double_coefficients have the wrong Mellin size")
+    if factors.single_coefficients.shape[1] != matrix.right_vectors.shape[3]:
+        raise ValueError("single_coefficients have the wrong Mellin size")
+    if not np.array_equal(factors.double_exponents, matrix.double_exponents):
+        raise ValueError("double_exponents do not match the low-rank matrix")
+    if not np.array_equal(factors.single_exponents, matrix.single_exponents):
+        raise ValueError("single_exponents do not match the low-rank matrix")
+    left_projection = np.einsum(
+        "za,ijar->zijr",
+        factors.double_coefficients,
+        matrix.left_vectors,
+    )
+    right_projection = np.einsum(
+        "zb,ijrb->zijr",
+        factors.single_coefficients,
+        matrix.right_vectors,
+    )
+    integrand = np.einsum(
+        "ijr,zijr,zijr->zij",
+        matrix.singular_values,
+        left_projection,
+        right_projection,
+    )
+    return np.trapezoid(
+        factors.weight[:, None, None] * integrand,
+        factors.chi,
+        axis=0,
     )
 
 
@@ -904,6 +1023,57 @@ class SlepianCalculator:
             raise TypeError("a 2D term coefficient must evaluate to a number")
         return value
 
+    def _evaluate_projected_expression(
+        self,
+        expression: ProjectedSlepianRepresentation2D,
+        ell,
+        theta,
+        k_values,
+    ):
+        projector = expression.projector
+        if not projector.is_delta_like:
+            raise NotImplementedError(
+                "finite-width projected Slepian evaluation requires the "
+                "coefficient-level LOS implementation"
+            )
+        source = expression.source_representation
+        if not isinstance(source, SlepianExpression3D):
+            raise TypeError("unsupported SlepianRepresentation3D implementation")
+
+        z = float(projector.z[0])
+        chi = float(projector.chi[0])
+        shift = float(projector.shift)
+        radial_factors = []
+        for factor in source.radial_factors:
+            if factor.is_constant:
+                radial_factors.append(SlepianRadialFactor2D.constant())
+                continue
+
+            def angular_factor(ell_values, *, source_factor=factor):
+                ell_values = np.asarray(ell_values, dtype=float)
+                return source_factor.evaluate((ell_values + shift) / chi, z)
+
+            radial_factors.append(SlepianRadialFactor2D(angular_factor))
+
+        term_weight = expression.source_term.coefficient
+        term_weight = term_weight(z) if callable(term_weight) else term_weight
+        if not isinstance(term_weight, Number):
+            raise TypeError("a projected 3D term coefficient must be scalar at z")
+        native = SlepianExpression2D(
+            coefficient=complex(term_weight) * source.coefficient_at(z),
+            radial_factors=tuple(radial_factors),
+            angular_orders=source.angular_orders,
+        )
+        native_bispectrum = Bispectrum2D(
+            (BispectrumTerm2D(expression.source_term.term.name, (native,)),)
+        )
+        return self.evaluate_modes(
+            native_bispectrum,
+            ell,
+            theta,
+            k_values,
+        )
+
     def evaluate_modes(self, bispectrum, ell, theta, k_values):
         """Return scalar ZetaK arrays indexed by integer opening-angle mode."""
         if not isinstance(bispectrum, Bispectrum2D):
@@ -919,6 +1089,16 @@ class SlepianCalculator:
             expression = weighted_term.term.get_representation(
                 SlepianRepresentation2D
             )
+            if isinstance(expression, ProjectedSlepianRepresentation2D):
+                projected = self._evaluate_projected_expression(
+                    expression,
+                    ell,
+                    theta,
+                    k_values,
+                )
+                for k, values in projected.items():
+                    results[int(k)] += values
+                continue
             if not hasattr(expression, "radial_factors"):
                 raise TypeError("unsupported SlepianRepresentation2D implementation")
             if expression.constant_legs != (2,):

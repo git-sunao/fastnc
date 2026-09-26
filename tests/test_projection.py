@@ -9,12 +9,17 @@ from fastnc.bispectrum import (
     BispectrumTerm3D,
     NumericExpression3D,
     NumericRepresentation2D,
+    SlepianExpression3D,
+    SlepianRadialFactor3D,
+    SlepianRepresentation2D,
+    SlepianRepresentation3D,
 )
 from fastnc.projection import (
     Kernel1D,
     KernelSet,
     LOSProjector,
     ProjectedNumericRepresentation2D,
+    ProjectedSlepianRepresentation2D,
     angular_to_comoving,
     integrate_coefficients,
 )
@@ -156,6 +161,72 @@ class ProjectionPrimitiveTests(unittest.TestCase):
                 axis=1,
             ),
         )
+
+    def test_projector_exposes_separate_grid_and_physical_signatures(self):
+        first = LOSProjector(self.z, self.chi, prefactor=1.0)
+        same = LOSProjector(self.z.copy(), self.chi.copy(), prefactor=1.0)
+        shifted = LOSProjector(self.z, self.chi, prefactor=1.0, shift=0.5)
+        new_grid = LOSProjector(self.z, self.chi * 2.0, prefactor=1.0)
+
+        self.assertEqual(first.grid_signature, same.grid_signature)
+        self.assertEqual(
+            first.physical_state_token,
+            same.physical_state_token,
+        )
+        self.assertEqual(first.grid_signature, shifted.grid_signature)
+        self.assertNotEqual(
+            first.physical_state_token,
+            shifted.physical_state_token,
+        )
+        self.assertNotEqual(first.grid_signature, new_grid.grid_signature)
+
+    def test_projector_preserves_slepian_projection_recipe(self):
+        class ToySlepianRepresentation3D(SlepianRepresentation3D):
+            pass
+
+        expression = ToySlepianRepresentation3D()
+        b3d = Bispectrum3D(
+            [
+                BispectrumTerm3D(
+                    "slepian",
+                    (
+                        NumericExpression3D(
+                            lambda k1, k2, k3, z: k1 + k2 + k3 + z
+                        ),
+                        expression,
+                    ),
+                )
+            ]
+        )
+        projector = LOSProjector.delta_like(z=0.5, chi=1000.0)
+        b2d = projector.project(b3d)
+        projected = b2d.terms[0].get_representation(
+            SlepianRepresentation2D
+        )
+
+        self.assertIsInstance(projected, ProjectedSlepianRepresentation2D)
+        self.assertIs(projected.source_representation, expression)
+        self.assertIs(projected.source_term, b3d.weighted_terms[0])
+        self.assertIs(projected.projector, projector)
+        self.assertAlmostEqual(b2d(100.0, 200.0, 300.0), 1.1)
+
+    def test_slepian_expression_3d_validates_and_evaluates_its_factors(self):
+        factor = SlepianRadialFactor3D(lambda k, z: k * (1.0 + z))
+        expression = SlepianExpression3D(
+            coefficient=lambda z: 2.0 + z,
+            radial_factors=(
+                factor,
+                SlepianRadialFactor3D(lambda k, z: k**2),
+                SlepianRadialFactor3D.constant(),
+            ),
+            angular_orders=(1, -1, 0),
+        )
+        np.testing.assert_allclose(
+            factor.evaluate(np.array([1.0, 2.0]), 0.5),
+            np.array([1.5, 3.0]),
+        )
+        self.assertEqual(expression.constant_legs, (2,))
+        self.assertEqual(expression.coefficient_at(0.5), 2.5)
 
     def test_projector_uses_chi_minus_four_by_default(self):
         projector = LOSProjector(self.z, self.chi)

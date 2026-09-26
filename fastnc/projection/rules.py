@@ -6,10 +6,14 @@ from functools import singledispatch
 from fastnc.bispectrum import (
     BispectrumTerm2D,
     NumericRepresentation3D,
+    SlepianRepresentation3D,
     WeightedTerm3D,
 )
 
-from .representations import ProjectedNumericRepresentation2D
+from .representations import (
+    ProjectedNumericRepresentation2D,
+    ProjectedSlepianRepresentation2D,
+)
 
 
 @singledispatch
@@ -36,6 +40,22 @@ def _project_numeric(
     sample_combination=None,
 ):
     return ProjectedNumericRepresentation2D(
+        source_term=source_term,
+        source_representation=representation,
+        projector=projector,
+        sample_combination=sample_combination,
+    )
+
+
+@project_representation.register
+def _project_slepian(
+    representation: SlepianRepresentation3D,
+    *,
+    source_term: WeightedTerm3D,
+    projector,
+    sample_combination=None,
+):
+    return ProjectedSlepianRepresentation2D(
         source_term=source_term,
         source_representation=representation,
         projector=projector,
