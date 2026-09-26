@@ -739,7 +739,7 @@ class SlepianRouteTests(unittest.TestCase):
         self.assertGreater(first_calls, 0)
         self.assertEqual(kernel.call_count, first_calls)
 
-    def test_projected_slepian_dispatch_is_explicitly_deferred(self):
+    def test_projected_slepian_rejects_unknown_3d_implementation(self):
         class ToySlepianRepresentation3D(SlepianRepresentation3D):
             pass
 
@@ -757,16 +757,89 @@ class SlepianRouteTests(unittest.TestCase):
         ).project(b3d)
         calculator = SlepianCalculator(self.manager.config.slepian)
 
-        with self.assertRaisesRegex(
-            NotImplementedError,
-            "coefficient-level LOS implementation",
-        ):
+        with self.assertRaisesRegex(TypeError, "unsupported"):
             calculator.evaluate_modes(
                 b2d,
                 self.manager.grid.ell,
                 self.theta,
                 [0],
             )
+
+    def test_finite_width_projected_routes_match_nodewise_native_benchmark(self):
+        z = np.array([0.3, 0.5, 0.8])
+        chi = np.array([800.0, 1100.0, 1500.0])
+        projector = LOSProjector(z=z, chi=chi, prefactor=np.array([1.0, 1.3, 0.7]))
+
+        def radial(k, z_value, center):
+            center_at_z = center * (1.0 + 0.15 * np.asarray(z_value))
+            return np.exp(-0.5 * np.log(np.asarray(k) / center_at_z) ** 2)
+
+        source = SlepianExpression3D(
+            coefficient=lambda z_value: 1.5 * (1.0 + z_value),
+            radial_factors=(
+                SlepianRadialFactor3D(
+                    lambda k, z_value: radial(k, z_value, 0.03)
+                ),
+                SlepianRadialFactor3D(
+                    lambda k, z_value: radial(k, z_value, 0.05)
+                ),
+                SlepianRadialFactor3D.constant(),
+            ),
+            angular_orders=(-2, 0, 2),
+        )
+        b3d = Bispectrum3D((BispectrumTerm3D("finite-los", (source,)),))
+        b2d = projector.project(b3d)
+        ell = np.geomspace(1.0, 300.0, 12)
+        theta = np.geomspace(0.02, 0.08, 2)
+        common = dict(regular_n_x=16, regular_x_padding=6.0)
+
+        node_values = []
+        for z_value, chi_value in zip(z, chi):
+            factors = tuple(
+                SlepianRadialFactor2D.constant()
+                if factor.is_constant
+                else SlepianRadialFactor2D(
+                    lambda ell_value, factor=factor, z_value=z_value,
+                    chi_value=chi_value: factor.evaluate(
+                        np.asarray(ell_value) / chi_value, z_value
+                    )
+                )
+                for factor in source.radial_factors
+            )
+            native = SlepianExpression2D(
+                coefficient=source.coefficient_at(z_value),
+                radial_factors=factors,
+                angular_orders=source.angular_orders,
+            )
+            native_bispectrum = Bispectrum2D(
+                (BispectrumTerm2D("node", (native,)),)
+            )
+            node_values.append(
+                SlepianCalculator(
+                    SlepianConfig(**common, regular_method="quadrature")
+                ).evaluate_modes(native_bispectrum, ell, theta, [0])[0]
+            )
+        benchmark = projector.integrate_coefficients(
+            np.stack(node_values), axis=0
+        )
+
+        quadrature = SlepianCalculator(
+            SlepianConfig(**common, regular_method="quadrature")
+        ).evaluate_modes(b2d, ell, theta, [0])[0]
+        full = SlepianCalculator(
+            SlepianConfig(**common, regular_method="full_matrix")
+        ).evaluate_modes(b2d, ell, theta, [0])[0]
+        low_rank = SlepianCalculator(
+            SlepianConfig(
+                **common,
+                regular_method="low_rank",
+                regular_low_rank_rank=12,
+            )
+        ).evaluate_modes(b2d, ell, theta, [0])[0]
+
+        np.testing.assert_allclose(quadrature, benchmark, rtol=2.0e-12)
+        np.testing.assert_allclose(full, benchmark, rtol=2.0e-12)
+        np.testing.assert_allclose(low_rank, benchmark, rtol=2.0e-12)
 
     def test_delta_projected_slepian_matches_native_2d_expression(self):
         z0 = 0.5

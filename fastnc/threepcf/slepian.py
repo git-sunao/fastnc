@@ -265,6 +265,22 @@ def fftlog_power_sum(ell, values, config: SlepianConfig) -> FFTLogPowerSum:
     return FFTLogPowerSum(coefficients, config.bias + 1j * eta)
 
 
+def fftlog_power_sums_los(ell, values, config: SlepianConfig):
+    """FFTLog-expand one radial factor independently at each LOS node."""
+    values = np.asarray(values, dtype=complex)
+    ell = np.asarray(ell, dtype=float)
+    if values.ndim != 2 or values.shape[1:] != ell.shape:
+        raise ValueError("values must have shape (n_z, n_ell)")
+    sums = tuple(fftlog_power_sum(ell, row, config) for row in values)
+    exponents = sums[0].exponents
+    if any(
+        not np.array_equal(power_sum.exponents, exponents)
+        for power_sum in sums[1:]
+    ):
+        raise RuntimeError("FFTLog exponents changed between LOS nodes")
+    return np.stack([power_sum.coefficients for power_sum in sums]), exponents
+
+
 def _canonical_bessel_order(order: int) -> tuple[int, int]:
     order = int(order)
     if order >= 0:
@@ -1031,14 +1047,13 @@ class SlepianCalculator:
         k_values,
     ):
         projector = expression.projector
-        if not projector.is_delta_like:
-            raise NotImplementedError(
-                "finite-width projected Slepian evaluation requires the "
-                "coefficient-level LOS implementation"
-            )
         source = expression.source_representation
         if not isinstance(source, SlepianExpression3D):
             raise TypeError("unsupported SlepianRepresentation3D implementation")
+        if not projector.is_delta_like:
+            return self._evaluate_projected_los_expression(
+                expression, ell, theta, k_values
+            )
 
         z = float(projector.z[0])
         chi = float(projector.chi[0])
@@ -1073,6 +1088,200 @@ class SlepianCalculator:
             theta,
             k_values,
         )
+
+    def _evaluate_projected_los_expression(
+        self,
+        expression: ProjectedSlepianRepresentation2D,
+        ell,
+        theta,
+        k_values,
+    ):
+        """Evaluate a projected 3D expression without forming dense bar-C."""
+        source = expression.source_representation
+        if source.constant_legs != (2,):
+            raise NotImplementedError(
+                "the initial projected Slepian route requires exactly the "
+                "third radial leg to be constant"
+            )
+        projector = expression.projector
+        ell = np.asarray(ell, dtype=float)
+        theta = np.asarray(theta, dtype=float)
+        z = projector.z
+        chi = projector.chi
+        radial_k = (ell[None, :] + projector.shift) / chi[:, None]
+        radial_z = z[:, None]
+        values1 = source.radial_factors[0].evaluate(radial_k, radial_z)
+        values2 = source.radial_factors[1].evaluate(radial_k, radial_z)
+        coefficients1, exponents1 = fftlog_power_sums_los(
+            ell, values1, self.config
+        )
+        coefficients2, exponents2 = fftlog_power_sums_los(
+            ell, values2, self.config
+        )
+
+        term_weight = expression.source_term.coefficient
+        amplitudes = np.empty(z.size, dtype=complex)
+        for index, redshift in enumerate(z):
+            weight = term_weight(redshift) if callable(term_weight) else term_weight
+            if not isinstance(weight, Number):
+                raise TypeError(
+                    "a projected 3D term coefficient must be scalar at z"
+                )
+            amplitudes[index] = complex(weight) * source.coefficient_at(redshift)
+
+        power1_template = FFTLogPowerSum(coefficients1[0], exponents1)
+        power2_template = FFTLogPowerSum(coefficients2[0], exponents2)
+        geometry = self._geometry(theta, theta)
+        n1, n2, n3 = source.angular_orders
+        results = {
+            int(k): np.zeros((theta.size, theta.size), dtype=complex)
+            for k in k_values
+        }
+        for raw_k in k_values:
+            k = int(raw_k)
+            if not np.isclose(raw_k, k):
+                raise NotImplementedError(
+                    "the initial scalar Slepian route supports integer k only"
+                )
+            m, n = k, -k
+            constant_kernel = self._constant_leg_kernel(
+                n3 - n, n, theta, theta
+            )
+            contribution = np.zeros_like(results[k])
+            if constant_kernel.contact_coefficient:
+                samples = []
+                for index in range(z.size):
+                    power1 = FFTLogPowerSum(coefficients1[index], exponents1)
+                    power2 = FFTLogPowerSum(coefficients2[index], exponents2)
+                    radial1 = single_radial_transform(power1, n1, theta)
+                    radial2 = double_radial_transform(
+                        ell,
+                        values2[index],
+                        power2,
+                        n2 - m,
+                        m,
+                        theta,
+                        theta,
+                        self.config,
+                        geometry=geometry,
+                        kernel_cache=self._weber_kernels,
+                        interpolation_cache=self._weber_interpolators,
+                    )
+                    samples.append(
+                        amplitudes[index]
+                        * constant_kernel.contact_coefficient
+                        * radial2.T
+                        * radial1[None, :]
+                    )
+                contribution += projector.integrate_coefficients(
+                    np.stack(samples),
+                    axis=0,
+                    sample_combination=expression.sample_combination,
+                )
+            if constant_kernel.has_regular:
+                if not _regular_quadrature_supported(n3 - n, n):
+                    raise NotImplementedError(
+                        "regular quadrature currently requires a positive "
+                        "even difference between canonical Bessel orders"
+                    )
+                x = self._regular_x_grid(theta)
+                regular_kernel = self._constant_leg_kernel(
+                    n3 - n, n, x, theta
+                )
+                if self.config.regular_method == "quadrature":
+                    regular = (
+                        regular_kernel.regular_less
+                        + regular_kernel.regular_greater
+                    )
+                    samples = []
+                    x_geometry = self._geometry(x, theta)
+                    for index in range(z.size):
+                        power1 = FFTLogPowerSum(coefficients1[index], exponents1)
+                        power2 = FFTLogPowerSum(coefficients2[index], exponents2)
+                        radial1_x = single_radial_transform(power1, n1, x)
+                        radial2_x = double_radial_transform(
+                            ell,
+                            values2[index],
+                            power2,
+                            n2 - m,
+                            m,
+                            x,
+                            theta,
+                            self.config,
+                            geometry=x_geometry,
+                            kernel_cache=self._weber_kernels,
+                            interpolation_cache=self._weber_interpolators,
+                        )
+                        integrand = (
+                            x[:, None, None]
+                            * radial1_x[:, None, None]
+                            * radial2_x[:, :, None]
+                            * regular[:, None, :]
+                        )
+                        samples.append(
+                            amplitudes[index]
+                            * np.trapezoid(integrand, x, axis=0)
+                        )
+                    contribution += projector.integrate_coefficients(
+                        np.stack(samples),
+                        axis=0,
+                        sample_combination=expression.sample_combination,
+                    )
+                elif self.config.regular_method == "full_matrix":
+                    matrix = self._regular_mellin_matrix(
+                        ell,
+                        power1_template,
+                        power2_template,
+                        n1,
+                        (n2 - m, m),
+                        (n3 - n, n),
+                        x,
+                        theta,
+                        regular_kernel,
+                    )
+                    samples = np.stack(
+                        [
+                            contract_regular_mellin_matrix(
+                                matrix,
+                                amplitudes[index] * coefficients1[index],
+                                coefficients2[index],
+                            )
+                            for index in range(z.size)
+                        ]
+                    )
+                    contribution += projector.integrate_coefficients(
+                        samples,
+                        axis=0,
+                        sample_combination=expression.sample_combination,
+                    )
+                elif self.config.regular_method == "low_rank":
+                    matrix = self._low_rank_regular_mellin_matrix(
+                        ell,
+                        power1_template,
+                        power2_template,
+                        n1,
+                        (n2 - m, m),
+                        (n3 - n, n),
+                        x,
+                        theta,
+                        regular_kernel,
+                    )
+                    factors = LOSMellinFactors(
+                        z=z,
+                        chi=chi,
+                        weight=projector.weight(expression.sample_combination),
+                        single_coefficients=amplitudes[:, None] * coefficients1,
+                        double_coefficients=coefficients2,
+                        single_exponents=exponents1,
+                        double_exponents=exponents2,
+                    )
+                    contribution += contract_low_rank_regular_mellin_matrix_los(
+                        matrix, factors
+                    )
+                else:  # guarded by SlepianConfig
+                    raise ValueError("unsupported regular_method")
+            results[k] += contribution / (2.0 * np.pi) ** 2
+        return results
 
     def evaluate_modes(self, bispectrum, ell, theta, k_values):
         """Return scalar ZetaK arrays indexed by integer opening-angle mode."""

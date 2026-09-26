@@ -13,10 +13,19 @@ coordinates `ell` at fixed redshift or after projection. A native
 `Bispectrum2D` and a projected `Bispectrum3D` therefore share the same route
 interfaces after an angular representation has been constructed.
 
-The first production Slepian implementation is a native-2D reference path.
-LOS integration remains a separate projection problem. Optimized
-coefficient-level LOS integration may be added only after it reproduces a
-transparent node-by-node reference calculation.
+The native-2D path remains the fixed-redshift reference calculation. A
+projected 3D Slepian expression is evaluated on the fixed angular `ell` grid
+with `k = (ell + shift) / chi(z)` at every projector node. Its Mellin
+coefficients are therefore functions of the LOS node, while the Mellin
+exponents and the regular matrix `F_ab` remain fixed by the calculation grid.
+The resulting contact and regular contributions are integrated with the LOS
+grid and physical weights owned by the projector.
+
+The projected implementation must reproduce the transparent node-by-node
+native-2D calculation. For `full_matrix`, each node contracts its factorized
+coefficients with the shared full `F_ab`. For `low_rank`, the LOS integral is
+performed after direct contraction with the low-rank factors. It must not form
+the generally full-rank LOS-averaged matrix `bar_C_ab`.
 
 ## Radial transform conventions
 
@@ -184,6 +193,14 @@ reconstruction and final coefficient-weighted ZetaK error; a Frobenius norm
 alone is insufficient because small singular directions may receive large
 Mellin weights. The automatic tolerance controls matrix reconstruction only and
 is therefore not an end-to-end accuracy guarantee.
+
+`F_ab` and its low-rank factors depend on the angular calculation grid,
+Bessel orders, Mellin exponents, theta geometry, and numerical controls. They
+do not depend on the bispectrum model, cosmology, projector weights, or LOS
+nodes. Replacing the source model or changing its physical parameters must
+recompute the node-dependent Mellin coefficients but preserve compatible
+`F_ab` resources. A different LOS grid changes the coefficient samples and
+quadrature, not the universal regular matrix.
 
 ## Result boundary
 

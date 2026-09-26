@@ -933,8 +933,8 @@ premature abstraction:
   mutable compatibility wrapper.
 - Whether projected 2D terms preserve per-3D-term provenance by default.
 - How route selection is configured for individual terms.
-- The initial LOS implementation for Slepian terms and the threshold for adding
-  coefficient-level integration.
+- How coefficient-level LOS integration should be generalized beyond the
+  current separable expression with a constant third radial leg.
 - Which caches should eventually be persistent on disk.
 
 These open questions do not change the fixed boundaries above: 3D expressions

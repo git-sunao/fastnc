@@ -329,8 +329,10 @@ tables, `RegularMellinMatrix`, and `LowRankRegularMellinMatrix`.
 5. Change `ThreePCF` source synchronization and `set_bispectrum()` so they
    preserve structural resources.
 6. Update interpolation and brute-force observers to use prediction tokens.
-7. Add projector state separation only when mutable projector updates or
-   coefficient-level LOS caching is implemented.
+7. Keep the projector immutable while coefficient-level LOS evaluation is
+   established. If mutable projector updates are introduced, separate its LOS
+   grid signature from its physical-weight token before adding projector-owned
+   caches.
 8. After behavior is stable, consolidate cache and state-change logging as
    recorded in `docs/todo.md`.
 
