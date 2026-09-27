@@ -335,6 +335,31 @@ shows the new option together with its immediate reference. Benchmark caches
 for different methods independently so a result produced by one evaluator is
 never returned under another evaluator's cache key.
 
+## Spin brute-force validation after ratio quadrature
+
+The spin `(2,4,6)` validation was rerun after introducing branch-separated
+ratio quadrature, using `regular_n_ratio=128`, `regular_ratio_min=0.05`,
+`weber_brute_min_ratio=0.95`, `n_ell=64`, and `kmax=8`. Relative maximum
+residuals against the fine brute-force result for the four representative
+epsilon components changed as follows:
+
+```text
+epsilon          legacy regular integral    ratio Gauss integral
+(+,+,+)                  0.903                      0.540
+(-,+,+)                  0.972                      0.289
+(+,-,+)                  0.751                      0.348
+(+,+,-)                  0.147                      0.037
+```
+
+The corresponding relative L2 residuals for ratio Gauss were `0.226`,
+`0.141`, `0.156`, and `0.035`. This is a substantial improvement but not a
+validation of components zero through two. The brute coarse/fine relative
+maximum differences themselves were `0.129`, `0.066`, `0.139`, and `0.078`.
+Before changing the spin algebra or regular formula again, hold the fine brute
+result fixed and scan one Slepian control at a time: `kmax`, Mellin `n_ell`,
+`regular_n_ratio`, and direct versus interpolated Weber evaluation. The local
+archive is `dev/slepian/slepian_spin_brute_validation_ratio_gauss.npz`.
+
 ## Canonical validation path
 
 Use `dev/slepian-old/threepcf_slepian_toy.ipynb` for the earlier end-to-end implementation. It
