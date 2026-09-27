@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+from scipy.special import jv
 
 from fastnc.bispectrum import (
     Bispectrum2D,
@@ -14,6 +15,7 @@ from fastnc.bispectrum import (
     SlepianExpression3D,
     SlepianRadialFactor2D,
     SlepianRadialFactor3D,
+    SlepianRepresentation2D,
     SlepianRepresentation3D,
 )
 from fastnc.projection import LOSProjector
@@ -120,6 +122,8 @@ class SlepianRouteTests(unittest.TestCase):
             SlepianConfig(weber_method="unknown")
         with self.assertRaisesRegex(ValueError, "at least four"):
             SlepianConfig(weber_interpolation_nodes=3)
+        with self.assertRaisesRegex(ValueError, "weber_brute_min_ratio"):
+            SlepianConfig(weber_brute_min_ratio=0.0)
         self.assertEqual(
             SlepianConfig(regular_method="full_matrix").regular_method,
             "full_matrix",
@@ -128,6 +132,17 @@ class SlepianRouteTests(unittest.TestCase):
             SlepianConfig(regular_method="low_rank").regular_method,
             "low_rank",
         )
+        self.assertEqual(SlepianConfig().regular_quadrature, "ratio_gauss")
+        self.assertEqual(
+            SlepianConfig(regular_quadrature="legacy_log").regular_quadrature,
+            "legacy_log",
+        )
+        with self.assertRaisesRegex(ValueError, "regular_quadrature"):
+            SlepianConfig(regular_quadrature="unknown")
+        with self.assertRaisesRegex(ValueError, "regular_n_ratio"):
+            SlepianConfig(regular_n_ratio=4)
+        with self.assertRaisesRegex(ValueError, "regular_ratio_min"):
+            SlepianConfig(regular_ratio_min=1.0)
         with self.assertRaisesRegex(ValueError, "regular_low_rank_rank"):
             SlepianConfig(regular_low_rank_rank=0)
         with self.assertRaisesRegex(ValueError, "regular_low_rank_rtol"):
@@ -230,6 +245,17 @@ class SlepianRouteTests(unittest.TestCase):
             self.assertTrue(np.any(x == target))
         self.assertTrue(np.all(np.diff(x) > 0.0))
 
+    def test_regular_ratio_rule_is_open_and_integrates_constant(self):
+        calculator = SlepianCalculator(
+            SlepianConfig(regular_n_ratio=24, regular_ratio_min=0.2)
+        )
+        ratio, weights = calculator._regular_ratio_rule()
+
+        self.assertTrue(np.all(ratio > 0.2))
+        self.assertTrue(np.all(ratio < 1.0))
+        self.assertTrue(np.all(weights > 0.0))
+        self.assertAlmostEqual(np.sum(weights), 0.8, places=14)
+
     def test_regular_quadrature_contracts_x_and_both_theta_axes(self):
         radial = SlepianRadialFactor2D(lambda ell: np.exp(-np.asarray(ell)))
         expression = SlepianExpression2D(
@@ -240,7 +266,9 @@ class SlepianRouteTests(unittest.TestCase):
         bispectrum = Bispectrum2D(
             (BispectrumTerm2D("regular", (expression,)),)
         )
-        calculator = SlepianCalculator(SlepianConfig(regular_n_x=16))
+        calculator = SlepianCalculator(
+            SlepianConfig(regular_n_x=16, regular_quadrature="legacy_log")
+        )
         ell = np.geomspace(1.0, 10.0, 12)
         theta = np.array([0.5, 1.0])
         x = np.array([0.25, 0.75, 1.5])
@@ -448,7 +476,11 @@ class SlepianRouteTests(unittest.TestCase):
         )
         ell = np.geomspace(1.0e-2, 1.0e3, 16)
         theta = np.geomspace(2.0e-2, 2.0e-1, 4)
-        common = dict(regular_n_x=32, regular_x_padding=10.0)
+        common = dict(
+            regular_n_x=32,
+            regular_x_padding=10.0,
+            regular_n_ratio=24,
+        )
         quadrature = SlepianCalculator(
             SlepianConfig(**common, regular_method="quadrature")
         ).evaluate_modes(bispectrum, ell, theta, [0])[0]
@@ -508,10 +540,11 @@ class SlepianRouteTests(unittest.TestCase):
         self.assertEqual(len(calculator._low_rank_regular_mellin_matrices), 1)
         self.assertEqual(calculator._regular_mellin_matrices, {})
 
-    def test_route_rejects_non_scalar_spin(self):
+    def test_route_supports_spin_on_nonreference_leg(self):
         manager = ThreePCF(
             ThreePCFConfig(
-                spin=(2, 0, 0),
+                spin=(0, 2, 0),
+                kmax=0.0,
                 ell_min=1.0,
                 ell_max=1.0e3,
                 n_ell=12,
@@ -521,8 +554,136 @@ class SlepianRouteTests(unittest.TestCase):
             np.linspace(0.0, np.pi, 4),
             route="slepian",
         )
-        with self.assertRaisesRegex(NotImplementedError, r"spin=\(0, 0, 0\)"):
-            manager.zetak()
+        table = manager.zetak()
+        self.assertEqual(
+            set(table.aliases),
+            {ComponentModeKey.from_epsilon_k((1, 1, 1), 0.0)},
+        )
+
+    def test_route_supports_all_components_of_even_spin_triples(self):
+        for spin in ((2, 0, 0), (2, 2, 2), (4, 2, 6)):
+            with self.subTest(spin=spin):
+                manager = ThreePCF(
+                    ThreePCFConfig(
+                        spin=spin,
+                        kmax=2.0,
+                        ell_min=0.1,
+                        ell_max=1.0e3,
+                        n_ell=16,
+                        slepian=SlepianConfig(
+                            regular_n_x=16,
+                            regular_x_padding=5.0,
+                        ),
+                    ),
+                    toy_bispectrum(),
+                    np.geomspace(0.02, 0.08, 3),
+                    np.linspace(0.2, 2.8, 5),
+                    route="slepian",
+                )
+                table = manager.zeta()
+                self.assertEqual(table.values.shape[0], 2 ** (sum(s != 0 for s in spin) - 1))
+                self.assertTrue(np.all(np.isfinite(table.values)))
+
+    def test_reference_spin_mode_matches_direct_radial_quadrature(self):
+        bispectrum = toy_bispectrum()
+        expression = next(bispectrum.iter_terms()).term.get_representation(
+            SlepianRepresentation2D
+        )
+        ell = np.geomspace(1.0e-3, 1.0e4, 256)
+        theta = np.array([0.002, 0.004])
+        actual = SlepianCalculator(SlepianConfig()).evaluate_modes(
+            bispectrum,
+            ell,
+            theta,
+            [0.0],
+            sigma=(2, 0, 0),
+        )[0.0]
+
+        integration_ell = np.geomspace(1.0e-4, 1.0e5, 50_000)
+        factor1 = expression.radial_factors[0].evaluate(integration_ell)
+        factor2 = expression.radial_factors[1].evaluate(integration_ell)
+        radial1 = np.array(
+            [
+                np.trapezoid(
+                    integration_ell * factor1 * jv(2, integration_ell * radius),
+                    integration_ell,
+                )
+                for radius in theta
+            ]
+        )
+        radial2 = np.array(
+            [
+                [
+                    np.trapezoid(
+                        integration_ell
+                        * factor2
+                        * jv(-1, integration_ell * x)
+                        * jv(1, integration_ell * target),
+                        integration_ell,
+                    )
+                    for target in theta
+                ]
+                for x in theta
+            ]
+        )
+        expected = 2.0 * radial2.T * radial1[None, :] / (2.0 * np.pi) ** 2
+        np.testing.assert_allclose(actual.real, expected, rtol=4.0e-4, atol=1.0e-5)
+        self.assertLess(
+            np.max(np.abs(actual.imag)) / np.max(np.abs(expected)),
+            1.0e-6,
+        )
+
+    def test_route_supports_half_integer_modes(self):
+        manager = ThreePCF(
+            ThreePCFConfig(
+                spin=(0, 1, 0),
+                kmax=0.5,
+                ell_min=1.0,
+                ell_max=1.0e3,
+                n_ell=12,
+            ),
+            toy_bispectrum(),
+            self.theta,
+            np.linspace(0.0, np.pi, 4),
+            route="slepian",
+        )
+        epsilon = (1, 1, 1)
+        table = manager.zetak()
+        self.assertEqual(
+            set(table.aliases),
+            {
+                ComponentModeKey.from_epsilon_k(epsilon, -0.5),
+                ComponentModeKey.from_epsilon_k(epsilon, 0.5),
+            },
+        )
+        self.assertEqual(table.get_for_mode(epsilon, -0.5).shape, (3, 3))
+        self.assertEqual(table.get_for_mode(epsilon, 0.5).shape, (3, 3))
+
+    def test_spin_zetak_agrees_with_numeric_route(self):
+        config = ThreePCFConfig(
+            spin=(0, 2, 0),
+            Lmax=12,
+            kmax=0.0,
+            ell_min=0.3,
+            ell_max=3.0e3,
+            n_ell=64,
+            use_coupling_cache=False,
+            multipole=NumericMultipoleConfig(
+                n_angle=513,
+                delta_beta_min=0.0,
+                delta_beta_max=np.pi,
+            ),
+        )
+        epsilon = (1, 1, 1)
+        phi = np.linspace(0.0, np.pi, 4)
+        numeric = ThreePCF(
+            config, toy_bispectrum(), self.theta, phi, route="numeric"
+        ).zetak().get_for_mode(epsilon, 0.0)
+        slepian = ThreePCF(
+            config, toy_bispectrum(), self.theta, phi, route="slepian"
+        ).zetak().get_for_mode(epsilon, 0.0)
+        relative = np.max(np.abs(slepian - numeric)) / np.max(np.abs(numeric))
+        self.assertLess(relative, 3.0e-2)
 
     def test_calculator_combines_expression_and_term_coefficients(self):
         bispectrum = 3.0 * toy_bispectrum()
@@ -558,6 +719,321 @@ class SlepianRouteTests(unittest.TestCase):
         self.assertIsNotNone(self.manager._slepian_calculator)
         self.manager.set_theta(np.geomspace(2.0e-3, 2.0e-2, 3))
         self.assertIsNone(self.manager._slepian_calculator)
+
+    def test_constant_leg_two_and_three_contact_terms_are_symmetric(self):
+        radial1 = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 8.0) ** 2)
+        )
+        radial2 = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 15.0) ** 2)
+        )
+        leg3_constant = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(
+                radial1,
+                radial2,
+                SlepianRadialFactor2D.constant(),
+            ),
+        )
+        leg2_constant = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(
+                radial1,
+                SlepianRadialFactor2D.constant(),
+                radial2,
+            ),
+        )
+        b_leg3 = Bispectrum2D(
+            (BispectrumTerm2D("leg3-constant", (leg3_constant,)),)
+        )
+        b_leg2 = Bispectrum2D(
+            (BispectrumTerm2D("leg2-constant", (leg2_constant,)),)
+        )
+        ell = np.geomspace(1.0e-2, 1.0e3, 16)
+        theta = np.geomspace(2.0e-2, 2.0e-1, 4)
+        calculator = SlepianCalculator(SlepianConfig())
+        modes = (-1, 0, 1)
+
+        from_leg3 = calculator.evaluate_modes(b_leg3, ell, theta, modes)
+        from_leg2 = calculator.evaluate_modes(b_leg2, ell, theta, modes)
+
+        for mode in modes:
+            np.testing.assert_allclose(
+                from_leg2[mode],
+                from_leg3[-mode].T,
+                rtol=2.0e-13,
+                atol=2.0e-13,
+            )
+
+    def test_constant_leg_two_and_three_regular_terms_are_symmetric(self):
+        radial1 = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 8.0) ** 2)
+        )
+        radial2 = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 15.0) ** 2)
+        )
+        leg3_constant = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(
+                radial1,
+                radial2,
+                SlepianRadialFactor2D.constant(),
+            ),
+            angular_orders=(-2, 0, 2),
+        )
+        leg2_constant = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(
+                radial1,
+                SlepianRadialFactor2D.constant(),
+                radial2,
+            ),
+            angular_orders=(-2, 2, 0),
+        )
+        b_leg3 = Bispectrum2D(
+            (BispectrumTerm2D("leg3-regular", (leg3_constant,)),)
+        )
+        b_leg2 = Bispectrum2D(
+            (BispectrumTerm2D("leg2-regular", (leg2_constant,)),)
+        )
+        ell = np.geomspace(1.0e-2, 1.0e3, 16)
+        theta = np.geomspace(2.0e-2, 2.0e-1, 4)
+        common = dict(regular_n_x=32, regular_x_padding=10.0)
+
+        for method in ("quadrature", "full_matrix", "low_rank"):
+            config = SlepianConfig(
+                **common,
+                regular_method=method,
+                regular_low_rank_rank=16,
+            )
+            calculator = SlepianCalculator(config)
+            from_leg3 = calculator.evaluate_modes(
+                b_leg3, ell, theta, [0]
+            )[0]
+            from_leg2 = calculator.evaluate_modes(
+                b_leg2, ell, theta, [0]
+            )[0]
+            np.testing.assert_allclose(
+                from_leg2,
+                from_leg3.T,
+                rtol=2.0e-12,
+                atol=2.0e-12,
+                err_msg=f"regular_method={method}",
+            )
+
+    def test_projected_constant_leg_two_and_three_are_symmetric(self):
+        radial1 = SlepianRadialFactor3D(
+            lambda k, z: np.exp(-0.5 * np.log(np.asarray(k) / 8.0e-3) ** 2)
+        )
+        radial2 = SlepianRadialFactor3D(
+            lambda k, z: np.exp(-0.5 * np.log(np.asarray(k) / 1.5e-2) ** 2)
+        )
+        leg3_constant = SlepianExpression3D(
+            coefficient=1.0,
+            radial_factors=(
+                radial1,
+                radial2,
+                SlepianRadialFactor3D.constant(),
+            ),
+            angular_orders=(-2, 0, 2),
+        )
+        leg2_constant = SlepianExpression3D(
+            coefficient=1.0,
+            radial_factors=(
+                radial1,
+                SlepianRadialFactor3D.constant(),
+                radial2,
+            ),
+            angular_orders=(-2, 2, 0),
+        )
+        z = np.array([0.3, 0.5, 0.8])
+        chi = np.array([800.0, 1100.0, 1500.0])
+        projector = LOSProjector(z=z, chi=chi, prefactor=np.ones(3))
+        b_leg3 = projector.project(
+            Bispectrum3D(
+                (BispectrumTerm3D("leg3-projected", (leg3_constant,)),)
+            )
+        )
+        b_leg2 = projector.project(
+            Bispectrum3D(
+                (BispectrumTerm3D("leg2-projected", (leg2_constant,)),)
+            )
+        )
+        ell = np.geomspace(1.0e-2, 1.0e3, 16)
+        theta = np.geomspace(2.0e-2, 2.0e-1, 3)
+        calculator = SlepianCalculator(
+            SlepianConfig(
+                regular_method="full_matrix",
+                regular_n_x=16,
+                regular_x_padding=10.0,
+            )
+        )
+
+        from_leg3 = calculator.evaluate_modes(b_leg3, ell, theta, [0])[0]
+        from_leg2 = calculator.evaluate_modes(b_leg2, ell, theta, [0])[0]
+        np.testing.assert_allclose(
+            from_leg2,
+            from_leg3.T,
+            rtol=2.0e-12,
+            atol=2.0e-12,
+        )
+
+    def test_constant_leg_one_is_explicitly_unsupported(self):
+        radial = SlepianRadialFactor2D(
+            lambda ell: np.exp(-0.5 * np.log(np.asarray(ell) / 8.0) ** 2)
+        )
+        expression = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=(
+                SlepianRadialFactor2D.constant(),
+                radial,
+                radial,
+            ),
+        )
+        bispectrum = Bispectrum2D(
+            (BispectrumTerm2D("leg1-constant", (expression,)),)
+        )
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            "cannot eliminate physical leg 1",
+        ):
+            SlepianCalculator(SlepianConfig()).evaluate_modes(
+                bispectrum,
+                np.geomspace(1.0e-2, 1.0e3, 16),
+                np.geomspace(2.0e-2, 2.0e-1, 3),
+                [0],
+            )
+
+    def test_source_updates_preserve_structural_slepian_cache(self):
+        state = {"scale": 1.0, "revision": 0}
+
+        def make_bispectrum(scale, revision_source):
+            radial1 = SlepianRadialFactor2D(
+                lambda ell: scale()
+                * np.exp(-0.5 * np.log(np.asarray(ell) / 8.0) ** 2)
+            )
+            radial2 = SlepianRadialFactor2D(
+                lambda ell: np.exp(
+                    -0.5 * np.log(np.asarray(ell) / 15.0) ** 2
+                )
+            )
+            expression = SlepianExpression2D(
+                coefficient=1.0,
+                radial_factors=(
+                    radial1,
+                    radial2,
+                    SlepianRadialFactor2D.constant(),
+                ),
+                angular_orders=(-2, 0, 2),
+            )
+            return Bispectrum2D(
+                (BispectrumTerm2D("stateful-regular", (expression,)),),
+                _revision_sources=(revision_source,),
+            )
+
+        bispectrum = make_bispectrum(
+            lambda: state["scale"],
+            lambda: state["revision"],
+        )
+        config = ThreePCFConfig(
+            kmax=0.0,
+            ell_min=1.0e-2,
+            ell_max=1.0e3,
+            n_ell=16,
+            slepian=SlepianConfig(
+                regular_method="full_matrix",
+                regular_n_x=16,
+                regular_x_padding=10.0,
+            ),
+        )
+        manager = ThreePCF(
+            config,
+            bispectrum,
+            np.geomspace(2.0e-2, 2.0e-1, 3),
+            np.linspace(0.0, np.pi, 4),
+            route="slepian",
+        )
+
+        with patch(
+            "fastnc.threepcf.slepian.regular_mellin_matrix",
+            wraps=regular_mellin_matrix,
+        ) as build:
+            first = manager.zetak().get_for_mode((1, 1, 1), 0.0)
+            calculator = manager._slepian_calculator
+
+            state["scale"] = 2.0
+            state["revision"] += 1
+            updated = manager.zetak().get_for_mode((1, 1, 1), 0.0)
+
+            replacement = make_bispectrum(lambda: 3.0, lambda: 0)
+            manager.set_bispectrum(replacement)
+            replaced = manager.zetak().get_for_mode((1, 1, 1), 0.0)
+
+        np.testing.assert_allclose(updated, 2.0 * first, rtol=2.0e-13)
+        np.testing.assert_allclose(replaced, 3.0 * first, rtol=2.0e-13)
+        self.assertIs(manager._slepian_calculator, calculator)
+        self.assertEqual(build.call_count, 1)
+        self.assertEqual(len(calculator._regular_mellin_matrices), 1)
+
+    def test_projector_change_preserves_structural_slepian_cache(self):
+        def radial(k, center):
+            return np.exp(-0.5 * np.log(np.asarray(k) / center) ** 2)
+
+        expression = SlepianExpression3D(
+            coefficient=1.0,
+            radial_factors=(
+                SlepianRadialFactor3D(
+                    lambda k, z: radial(k, 8.0e-3)
+                ),
+                SlepianRadialFactor3D(
+                    lambda k, z: radial(k, 1.5e-2)
+                ),
+                SlepianRadialFactor3D.constant(),
+            ),
+            angular_orders=(-2, 0, 2),
+        )
+        b3d = Bispectrum3D(
+            (BispectrumTerm3D("projected-regular", (expression,)),)
+        )
+        z = np.array([0.3, 0.5, 0.8])
+        chi = np.array([800.0, 1100.0, 1500.0])
+        first_b2d = LOSProjector(
+            z=z, chi=chi, prefactor=np.ones(3)
+        ).project(b3d)
+        second_b2d = LOSProjector(
+            z=z, chi=chi, prefactor=np.full(3, 2.0)
+        ).project(b3d)
+        config = ThreePCFConfig(
+            kmax=0.0,
+            ell_min=1.0e-2,
+            ell_max=1.0e3,
+            n_ell=16,
+            slepian=SlepianConfig(
+                regular_method="full_matrix",
+                regular_n_x=16,
+                regular_x_padding=10.0,
+            ),
+        )
+        manager = ThreePCF(
+            config,
+            first_b2d,
+            np.geomspace(2.0e-2, 2.0e-1, 3),
+            np.linspace(0.0, np.pi, 4),
+            route="slepian",
+        )
+
+        with patch(
+            "fastnc.threepcf.slepian.regular_mellin_matrix",
+            wraps=regular_mellin_matrix,
+        ) as build:
+            first = manager.zetak().get_for_mode((1, 1, 1), 0.0)
+            calculator = manager._slepian_calculator
+            manager.set_bispectrum(second_b2d)
+            second = manager.zetak().get_for_mode((1, 1, 1), 0.0)
+
+        np.testing.assert_allclose(second, 2.0 * first, rtol=2.0e-13)
+        self.assertIs(manager._slepian_calculator, calculator)
+        self.assertEqual(build.call_count, 1)
 
     def test_toy_zetak_agrees_with_numeric_route(self):
         config = ThreePCFConfig(
@@ -862,7 +1338,11 @@ class SlepianRouteTests(unittest.TestCase):
         b2d = projector.project(b3d)
         ell = np.geomspace(1.0, 300.0, 12)
         theta = np.geomspace(0.02, 0.08, 2)
-        common = dict(regular_n_x=16, regular_x_padding=6.0)
+        common = dict(
+            regular_n_x=16,
+            regular_x_padding=6.0,
+            regular_n_ratio=16,
+        )
 
         node_values = []
         for z_value, chi_value in zip(z, chi):

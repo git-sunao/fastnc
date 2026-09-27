@@ -120,12 +120,20 @@ normalization and the order pairs for which either side vanishes must be
 validated against the source derivation and high-precision integration before
 being promoted to the normative formula.
 
-The current `SlepianCalculator` reaches a constant third leg with
-`p = n3 - n` and `q = n`. It calls `_contact_sign(p, q)`, which returns a sign
-only when the canonical orders are equal. That historical implementation was
-limited to the contact-only subset. The current implementation replaces this
-check with an explicit constant-leg decomposition and adds direct regular
-quadrature for one-sided kernels.
+For a constant third leg, `SlepianCalculator` uses
+`p = n3 + sigma3 - n` and `q = n`; for a constant second leg it uses the
+symmetric pair `p = n2 + sigma2 - m` and `q = m` and restores the public
+theta-axis ordering after the internal contraction. The single transform has
+order `n1 + sigma1`, while the overall phase is `(-i)**Sigma`. This directly
+supports nonzero reference-vertex spin and has been checked against direct
+radial quadrature. The `G_Lk` angular coupling belongs to the generic numeric
+route; it is not an additional factor in this direct separable construction.
+The earlier `_contact_sign(p, q)` implementation returned a sign only when the
+canonical orders were equal and was limited to the contact-only subset. The
+current implementation replaces that check with an explicit constant-leg
+decomposition and direct regular quadrature for one-sided kernels. A constant
+first leg remains intentionally unsupported because eliminating it would lose
+the opening-angle multipole retained by `ZetaK`.
 
 The implemented low-level decomposition object is independent of
 `SlepianCalculator`. Its mathematical payload is:
@@ -145,9 +153,56 @@ pieces with `regular_method="quadrature"` using
 integral dx x R_single(x) R_double(x, theta1) C_reg(x, theta2).
 ```
 
-The logarithmic integration grid extends beyond the requested theta range by
-`regular_x_padding` and includes every requested theta point. The number of
-base logarithmic samples is `regular_n_x`. Tests protect the unchanged
+The original benchmark uses a logarithmic integration grid extending beyond
+the requested theta range by `regular_x_padding` and explicitly inserts every
+requested theta point. Because the regular kernel is represented as zero at
+the distributional boundary, trapezoidal panels adjacent to that inserted
+point introduce a grid-dependent notch. It is retained as
+`regular_quadrature="legacy_log"`, not used as the default.
+
+The replacement uses open Gauss-Legendre nodes in the ratio coordinate. For
+each constant-leg target `theta_*`, the lower branch sets `x=theta_* r` and
+the upper branch sets `x=theta_*/r`, with `r` in
+`[regular_ratio_min,1]`. Including the radial measure gives
+
+```text
+I_< = integral dr theta_*^2 r
+      R_1(theta_* r) R_2(theta_* r, theta_1) C^<(theta_* r, theta_*),
+
+I_> = integral dr theta_*^2 r^(-3)
+      R_1(theta_*/r) R_2(theta_*/r, theta_1) C^>(theta_*/r, theta_*).
+```
+
+No quadrature node lies at `r=1`. A spin `(2,4,6)` toy scan with 32 Mellin
+samples and three theta bins gave total norms `1.20069e5`, `1.18923e5`, and
+`1.19043e5` for 64, 128, and 256 ratio nodes. The last change is about 0.1%;
+this is a numerical observation for that toy, not a universal error bound.
+
+The same branch-separated rule now constructs the reusable Mellin matrix
+directly. For double Mellin index `a`, single Mellin index `b`, and target pair
+`(theta_1, theta_*)`, each branch accumulates
+
+```text
+F_ab(theta_1, theta_*) = sum_i w_i J_branch(r_i)
+    S_b(x_branch(r_i)) D_a(x_branch(r_i), theta_1)
+    C_branch(x_branch(r_i), theta_*),
+```
+
+where `J_< = theta_*^2 r` and `J_> = theta_*^2 r^(-3)`. Contracting this
+matrix with the two FFTLog coefficient vectors reproduces direct ratio
+quadrature. `full_matrix` and `low_rank` therefore no longer inherit the
+artificial boundary notch of the legacy global-`x` trapezoid. The legacy
+matrix remains available by selecting `regular_quadrature="legacy_log"`.
+
+Increasing the open quadrature order also drives nodes close to diagonals of
+the nonconstant double radial transform. The hypergeometric Weber series is
+ill-conditioned there. The direct finite-band Bessel correction therefore
+applies throughout `ratio >= weber_brute_min_ratio`, rather than only at exact
+equality. A zero reciprocal-gamma prefactor is detected before evaluating the
+hypergeometric function; this avoids evaluating a divergent continuation on a
+regular branch whose amplitude is exactly zero.
+
+Tests protect the unchanged
 equal-order result, signed contact parity, one-sided and two-sided support, the
 analytic `(p,q)=(0,2)` regular kernel, and the axis ordering and measure of the
 quadrature contraction.

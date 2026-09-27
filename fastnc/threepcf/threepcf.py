@@ -130,6 +130,12 @@ class ThreePCF:
         self._slepian_calculator = None
         self._clear_grid_results()
 
+    def _clear_source_results(self) -> None:
+        self._multipole = None
+        if self._slepian_calculator is not None:
+            self._slepian_calculator._clear_source_cache()
+        self._clear_grid_results()
+
     def _source_state_token(self):
         token = getattr(self._bispectrum, "state_token", None)
         return None if token is None else tuple(token)
@@ -139,9 +145,7 @@ class ThreePCF:
         if token == self._bispectrum_state_token:
             return
         self._bispectrum_state_token = token
-        self._multipole = None
-        self._slepian_calculator = None
-        self._clear_grid_results()
+        self._clear_source_results()
 
     def set_theta(self, theta) -> None:
         """Replace target theta bins and rebuild the tuned FFT grid."""
@@ -169,7 +173,7 @@ class ThreePCF:
             return
         self._bispectrum = bispectrum
         self._bispectrum_state_token = self._source_state_token()
-        self._clear_route_results()
+        self._clear_source_results()
 
     def set_route(self, route: str) -> None:
         """Replace the route and invalidate all route-dependent results."""
@@ -405,35 +409,30 @@ class ThreePCF:
         self,
         requested_epsilons: tuple[tuple[int, int, int], ...],
     ) -> ZetaKTable:
-        if self.config.spin != (0, 0, 0):
-            raise NotImplementedError(
-                "the initial Slepian route supports spin=(0, 0, 0) only"
-            )
         if self._slepian_calculator is None:
             self._slepian_calculator = SlepianCalculator(self.config.slepian)
 
-        epsilon = (1, 1, 1)
-        if requested_epsilons != (epsilon,):
-            raise ValueError(
-                "the scalar Slepian route has only epsilon=(1, 1, 1)"
-            )
-        effective = as_effective_spin_triple(self.config.spin)
-        k_values = effective.k_values(self.config.kmax)
-        mode_values = self._slepian_calculator.evaluate_modes(
-            self._bispectrum,
-            self.grid.ell,
-            self.theta,
-            k_values,
-        )
-
         values: dict[ZetaKKey, np.ndarray] = {}
         aliases: dict[ComponentModeKey, ZetaKKey] = {}
-        for k in k_values:
-            hkey = self._hkey(self.config.spin, float(k))
-            m, n = effective.bessel_orders(float(k))
-            key = ZetaKKey(hkey, m, n, effective.Sigma)
-            aliases[ComponentModeKey.from_epsilon_k(epsilon, k)] = key
-            values[key] = mode_values[int(k)]
+        spin_spec = SpinSpec(self.config.spin)
+        for epsilon in requested_epsilons:
+            sigma = spin_spec.sigma_from_epsilon(epsilon)
+            effective = as_effective_spin_triple(sigma)
+            k_values = effective.k_values(self.config.kmax)
+            mode_values = self._slepian_calculator.evaluate_modes(
+                self._bispectrum,
+                self.grid.ell,
+                self.theta,
+                k_values,
+                sigma=sigma,
+            )
+            for k in k_values:
+                hkey = self._hkey(sigma, float(k))
+                m, n = effective.bessel_orders(float(k))
+                key = ZetaKKey(hkey, m, n, effective.Sigma)
+                aliases[ComponentModeKey.from_epsilon_k(epsilon, k)] = key
+                if key not in values:
+                    values[key] = mode_values[float(k)]
 
         keys = tuple(values)
         table = ZetaKTable(

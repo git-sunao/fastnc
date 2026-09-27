@@ -942,6 +942,23 @@ are functions of `(k1, k2, k3, z)`, 2D expressions are functions of
 `(ell1, ell2, ell3)`, angular calculators operate only on `ell`, and the
 `k_i = ell_i / chi(z)` substitution belongs to the adapter/projection layer.
 
+### Slepian leg scope for ZetaK
+
+The Slepian route is intentionally not symmetric under arbitrary permutations
+of all three bispectrum legs. The target `ZetaK` is a multipole with respect to
+the opening angle opposite physical leg 1. Consequently, leg 1 must remain in
+the transform and cannot be eliminated as the constant Slepian leg without
+losing the requested angular multipole. Only constant leg 2 and constant leg 3
+are Slepian-supported, and those two cases must be implemented as a symmetric
+pair with leg 1 fixed.
+
+In zero-based implementation indices, support is planned for constant-factor
+indices 1 and 2, while index 0 remains explicitly unsupported. A hybrid route
+must assign an index-0 constant term to its semi-analytic representation when
+available and otherwise to its numeric representation. This assignment is a
+route-planning decision; the Slepian calculator itself must continue to raise
+an informative unsupported-capability error.
+
 ## Independent brute-force validation
 
 `fastnc.threepcf.bruteforce` is the active reference calculation for checking

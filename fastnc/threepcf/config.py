@@ -22,9 +22,13 @@ class SlepianConfig:
     weber_interpolation_nodes: int = 64
     weber_interpolation_max_ratio: float = 0.8
     diagonal_correction: Literal["brute", "none"] = "brute"
+    weber_brute_min_ratio: float = 0.95
     regular_method: Literal[
         "quadrature", "full_matrix", "low_rank"
     ] = "quadrature"
+    regular_quadrature: Literal["ratio_gauss", "legacy_log"] = "ratio_gauss"
+    regular_n_ratio: int = 64
+    regular_ratio_min: float = 0.05
     regular_n_x: int = 256
     regular_x_padding: float = 20.0
     regular_low_rank_rank: int | None = None
@@ -46,10 +50,20 @@ class SlepianConfig:
             raise ValueError("weber_interpolation_max_ratio must lie in (0, 1)")
         if self.diagonal_correction not in {"brute", "none"}:
             raise ValueError("diagonal_correction must be 'brute' or 'none'")
+        if not 0.0 < float(self.weber_brute_min_ratio) <= 1.0:
+            raise ValueError("weber_brute_min_ratio must lie in (0, 1]")
         if self.regular_method not in {"quadrature", "full_matrix", "low_rank"}:
             raise ValueError(
                 "regular_method must be 'quadrature', 'full_matrix', or 'low_rank'"
             )
+        if self.regular_quadrature not in {"ratio_gauss", "legacy_log"}:
+            raise ValueError(
+                "regular_quadrature must be 'ratio_gauss' or 'legacy_log'"
+            )
+        if int(self.regular_n_ratio) < 8:
+            raise ValueError("regular_n_ratio must be at least eight")
+        if not 0.0 < float(self.regular_ratio_min) < 1.0:
+            raise ValueError("regular_ratio_min must lie in (0, 1)")
         if (
             self.regular_low_rank_rank is not None
             and int(self.regular_low_rank_rank) < 1
@@ -64,6 +78,9 @@ class SlepianConfig:
         object.__setattr__(self, "bias", float(self.bias))
         object.__setattr__(self, "weber_rtol", float(self.weber_rtol))
         object.__setattr__(
+            self, "weber_brute_min_ratio", float(self.weber_brute_min_ratio)
+        )
+        object.__setattr__(
             self, "weber_interpolation_nodes", int(self.weber_interpolation_nodes)
         )
         object.__setattr__(
@@ -72,6 +89,10 @@ class SlepianConfig:
             float(self.weber_interpolation_max_ratio),
         )
         object.__setattr__(self, "regular_n_x", int(self.regular_n_x))
+        object.__setattr__(self, "regular_n_ratio", int(self.regular_n_ratio))
+        object.__setattr__(
+            self, "regular_ratio_min", float(self.regular_ratio_min)
+        )
         object.__setattr__(
             self, "regular_x_padding", float(self.regular_x_padding)
         )

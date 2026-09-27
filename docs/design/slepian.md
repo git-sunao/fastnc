@@ -61,16 +61,27 @@ The implemented unequal-order regular reference uses an independent field:
 ```python
 SlepianConfig(
     regular_method="quadrature",
-    regular_n_x=256,
-    regular_x_padding=20.0,
+    regular_quadrature="ratio_gauss",  # ratio_gauss | legacy_log
+    regular_n_ratio=64,
+    regular_ratio_min=0.05,
 )
 ```
 
-`quadrature` reconstructs the radial functions and integrates directly over a
-logarithmic `x` grid. The grid contains the requested theta values in addition
-to its regular logarithmic samples. `full_matrix` constructs and caches the
-uncompressed `F_ab(theta1, theta2)` before contracting the source-dependent
-Mellin coefficients. `low_rank` constructs the same matrix transiently, applies
+`quadrature` treats the open branches separately. For each constant-leg target
+`theta_*`, Gauss-Legendre nodes `r` lie strictly inside
+`[regular_ratio_min, 1]`; the two coordinates are `x_< = theta_* r` and
+`x_> = theta_*/r`. Their radial measures are respectively
+`theta_*^2 r dr` and `theta_*^2 r^(-3) dr`. Thus the distributional point
+`x=theta_*` is never sampled and no artificial zero is inserted at the branch
+boundary. `legacy_log` preserves the former global logarithmic trapezoidal
+integral as a selectable benchmark; its controls remain `regular_n_x` and
+`regular_x_padding`. `full_matrix` constructs and caches the uncompressed
+`F_ab(theta1, theta2)` with the same open, branch-separated ratio quadrature
+before contracting the source-dependent Mellin coefficients. The matrix axes
+are `(double Mellin index a, single Mellin index b, theta1, theta_constant)`.
+Consequently its construction depends on the angular grid and numerical
+hyperparameters but not on source coefficients, cosmology, or the legacy
+global `x` grid. `low_rank` constructs the same matrix transiently, applies
 an independent SVD at each `(theta1, theta2)`, discards the full matrix, and
 caches only the truncated factors. `regular_low_rank_rank` fixes a common rank;
 when it is `None`, `regular_low_rank_rtol` selects the smallest common rank that
@@ -84,6 +95,12 @@ principal-value prescription is established.
 
 Each accepted slower method remains permanently selectable as the reference
 for the next optimization. Caches for different methods are distinct.
+
+With `diagonal_correction="brute"`, the power-law Weber evaluator is replaced
+by the finite-band direct Bessel integral when the radial ratio is greater than
+or equal to `weber_brute_min_ratio`. This extends the former exact-diagonal
+correction to the neighborhood where the hypergeometric series is numerically
+ill-conditioned.
 
 The required development ladders are
 
@@ -117,6 +134,61 @@ This is a known limitation, not evidence that interpolation alone failed. The
 planned repair and measured residuals are in `docs/todo.md`.
 
 ## Constant and nonconstant legs
+
+The three bispectrum legs are not interchangeable in the Slepian-to-`ZetaK`
+calculation. `ZetaK` retains multipoles of the opening angle opposite leg 1,
+so leg 1 is the distinguished leg defining the requested angular multipole.
+Eliminating leg 1 as the constant Slepian leg would remove the angular
+information that `ZetaK` is meant to retain. The Slepian route must therefore
+not support a constant leg 1.
+
+Using one-based physical leg labels, the supported and unsupported cases are
+
+```text
+constant leg 2 -> supported by the Slepian route
+constant leg 3 -> supported by the Slepian route
+constant leg 1 -> unsupported by the Slepian route
+```
+
+In Python tuple indices these are respectively `constant_legs == (1,)`,
+`constant_legs == (2,)`, and the unsupported `constant_legs == (0,)`. Legs 2
+and 3 must be treated symmetrically. Their exchange must consistently map the
+radial factors, angular orders, Bessel orders, Fourier mode, and target-theta
+axes while keeping leg 1 fixed. This is a restricted leg-2/leg-3 symmetry, not
+a full three-leg canonicalization.
+
+## Spin scope
+
+The Slepian radial transforms use the effective spin
+`sigma_i = epsilon_i * spin_i`. For an allowed opening-angle mode `k`, define
+`m = Sigma/2 + k`, `n = Sigma/2 - k`, and `Sigma = sigma1 + sigma2 + sigma3`.
+The single radial order is `n1 + sigma1`. For constant leg 3 the double and
+constant order pairs are `(n2 + sigma2 - m, m)` and
+`(n3 + sigma3 - n, n)`; constant leg 2 exchanges the latter two physical
+legs and transposes the result back to the public theta-axis order. The final
+radial result carries the phase `(-i)**Sigma`.
+
+This construction applies equally when `sigma1` is nonzero. It is the direct
+Slepian route obtained after inserting the Fourier-triangle closure delta and
+performing the three angular integrals separately; it does not use the
+numeric route's intermediate `G_Lk` coupling. All even integer spin triples
+and every representative epsilon are supported. More generally, integer spin
+triples produce integer or half-integer `k` according to the parity of
+`Sigma`, provided `m` and `n` are integers.
+
+For a constant radial leg, comparisons with finite-band numeric or brute-force
+routes require care. Slepian uses the exact distributional Bessel closure,
+whereas a finite ell interval replaces that delta distribution by a broadened
+kernel. Reference-vertex spin can amplify this truncation residual. Validate
+the Slepian expression itself against direct radial quadrature before using a
+finite-band route as an accuracy reference.
+
+A term with constant leg 1, or any other structure unsupported by the Slepian
+formalism, must not be forced into a Slepian representation. Under a future
+term-wise hybrid policy it falls back first to a semi-analytic representation
+and then to the numeric representation when no semi-analytic representation
+is available. An explicitly requested pure Slepian route must report the term
+as unsupported rather than silently applying that fallback.
 
 For a constant radial factor, the remaining closure kernel is the distribution
 
@@ -201,6 +273,13 @@ nodes. Replacing the source model or changing its physical parameters must
 recompute the node-dependent Mellin coefficients but preserve compatible
 `F_ab` resources. A different LOS grid changes the coefficient samples and
 quadrature, not the universal regular matrix.
+
+`SlepianCalculator` therefore separates source-dependent FFTLog power sums
+from structural geometries, Weber resources, constant-leg kernels, and regular
+matrices. A bispectrum state-token change or `ThreePCF.set_bispectrum()` clears
+the power sums and result tables while retaining the calculator and compatible
+structural caches. A theta-grid change discards the calculator because it
+changes the transform geometry.
 
 ## Result boundary
 

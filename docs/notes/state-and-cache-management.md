@@ -326,6 +326,8 @@ tables, `RegularMellinMatrix`, and `LowRankRegularMellinMatrix`.
 3. Propagate prediction tokens and structure signatures through projection,
    interpolation, selection, scaling, and composition.
 4. Split Slepian source caches from structural caches and test selective clear.
+   This is implemented for FFTLog power sums versus Weber, geometry, and
+   regular-matrix resources.
 5. Change `ThreePCF` source synchronization and `set_bispectrum()` so they
    preserve structural resources.
 6. Update interpolation and brute-force observers to use prediction tokens.

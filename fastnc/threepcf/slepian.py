@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from numbers import Number
 
 import numpy as np
+from numpy.polynomial.legendre import leggauss
 from scipy.interpolate import CubicSpline
 from scipy.special import jv, loggamma, rgamma
 
@@ -19,6 +20,7 @@ from fastnc.bispectrum import (
 from fastnc.projection import ProjectedSlepianRepresentation2D
 
 from .config import SlepianConfig
+from .conventions import as_effective_spin_triple
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,52 @@ class FFTLogPowerSum:
 
     coefficients: np.ndarray
     exponents: np.ndarray
+
+
+@dataclass(frozen=True)
+class _SlepianLegLayout:
+    double_leg: int
+    single_order: int
+    double_orders: tuple[int, int]
+    constant_orders: tuple[int, int]
+    transpose_output: bool
+
+
+def _slepian_leg_layout(
+    expression,
+    m: int,
+    n: int,
+    sigma: tuple[int, int, int] = (0, 0, 0),
+) -> _SlepianLegLayout:
+    sigma1, sigma2, sigma3 = as_effective_spin_triple(sigma).sigma
+    constant_legs = expression.constant_legs
+    if constant_legs == (0,):
+        raise NotImplementedError(
+            "the Slepian route cannot eliminate physical leg 1 because "
+            "ZetaK retains the angle opposite leg 1"
+        )
+    if constant_legs == (2,):
+        n1, n2, n3 = expression.angular_orders
+        return _SlepianLegLayout(
+            double_leg=1,
+            single_order=n1 + sigma1,
+            double_orders=(n2 + sigma2 - m, m),
+            constant_orders=(n3 + sigma3 - n, n),
+            transpose_output=False,
+        )
+    if constant_legs == (1,):
+        n1, n2, n3 = expression.angular_orders
+        return _SlepianLegLayout(
+            double_leg=2,
+            single_order=n1 + sigma1,
+            double_orders=(n3 + sigma3 - n, n),
+            constant_orders=(n2 + sigma2 - m, m),
+            transpose_output=True,
+        )
+    raise NotImplementedError(
+        "the Slepian route requires exactly physical leg 2 or leg 3 "
+        "to be constant"
+    )
 
 
 @dataclass(frozen=True)
@@ -54,11 +102,12 @@ class WeberGeometry:
         diagonal = np.isclose(xx, tt, rtol=1.0e-13, atol=0.0)
         return cls(x, theta, scale, ratio, diagonal)
 
-    def unique_ratios(self, *, omit_diagonal: bool):
+    def unique_ratios(self, *, omit_diagonal: bool, max_ratio: float = 1.0):
         """Return unique log-ratios and indices reconstructing the full grid."""
         active = ~self.diagonal if omit_diagonal else np.ones_like(
             self.diagonal, dtype=bool
         )
+        active &= self.ratio < float(max_ratio)
         # Log-grid ratios that differ only by roundoff represent the same
         # scale separation. Quantization avoids duplicate hypergeometric calls.
         log_ratio = np.round(np.log(self.ratio[active]), decimals=14)
@@ -354,11 +403,14 @@ def _weber_unit_power(
     D = (nu_big - mu + lam + 1.0) / 2.0
     if ratio == 0.0 and mu > 0:
         return 0.0j
+    inverse_gamma_d = rgamma(D)
+    if inverse_gamma_d == 0.0:
+        return 0.0j
     prefactor = (
         ratio**mu
         * np.exp(-lam * np.log(2.0))
         * np.exp(loggamma(A))
-        * rgamma(D)
+        * inverse_gamma_d
         * rgamma(C)
     )
     return sign_small * sign_big * prefactor * _hyp2f1(A, B, C, ratio**2, rtol)
@@ -461,10 +513,11 @@ def _powerlaw_double_kernel(
     interpolation_nodes: int = 64,
     interpolation_max_ratio: float = 0.8,
     interpolation_cache: dict | None = None,
+    max_ratio: float = 1.0,
 ):
     geometry = geometry or WeberGeometry.from_coordinates(x, theta)
     ratios, active, inverse = geometry.unique_ratios(
-        omit_diagonal=omit_diagonal
+        omit_diagonal=omit_diagonal, max_ratio=max_ratio
     )
     result = np.zeros(geometry.scale.shape, dtype=complex)
 
@@ -580,6 +633,103 @@ def regular_mellin_matrix(
     theta = np.asarray(theta, dtype=float)
     if ell.ndim != 1 or x.ndim != 1 or theta.ndim != 1:
         raise ValueError("ell, x, and theta must be one-dimensional")
+    if config.regular_quadrature == "ratio_gauss":
+        nodes, weights = leggauss(config.regular_n_ratio)
+        ratio_min = config.regular_ratio_min
+        ratio = 0.5 * ((1.0 - ratio_min) * nodes + 1.0 + ratio_min)
+        weights = 0.5 * (1.0 - ratio_min) * weights
+        values = np.zeros(
+            (
+                double_exponents.size,
+                single_exponents.size,
+                theta.size,
+                theta.size,
+            ),
+            dtype=complex,
+        )
+        single_factor = _single_bessel_factor(single_exponents, single_order)
+        double_order_x, double_order_theta = double_orders
+
+        for constant_index, theta_constant in enumerate(theta):
+            for branch, branch_x in (
+                ("less", theta_constant * ratio),
+                ("greater", theta_constant / ratio),
+            ):
+                branch_geometry = WeberGeometry.from_coordinates(branch_x, theta)
+                kernel = constant_leg_kernel(
+                    *constant_orders,
+                    branch_x,
+                    np.array([theta_constant]),
+                    config,
+                    interpolation_cache=interpolation_cache,
+                )
+                if branch == "less":
+                    regular = kernel.regular_less[:, 0]
+                    jacobian = theta_constant**2 * ratio
+                else:
+                    regular = kernel.regular_greater[:, 0]
+                    jacobian = theta_constant**2 / ratio**3
+                if not np.any(regular):
+                    continue
+                single_basis = (
+                    single_factor[:, None]
+                    * branch_x[None, :] ** (-single_exponents[:, None] - 2.0)
+                )
+                radial_weight = weights * jacobian * regular
+                for double_index, exponent in enumerate(double_exponents):
+                    double_basis = _powerlaw_double_kernel(
+                        exponent,
+                        double_order_x,
+                        double_order_theta,
+                        branch_x,
+                        theta,
+                        rtol=config.weber_rtol,
+                        omit_diagonal=config.diagonal_correction == "brute",
+                        geometry=branch_geometry,
+                        method=config.weber_method,
+                        interpolation_nodes=config.weber_interpolation_nodes,
+                        interpolation_max_ratio=(
+                            config.weber_interpolation_max_ratio
+                        ),
+                        interpolation_cache=interpolation_cache,
+                        max_ratio=(
+                            config.weber_brute_min_ratio
+                            if config.diagonal_correction == "brute"
+                            else 1.0
+                        ),
+                    )
+                    if config.diagonal_correction == "brute":
+                        brute_mask = (
+                            branch_geometry.ratio
+                            >= config.weber_brute_min_ratio
+                        )
+                        if np.any(brute_mask):
+                            brute = _double_radial_brute(
+                                ell,
+                                ell**exponent,
+                                double_order_x,
+                                double_order_theta,
+                                branch_x,
+                                theta,
+                            )
+                            double_basis[brute_mask] = brute[brute_mask]
+                    values[double_index, :, :, constant_index] += np.einsum(
+                        "r,br,ri->bi",
+                        radial_weight,
+                        single_basis,
+                        double_basis,
+                    )
+        return RegularMellinMatrix(
+            values,
+            double_exponents,
+            single_exponents,
+            ratio,
+            theta,
+            single_order,
+            double_orders,
+            constant_orders,
+        )
+
     geometry = geometry or WeberGeometry.from_coordinates(x, theta)
     constant_kernel = constant_kernel or constant_leg_kernel(
         *constant_orders,
@@ -808,8 +958,10 @@ def double_radial_transform(
     x = np.asarray(x, dtype=float)
     theta = np.asarray(theta, dtype=float)
     geometry = geometry or WeberGeometry.from_coordinates(x, theta)
-    has_diagonal = np.any(geometry.diagonal)
-    replace_diagonal = has_diagonal and config.diagonal_correction == "brute"
+    replace_near_diagonal = config.diagonal_correction == "brute"
+    brute_mask = replace_near_diagonal & (
+        geometry.ratio >= config.weber_brute_min_ratio
+    )
     result = np.zeros((x.size, theta.size), dtype=complex)
     for coefficient, exponent in zip(
         power_sum.coefficients, power_sum.exponents
@@ -821,7 +973,8 @@ def double_radial_transform(
                 int(order_x),
                 int(order_theta),
                 float(config.weber_rtol),
-                bool(replace_diagonal),
+                bool(replace_near_diagonal),
+                float(config.weber_brute_min_ratio),
                 config.weber_method,
                 config.weber_interpolation_nodes,
                 config.weber_interpolation_max_ratio,
@@ -835,24 +988,29 @@ def double_radial_transform(
                     x,
                     theta,
                     rtol=config.weber_rtol,
-                    omit_diagonal=replace_diagonal,
+                    omit_diagonal=replace_near_diagonal,
                     geometry=geometry,
                     method=config.weber_method,
                     interpolation_nodes=config.weber_interpolation_nodes,
                     interpolation_max_ratio=config.weber_interpolation_max_ratio,
                     interpolation_cache=interpolation_cache,
+                    max_ratio=(
+                        config.weber_brute_min_ratio
+                        if replace_near_diagonal
+                        else 1.0
+                    ),
                 )
                 if kernel_cache is not None:
                     kernel_cache[cache_key] = kernel
             result += coefficient * kernel
-    if replace_diagonal:
+    if np.any(brute_mask):
         tapered = np.asarray(values) * _log_edge_taper(
             len(ell), config.taper_fraction
         )
         brute = _double_radial_brute(
             ell, tapered, order_x, order_theta, x, theta
         )
-        result[geometry.diagonal] = brute[geometry.diagonal]
+        result[brute_mask] = brute[brute_mask]
     return result
 
 
@@ -881,6 +1039,9 @@ class SlepianCalculator:
         self._constant_leg_kernels.clear()
         self._regular_mellin_matrices.clear()
         self._low_rank_regular_mellin_matrices.clear()
+
+    def _clear_source_cache(self) -> None:
+        self._power_sums.clear()
 
     def _geometry(self, x, theta) -> WeberGeometry:
         x = np.asarray(x, dtype=float)
@@ -933,6 +1094,78 @@ class SlepianCalculator:
         )
         return np.unique(np.concatenate((base, theta)))
 
+    def _regular_ratio_rule(self):
+        nodes, weights = leggauss(self.config.regular_n_ratio)
+        ratio_min = self.config.regular_ratio_min
+        ratio = 0.5 * ((1.0 - ratio_min) * nodes + 1.0 + ratio_min)
+        weights = 0.5 * (1.0 - ratio_min) * weights
+        return ratio, weights
+
+    def _regular_matrix_inputs(self, layout: _SlepianLegLayout, theta):
+        if self.config.regular_quadrature == "ratio_gauss":
+            ratio, _ = self._regular_ratio_rule()
+            return ratio, None
+        x = self._regular_x_grid(theta)
+        kernel = self._constant_leg_kernel(
+            *layout.constant_orders, x, theta
+        )
+        return x, kernel
+
+    def _regular_ratio_contribution(
+        self,
+        ell,
+        values_double,
+        power1: FFTLogPowerSum,
+        power_double: FFTLogPowerSum,
+        layout: _SlepianLegLayout,
+        theta,
+    ):
+        """Integrate the two open constant-leg branches in ratio space."""
+        theta = np.asarray(theta, dtype=float)
+        ratio, weights = self._regular_ratio_rule()
+        contribution = np.zeros((theta.size, theta.size), dtype=complex)
+
+        for index, theta_constant in enumerate(theta):
+            x_less = theta_constant * ratio
+            x_greater = theta_constant / ratio
+            branch_total = np.zeros(theta.size, dtype=complex)
+
+            for branch, x in (("less", x_less), ("greater", x_greater)):
+                radial1 = single_radial_transform(
+                    power1, layout.single_order, x
+                )
+                radial_double = double_radial_transform(
+                    ell,
+                    values_double,
+                    power_double,
+                    *layout.double_orders,
+                    x,
+                    theta,
+                    self.config,
+                    geometry=self._geometry(x, theta),
+                    kernel_cache=self._weber_kernels,
+                    interpolation_cache=self._weber_interpolators,
+                )
+                kernel = self._constant_leg_kernel(
+                    *layout.constant_orders, x, np.array([theta_constant])
+                )
+                if branch == "less":
+                    regular = kernel.regular_less[:, 0]
+                    jacobian = theta_constant**2 * ratio
+                else:
+                    regular = kernel.regular_greater[:, 0]
+                    jacobian = theta_constant**2 / ratio**3
+                branch_total += np.sum(
+                    weights[:, None]
+                    * jacobian[:, None]
+                    * radial1[:, None]
+                    * radial_double
+                    * regular[:, None],
+                    axis=0,
+                )
+            contribution[:, index] = branch_total
+        return contribution
+
     def _regular_mellin_matrix(
         self,
         ell,
@@ -943,7 +1176,7 @@ class SlepianCalculator:
         constant_orders: tuple[int, int],
         x,
         theta,
-        constant_kernel: ConstantLegKernel,
+        constant_kernel: ConstantLegKernel | None,
     ) -> RegularMellinMatrix:
         geometry = self._geometry(x, theta)
         key = (
@@ -960,6 +1193,10 @@ class SlepianCalculator:
             self.config.weber_interpolation_nodes,
             self.config.weber_interpolation_max_ratio,
             self.config.diagonal_correction,
+            self.config.weber_brute_min_ratio,
+            self.config.regular_quadrature,
+            self.config.regular_n_ratio,
+            self.config.regular_ratio_min,
         )
         if key not in self._regular_mellin_matrices:
             self._regular_mellin_matrices[key] = regular_mellin_matrix(
@@ -988,7 +1225,7 @@ class SlepianCalculator:
         constant_orders: tuple[int, int],
         x,
         theta,
-        constant_kernel: ConstantLegKernel,
+        constant_kernel: ConstantLegKernel | None,
     ) -> LowRankRegularMellinMatrix:
         geometry = self._geometry(x, theta)
         key = (
@@ -1005,6 +1242,10 @@ class SlepianCalculator:
             self.config.weber_interpolation_nodes,
             self.config.weber_interpolation_max_ratio,
             self.config.diagonal_correction,
+            self.config.weber_brute_min_ratio,
+            self.config.regular_quadrature,
+            self.config.regular_n_ratio,
+            self.config.regular_ratio_min,
             self.config.regular_low_rank_rank,
             self.config.regular_low_rank_rtol,
         )
@@ -1045,6 +1286,7 @@ class SlepianCalculator:
         ell,
         theta,
         k_values,
+        sigma,
     ):
         projector = expression.projector
         source = expression.source_representation
@@ -1052,7 +1294,7 @@ class SlepianCalculator:
             raise TypeError("unsupported SlepianRepresentation3D implementation")
         if not projector.is_delta_like:
             return self._evaluate_projected_los_expression(
-                expression, ell, theta, k_values
+                expression, ell, theta, k_values, sigma
             )
 
         z = float(projector.z[0])
@@ -1087,6 +1329,7 @@ class SlepianCalculator:
             ell,
             theta,
             k_values,
+            sigma=sigma,
         )
 
     def _evaluate_projected_los_expression(
@@ -1095,14 +1338,11 @@ class SlepianCalculator:
         ell,
         theta,
         k_values,
+        sigma,
     ):
         """Evaluate a projected 3D expression without forming dense bar-C."""
         source = expression.source_representation
-        if source.constant_legs != (2,):
-            raise NotImplementedError(
-                "the initial projected Slepian route requires exactly the "
-                "third radial leg to be constant"
-            )
+        base_layout = _slepian_leg_layout(source, 0, 0, sigma)
         projector = expression.projector
         ell = np.asarray(ell, dtype=float)
         theta = np.asarray(theta, dtype=float)
@@ -1111,12 +1351,14 @@ class SlepianCalculator:
         radial_k = (ell[None, :] + projector.shift) / chi[:, None]
         radial_z = z[:, None]
         values1 = source.radial_factors[0].evaluate(radial_k, radial_z)
-        values2 = source.radial_factors[1].evaluate(radial_k, radial_z)
+        values_double = source.radial_factors[base_layout.double_leg].evaluate(
+            radial_k, radial_z
+        )
         coefficients1, exponents1 = fftlog_power_sums_los(
             ell, values1, self.config
         )
-        coefficients2, exponents2 = fftlog_power_sums_los(
-            ell, values2, self.config
+        coefficients_double, exponents_double = fftlog_power_sums_los(
+            ell, values_double, self.config
         )
 
         term_weight = expression.source_term.coefficient
@@ -1130,36 +1372,38 @@ class SlepianCalculator:
             amplitudes[index] = complex(weight) * source.coefficient_at(redshift)
 
         power1_template = FFTLogPowerSum(coefficients1[0], exponents1)
-        power2_template = FFTLogPowerSum(coefficients2[0], exponents2)
+        power_double_template = FFTLogPowerSum(
+            coefficients_double[0], exponents_double
+        )
         geometry = self._geometry(theta, theta)
-        n1, n2, n3 = source.angular_orders
         results = {
-            int(k): np.zeros((theta.size, theta.size), dtype=complex)
+            float(k): np.zeros((theta.size, theta.size), dtype=complex)
             for k in k_values
         }
+        effective = as_effective_spin_triple(sigma)
         for raw_k in k_values:
-            k = int(raw_k)
-            if not np.isclose(raw_k, k):
-                raise NotImplementedError(
-                    "the initial scalar Slepian route supports integer k only"
-                )
-            m, n = k, -k
+            k = float(raw_k)
+            m, n = effective.bessel_orders(k)
+            layout = _slepian_leg_layout(source, m, n, sigma)
             constant_kernel = self._constant_leg_kernel(
-                n3 - n, n, theta, theta
+                *layout.constant_orders, theta, theta
             )
             contribution = np.zeros_like(results[k])
             if constant_kernel.contact_coefficient:
                 samples = []
                 for index in range(z.size):
                     power1 = FFTLogPowerSum(coefficients1[index], exponents1)
-                    power2 = FFTLogPowerSum(coefficients2[index], exponents2)
-                    radial1 = single_radial_transform(power1, n1, theta)
-                    radial2 = double_radial_transform(
+                    power_double = FFTLogPowerSum(
+                        coefficients_double[index], exponents_double
+                    )
+                    radial1 = single_radial_transform(
+                        power1, layout.single_order, theta
+                    )
+                    radial_double = double_radial_transform(
                         ell,
-                        values2[index],
-                        power2,
-                        n2 - m,
-                        m,
+                        values_double[index],
+                        power_double,
+                        *layout.double_orders,
                         theta,
                         theta,
                         self.config,
@@ -1170,7 +1414,7 @@ class SlepianCalculator:
                     samples.append(
                         amplitudes[index]
                         * constant_kernel.contact_coefficient
-                        * radial2.T
+                        * radial_double.T
                         * radial1[None, :]
                     )
                 contribution += projector.integrate_coefficients(
@@ -1179,48 +1423,66 @@ class SlepianCalculator:
                     sample_combination=expression.sample_combination,
                 )
             if constant_kernel.has_regular:
-                if not _regular_quadrature_supported(n3 - n, n):
+                if not _regular_quadrature_supported(
+                    *layout.constant_orders
+                ):
                     raise NotImplementedError(
                         "regular quadrature currently requires a positive "
                         "even difference between canonical Bessel orders"
                     )
-                x = self._regular_x_grid(theta)
-                regular_kernel = self._constant_leg_kernel(
-                    n3 - n, n, x, theta
-                )
                 if self.config.regular_method == "quadrature":
-                    regular = (
-                        regular_kernel.regular_less
-                        + regular_kernel.regular_greater
-                    )
                     samples = []
-                    x_geometry = self._geometry(x, theta)
                     for index in range(z.size):
                         power1 = FFTLogPowerSum(coefficients1[index], exponents1)
-                        power2 = FFTLogPowerSum(coefficients2[index], exponents2)
-                        radial1_x = single_radial_transform(power1, n1, x)
-                        radial2_x = double_radial_transform(
-                            ell,
-                            values2[index],
-                            power2,
-                            n2 - m,
-                            m,
-                            x,
-                            theta,
-                            self.config,
-                            geometry=x_geometry,
-                            kernel_cache=self._weber_kernels,
-                            interpolation_cache=self._weber_interpolators,
+                        power_double = FFTLogPowerSum(
+                            coefficients_double[index], exponents_double
                         )
-                        integrand = (
-                            x[:, None, None]
-                            * radial1_x[:, None, None]
-                            * radial2_x[:, :, None]
-                            * regular[:, None, :]
-                        )
+                        if self.config.regular_quadrature == "ratio_gauss":
+                            regular_contribution = (
+                                self._regular_ratio_contribution(
+                                    ell,
+                                    values_double[index],
+                                    power1,
+                                    power_double,
+                                    layout,
+                                    theta,
+                                )
+                            )
+                        else:
+                            x = self._regular_x_grid(theta)
+                            regular_kernel = self._constant_leg_kernel(
+                                *layout.constant_orders, x, theta
+                            )
+                            radial1_x = single_radial_transform(
+                                power1, layout.single_order, x
+                            )
+                            radial_double_x = double_radial_transform(
+                                ell,
+                                values_double[index],
+                                power_double,
+                                *layout.double_orders,
+                                x,
+                                theta,
+                                self.config,
+                                geometry=self._geometry(x, theta),
+                                kernel_cache=self._weber_kernels,
+                                interpolation_cache=self._weber_interpolators,
+                            )
+                            regular = (
+                                regular_kernel.regular_less
+                                + regular_kernel.regular_greater
+                            )
+                            integrand = (
+                                x[:, None, None]
+                                * radial1_x[:, None, None]
+                                * radial_double_x[:, :, None]
+                                * regular[:, None, :]
+                            )
+                            regular_contribution = np.trapezoid(
+                                integrand, x, axis=0
+                            )
                         samples.append(
-                            amplitudes[index]
-                            * np.trapezoid(integrand, x, axis=0)
+                            amplitudes[index] * regular_contribution
                         )
                     contribution += projector.integrate_coefficients(
                         np.stack(samples),
@@ -1228,13 +1490,16 @@ class SlepianCalculator:
                         sample_combination=expression.sample_combination,
                     )
                 elif self.config.regular_method == "full_matrix":
+                    x, regular_kernel = self._regular_matrix_inputs(
+                        layout, theta
+                    )
                     matrix = self._regular_mellin_matrix(
                         ell,
                         power1_template,
-                        power2_template,
-                        n1,
-                        (n2 - m, m),
-                        (n3 - n, n),
+                        power_double_template,
+                        layout.single_order,
+                        layout.double_orders,
+                        layout.constant_orders,
                         x,
                         theta,
                         regular_kernel,
@@ -1244,7 +1509,7 @@ class SlepianCalculator:
                             contract_regular_mellin_matrix(
                                 matrix,
                                 amplitudes[index] * coefficients1[index],
-                                coefficients2[index],
+                                coefficients_double[index],
                             )
                             for index in range(z.size)
                         ]
@@ -1255,13 +1520,16 @@ class SlepianCalculator:
                         sample_combination=expression.sample_combination,
                     )
                 elif self.config.regular_method == "low_rank":
+                    x, regular_kernel = self._regular_matrix_inputs(
+                        layout, theta
+                    )
                     matrix = self._low_rank_regular_mellin_matrix(
                         ell,
                         power1_template,
-                        power2_template,
-                        n1,
-                        (n2 - m, m),
-                        (n3 - n, n),
+                        power_double_template,
+                        layout.single_order,
+                        layout.double_orders,
+                        layout.constant_orders,
                         x,
                         theta,
                         regular_kernel,
@@ -1271,26 +1539,41 @@ class SlepianCalculator:
                         chi=chi,
                         weight=projector.weight(expression.sample_combination),
                         single_coefficients=amplitudes[:, None] * coefficients1,
-                        double_coefficients=coefficients2,
+                        double_coefficients=coefficients_double,
                         single_exponents=exponents1,
-                        double_exponents=exponents2,
+                        double_exponents=exponents_double,
                     )
                     contribution += contract_low_rank_regular_mellin_matrix_los(
                         matrix, factors
                     )
                 else:  # guarded by SlepianConfig
                     raise ValueError("unsupported regular_method")
-            results[k] += contribution / (2.0 * np.pi) ** 2
+            if layout.transpose_output:
+                contribution = contribution.T
+            results[k] += (
+                (-1j) ** effective.Sigma
+                * contribution
+                / (2.0 * np.pi) ** 2
+            )
         return results
 
-    def evaluate_modes(self, bispectrum, ell, theta, k_values):
-        """Return scalar ZetaK arrays indexed by integer opening-angle mode."""
+    def evaluate_modes(
+        self,
+        bispectrum,
+        ell,
+        theta,
+        k_values,
+        *,
+        sigma=(0, 0, 0),
+    ):
+        """Return ZetaK arrays indexed by integer or half-integer mode."""
         if not isinstance(bispectrum, Bispectrum2D):
             raise TypeError("the Slepian route requires a Bispectrum2D")
         ell = np.asarray(ell, dtype=float)
         theta = np.asarray(theta, dtype=float)
+        effective = as_effective_spin_triple(sigma)
         results = {
-            int(k): np.zeros((theta.size, theta.size), dtype=complex)
+            float(k): np.zeros((theta.size, theta.size), dtype=complex)
             for k in k_values
         }
         geometry = self._geometry(theta, theta)
@@ -1304,43 +1587,38 @@ class SlepianCalculator:
                     ell,
                     theta,
                     k_values,
+                    sigma,
                 )
                 for k, values in projected.items():
-                    results[int(k)] += values
+                    results[float(k)] += values
                 continue
             if not hasattr(expression, "radial_factors"):
                 raise TypeError("unsupported SlepianRepresentation2D implementation")
-            if expression.constant_legs != (2,):
-                raise NotImplementedError(
-                    "the initial Slepian route requires exactly the third radial leg "
-                    "to be constant"
-                )
-            n1, n2, n3 = expression.angular_orders
             _, power1 = self._factor_data(expression, 0, ell)
-            values2, power2 = self._factor_data(expression, 1, ell)
             coefficient = (
                 self._weight_value(weighted_term.coefficient)
                 * expression.coefficient
             )
             for raw_k in k_values:
-                k = int(raw_k)
-                if not np.isclose(raw_k, k):
-                    raise NotImplementedError(
-                        "the initial scalar Slepian route supports integer k only"
-                    )
-                m, n = k, -k
+                k = float(raw_k)
+                m, n = effective.bessel_orders(k)
+                layout = _slepian_leg_layout(expression, m, n, sigma)
+                values_double, power_double = self._factor_data(
+                    expression, layout.double_leg, ell
+                )
                 constant_kernel = self._constant_leg_kernel(
-                    n3 - n, n, theta, theta
+                    *layout.constant_orders, theta, theta
                 )
                 contribution = np.zeros_like(results[k])
                 if constant_kernel.contact_coefficient:
-                    radial1 = single_radial_transform(power1, n1, theta)
-                    radial2 = double_radial_transform(
+                    radial1 = single_radial_transform(
+                        power1, layout.single_order, theta
+                    )
+                    radial_double = double_radial_transform(
                         ell,
-                        values2,
-                        power2,
-                        n2 - m,
-                        m,
+                        values_double,
+                        power_double,
+                        *layout.double_orders,
                         theta,
                         theta,
                         self.config,
@@ -1350,53 +1628,71 @@ class SlepianCalculator:
                     )
                     contribution += (
                         constant_kernel.contact_coefficient
-                        * radial2.T
+                        * radial_double.T
                         * radial1[None, :]
                     )
                 if constant_kernel.has_regular:
-                    if not _regular_quadrature_supported(n3 - n, n):
+                    if not _regular_quadrature_supported(
+                        *layout.constant_orders
+                    ):
                         raise NotImplementedError(
                             "regular quadrature currently requires a positive "
                             "even difference between canonical Bessel orders"
                         )
-                    x = self._regular_x_grid(theta)
-                    regular_kernel = self._constant_leg_kernel(
-                        n3 - n, n, x, theta
-                    )
                     if self.config.regular_method == "quadrature":
-                        radial1_x = single_radial_transform(power1, n1, x)
-                        radial2_x = double_radial_transform(
-                            ell,
-                            values2,
-                            power2,
-                            n2 - m,
-                            m,
-                            x,
-                            theta,
-                            self.config,
-                            geometry=self._geometry(x, theta),
-                            kernel_cache=self._weber_kernels,
-                            interpolation_cache=self._weber_interpolators,
-                        )
-                        regular = (
-                            regular_kernel.regular_less
-                            + regular_kernel.regular_greater
-                        )
-                        integrand = (
-                            x[:, None, None]
-                            * radial1_x[:, None, None]
-                            * radial2_x[:, :, None]
-                            * regular[:, None, :]
-                        )
-                        contribution += np.trapezoid(integrand, x, axis=0)
+                        if self.config.regular_quadrature == "ratio_gauss":
+                            contribution += self._regular_ratio_contribution(
+                                ell,
+                                values_double,
+                                power1,
+                                power_double,
+                                layout,
+                                theta,
+                            )
+                        else:
+                            x = self._regular_x_grid(theta)
+                            regular_kernel = self._constant_leg_kernel(
+                                *layout.constant_orders, x, theta
+                            )
+                            radial1_x = single_radial_transform(
+                                power1, layout.single_order, x
+                            )
+                            radial_double_x = double_radial_transform(
+                                ell,
+                                values_double,
+                                power_double,
+                                *layout.double_orders,
+                                x,
+                                theta,
+                                self.config,
+                                geometry=self._geometry(x, theta),
+                                kernel_cache=self._weber_kernels,
+                                interpolation_cache=self._weber_interpolators,
+                            )
+                            regular = (
+                                regular_kernel.regular_less
+                                + regular_kernel.regular_greater
+                            )
+                            integrand = (
+                                x[:, None, None]
+                                * radial1_x[:, None, None]
+                                * radial_double_x[:, :, None]
+                                * regular[:, None, :]
+                            )
+                            contribution += np.trapezoid(
+                                integrand, x, axis=0
+                            )
                     elif self.config.regular_method == "full_matrix":
+                        x, regular_kernel = self._regular_matrix_inputs(
+                            layout, theta
+                        )
                         matrix = self._regular_mellin_matrix(
                             ell,
                             power1,
-                            power2,
-                            n1,
-                            (n2 - m, m),
-                            (n3 - n, n),
+                            power_double,
+                            layout.single_order,
+                            layout.double_orders,
+                            layout.constant_orders,
                             x,
                             theta,
                             regular_kernel,
@@ -1404,16 +1700,19 @@ class SlepianCalculator:
                         contribution += contract_regular_mellin_matrix(
                             matrix,
                             power1.coefficients,
-                            power2.coefficients,
+                            power_double.coefficients,
                         )
                     elif self.config.regular_method == "low_rank":
+                        x, regular_kernel = self._regular_matrix_inputs(
+                            layout, theta
+                        )
                         matrix = self._low_rank_regular_mellin_matrix(
                             ell,
                             power1,
-                            power2,
-                            n1,
-                            (n2 - m, m),
-                            (n3 - n, n),
+                            power_double,
+                            layout.single_order,
+                            layout.double_orders,
+                            layout.constant_orders,
                             x,
                             theta,
                             regular_kernel,
@@ -1421,9 +1720,16 @@ class SlepianCalculator:
                         contribution += contract_low_rank_regular_mellin_matrix(
                             matrix,
                             power1.coefficients,
-                            power2.coefficients,
+                            power_double.coefficients,
                         )
                     else:  # guarded by SlepianConfig
                         raise ValueError("unsupported regular_method")
-                results[k] += coefficient * contribution / (2.0 * np.pi) ** 2
+                if layout.transpose_output:
+                    contribution = contribution.T
+                results[k] += (
+                    (-1j) ** effective.Sigma
+                    * coefficient
+                    * contribution
+                    / (2.0 * np.pi) ** 2
+                )
         return results
