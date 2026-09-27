@@ -19,6 +19,9 @@ These rules apply to all future development in this repository.
    what each stage establishes. If part of the feature cannot yet be exercised,
    leave a concise `#` comment in the relevant code cell explaining what remains.
    Write development-notebook Markdown headings and explanations in Japanese.
+   Set the notebook kernelspec to the `fastnc` conda kernel (`name: fastnc`,
+   `display_name: fastnc`) so notebooks run in the supported environment by
+   default.
    Inside code cells, use English for identifiers, string literals, plot titles,
    axis labels, legends, printed messages, and other displayed text so that
    rendering does not depend on Japanese fonts. Code comments may be Japanese.
