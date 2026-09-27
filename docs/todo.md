@@ -28,8 +28,10 @@ arrays or one message per inner-loop evaluation.
 
 ## Weber evaluator stability at large imaginary Mellin index
 
-**Status:** Deferred. This is a known numerical residual in the current direct
-and interpolated Weber evaluators, not an interpolation-only error.
+**Status:** Partially resolved. The direct and interpolated evaluators now use
+the `z = 1` connection formula above a Mellin-index-dependent ratio boundary,
+while the central eta-zero mode uses an exact finite polynomial when the
+canonical Bessel-order difference is even.
 
 For large `abs(Im(exponent))`, the direct evaluator's power series for
 `hyp2f1(A, B; C; r**2)` becomes inaccurate as `r` approaches one. For
@@ -40,12 +42,14 @@ failure beyond that. The jagged behavior seen in the validation notebook is
 therefore artificial and is inherited by interpolation tables constructed
 from the direct evaluator.
 
-The preferred first repair is a piecewise hypergeometric evaluator. Keep the
-current `r**2` series away from one and use the `z=1` connection formula, whose
-series variable is `1-r**2`, near one. Evaluate Gamma-function coefficients in
-log space and validate complex values over the actual FFTLog exponent and
-Bessel-order grids. The switching rule must be based on demonstrated error,
-not only on a fixed ratio.
+The implemented switching point balances the ordinary and reflected series
+variables at low imaginary index and moves down to a floor of `ratio = 0.25`
+as the index grows. Pointwise tests against 80-digit values cover imaginary
+Mellin indices through 100, Bessel orders through 30, and ratios through
+0.9999. The analytic Gaussian end-to-end benchmark at `n_ell = 256` improved
+from approximately `4e-2` to `3e-6` in ZetaK scaled error. The remaining work
+includes other complete FFTLog grids and terms, and real integer connection
+exponents outside the eta-zero branch.
 
 A Hankel-function contour deformation is a later analytic/reference project.
 Split `J_mu J_nu` into four Hankel products, rotate each component toward its
@@ -92,6 +96,49 @@ Completion requires an inventory of names exported from package `__init__`
 modules, docstrings for every supported public name, and a documentation or
 introspection test that detects missing public docstrings. Do not document
 legacy modules as supported API.
+
+## Mathematical implementation docstrings
+
+**Status:** Deferred until the current numerical kernels and their interfaces
+stabilize. This is related to, but distinct from, the public API docstring
+pass.
+
+Add concise mathematical docstrings to major kernels and to functions whose
+implementation evaluates a transformed, decomposed, or stabilized expression
+rather than the most obvious defining formula. These docstrings are for
+advanced users and developers who need to connect the code to the actual
+algorithm. Do not add equations mechanically to every helper.
+
+For each selected function, state as applicable:
+
+- the original mathematical quantity that the function contributes to;
+- the equivalent or approximate expression actually evaluated;
+- the intermediate pieces computed separately and the equation used to
+  assemble them;
+- branch, support, parity, index, and normalization conventions needed to map
+  arguments to the formula;
+- numerical switching conditions and why the direct expression is avoided;
+- approximation parameters, expected error, and unsupported limiting cases;
+- the next upstream and downstream mathematical objects when the function is
+  one stage of a longer contraction.
+
+Keep the equations local and concise. Long derivations, experiment history,
+and benchmark plots belong in `docs/notes/` or development notebooks, while
+the docstring should contain enough notation to understand the implementation
+without reverse-engineering the function body.
+
+Prioritize FFTLog coefficient construction, single and double radial
+transforms, ordinary/reflected/eta-zero Weber evaluation, contact and regular
+kernel decomposition, full and low-rank `F_ab` construction and contraction,
+coefficient-level LOS integration, multipole coupling, Hankel transforms, and
+the final `ZetaK`/`Zeta` assembly. Extend the inventory to similarly
+non-obvious numeric, projection, and interpolation kernels before declaring
+the pass complete.
+
+Completion requires a reviewed inventory of such kernels, consistent notation
+with the design documents, and tests or documentation checks that at least
+guard the presence of the required mathematical sections without asserting
+their prose verbatim.
 
 ## User tutorials
 
@@ -168,6 +215,58 @@ form at the bispectrum level and compare its final 3PCF contribution through
 an independent route. Record unsupported terms explicitly instead of silently
 approximating or dropping them. Start with one simple SPT matter term before
 expanding to permutations, bias terms, one-halo, or fitted models.
+
+## Physical LOS benchmarks for the Slepian route
+
+**Status:** Structural LOS support exists, but physical end-to-end validation
+is incomplete.
+
+Validate projected Slepian predictions with maintained physical kernels rather
+than relying only on native-2D toys and exact delta-like projection. Cover at
+least one finite-width source distribution, one lensing kernel constructed
+from a source distribution, and one intrinsic-alignment kernel. Use the same
+3D bispectrum term, cosmology, angular grid, redshift quadrature, spin,
+epsilon, and final theta/phi bins in the Slepian and numeric projection paths.
+
+The comparison must separately inspect projected Mellin coefficients or the
+earliest common intermediate quantity, every retained `ZetaK` mode, and final
+`Zeta`. Plot the compared functions as well as residuals. Vary the LOS
+quadrature sufficiently to distinguish projection error from FFTLog, Weber,
+and radial-contraction error. Test that changing only model parameters reuses
+structural Weber and `F_ab` resources, while changing the projector's redshift
+grid invalidates all coefficient-dependent LOS products.
+
+Completion requires convergence against a stricter numeric-projection
+benchmark for each kernel type, documented accuracy and runtime at a practical
+configuration, and an explicit account of any term or kernel for which the
+coefficient-level LOS path is not mathematically supported.
+
+## Slepian numerical defaults and diagnostics
+
+**Status:** Individual controls exist and several focused experiments have
+validated them, but supported defaults and failure diagnostics are not yet
+established as a coherent policy.
+
+Determine practical defaults and convergence guidance jointly for the FFTLog
+ell range and `n_ell`, real Mellin bias, taper and window fractions, direct
+versus interpolated Weber evaluation, the Mellin-index-dependent reflection
+boundary, diagonal correction, regular quadrature, and full versus low-rank
+`F_ab` contraction. A larger grid must not be presented as automatically more
+accurate; diagnostics must expose aliasing, insufficient dynamic range,
+endpoint sensitivity, unstable Mellin modes, and low-rank truncation error.
+
+Separate correctness controls from performance controls. Correctness controls
+must have conservative defaults or produce a clear warning when the requested
+configuration is outside validated ranges. Performance controls may trade
+accuracy for speed only through explicit configuration. Avoid automatically
+tuning against the target result in a way that changes the mathematical
+prediction during parameter inference.
+
+Completion requires convergence studies for analytic toys, at least one SPT
+term, and the physical LOS benchmarks above; recommended configurations for a
+quick calculation and a production calculation; machine-readable diagnostics
+that can later feed the structured logging facility; and regression tests that
+pin the accepted accuracy without depending on one accidental grid choice.
 
 ## Term-wise hybrid route planning
 

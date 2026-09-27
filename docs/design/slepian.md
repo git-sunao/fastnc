@@ -127,11 +127,26 @@ complex Mellin exponent. Pointwise Weber agreement is necessary but not
 sufficient: final validation must include actual FFTLog coefficients and the
 resulting ZetaK contribution.
 
-The current direct evaluator uses a power series for
-`hyp2f1(A, B; C, ratio**2)`. It is numerically unreliable near `ratio -> 1` at
-large imaginary Mellin index, and interpolation tables inherit that error.
-This is a known limitation, not evidence that interpolation alone failed. The
-planned repair and measured residuals are in `docs/todo.md`.
+For the central Mellin mode `exponent = 0` and an even canonical Bessel-order
+difference, the direct evaluator does not call the general hypergeometric
+series. If the large-argument order exceeds the small-argument order,
+`B = 1 - d` is a nonpositive integer and `hyp2f1` is evaluated as its finite
+degree-`d - 1` polynomial. The opposite orientation and equal-order regular
+part are returned as exact zero; the equal-order contact contribution remains
+separate. This branch preserves the exact signed-order parity factor.
+
+For other exponents, the direct evaluator is piecewise. Below an adaptive
+ratio boundary it uses the ordinary power series for
+`hyp2f1(A, B; C, ratio**2)`. At and above the boundary it uses the `z = 1`
+connection formula, evaluates both hypergeometric series in
+`1 - ratio**2`, and constructs the Gamma-function coefficients in log space.
+The boundary is
+`max(0.25, min(1 / sqrt(2), 8 / abs(Im(exponent))))`: low imaginary indices
+retain the balanced-series boundary, while high indices switch earlier to
+avoid catastrophic cancellation in the ordinary series. Real integer values
+of the connection exponent require a separate limiting formula and therefore
+remain on the ordinary-series path unless handled by the eta-zero finite
+polynomial branch above.
 
 ## Constant and nonconstant legs
 

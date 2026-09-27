@@ -4,6 +4,7 @@ from .bihalofit import BiHalofitBispectrum3D
 from .onehalo import OneHaloProductBispectrum3D, NFWOneHaloBispectrum3D
 from .spt import (
     SPTGalaxyBispectrum3D,
+    SPTMatterF2Mu2Bispectrum2D,
     SPTMatterBispectrum3D,
     f2_kernel,
     tidal_kernel,
@@ -14,6 +15,7 @@ __all__ = [
     "OneHaloProductBispectrum3D",
     "NFWOneHaloBispectrum3D",
     "SPTGalaxyBispectrum3D",
+    "SPTMatterF2Mu2Bispectrum2D",
     "SPTMatterBispectrum3D",
     "f2_kernel",
     "tidal_kernel",

@@ -17,6 +17,7 @@ from fastnc.bispectrum import (
     SlepianRadialFactor3D,
     SlepianRepresentation2D,
     SlepianRepresentation3D,
+    SPTMatterF2Mu2Bispectrum2D,
 )
 from fastnc.projection import LOSProjector
 from fastnc.threepcf import (
@@ -33,6 +34,7 @@ from fastnc.threepcf.slepian import (
     SlepianCalculator,
     WeberGeometry,
     _contact_coefficient,
+    _hyp2f1,
     _interpolated_weber_unit_power,
     _powerlaw_double_kernel,
     _regular_quadrature_supported,
@@ -84,6 +86,41 @@ class SlepianRouteTests(unittest.TestCase):
             np.linspace(0.0, np.pi, 4),
             route="slepian",
         )
+
+    def test_spt_f2_mu2_term_matches_numeric_route(self):
+        def angular_power(ell):
+            ell = np.asarray(ell, dtype=float)
+            return ell**2 * np.exp(-5.0e-4 * ell**2)
+
+        config = ThreePCFConfig(
+            kmax=3,
+            Lmax=8,
+            ell_min=1.0e-3,
+            ell_max=500.0,
+            n_ell=64,
+            use_coupling_cache=False,
+            multipole=NumericMultipoleConfig(
+                n_angle=257,
+                delta_beta_min=0.0,
+                delta_beta_max=np.pi,
+            ),
+            slepian=SlepianConfig(taper_fraction=0.1, regular_n_ratio=48),
+        )
+        bispectrum = SPTMatterF2Mu2Bispectrum2D(angular_power)
+        theta = np.geomspace(3.0e-3, 2.0e-2, 4)
+        phi = np.linspace(0.2, 2.8, 5)
+        tables = {
+            route: ThreePCF(
+                config, bispectrum, theta=theta, phi=phi, route=route
+            ).zetak()
+            for route in ("numeric", "slepian")
+        }
+
+        for mode in range(-3, 4):
+            numeric = tables["numeric"].get_for_mode((1, 1, 1), mode)
+            slepian = tables["slepian"].get_for_mode((1, 1, 1), mode)
+            scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
+            self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 2.0e-3)
 
     def test_route_builds_shared_zetak_contract_without_hkernel(self):
         size = self.theta.size
@@ -1245,6 +1282,100 @@ class SlepianRouteTests(unittest.TestCase):
             )
         self.assertEqual(unit_power.call_count, theta.size - 1)
         np.testing.assert_allclose(np.diag(result), 0.0)
+
+    def test_eta_zero_weber_uses_finite_polynomial(self):
+        ratios = (0.2, 0.75, 0.999999)
+        expected = {
+            (0, 2): (2.0, 2.0, 2.0),
+            (0, 12): (
+                -0.0374317056,
+                -5.92783355712890625,
+                -71.997480028139852,
+            ),
+            (18, 30): (
+                3.2298764514346245e-7,
+                -2.5161613116107111,
+                -287.95881795801737,
+            ),
+        }
+        with patch(
+            "fastnc.threepcf.slepian._hyp2f1",
+            side_effect=AssertionError("eta-zero evaluation used _hyp2f1"),
+        ):
+            for orders, reference in expected.items():
+                actual = [
+                    _weber_unit_power(0.0, *orders, ratio, 1.0e-12)
+                    for ratio in ratios
+                ]
+                np.testing.assert_allclose(actual, reference, rtol=3.0e-11)
+
+    def test_eta_zero_weber_regular_zero_and_signed_order(self):
+        for orders in ((30, 18), (6, 6)):
+            self.assertEqual(
+                _weber_unit_power(0.0, *orders, 0.999999, 1.0e-12),
+                0.0j,
+            )
+        self.assertEqual(
+            _weber_unit_power(0.0, -1, 3, 0.4, 1.0e-12),
+            -_weber_unit_power(0.0, 1, 3, 0.4, 1.0e-12),
+        )
+
+    def test_reflected_weber_matches_high_precision_values(self):
+        cases = (
+            (
+                40.0j,
+                (0, 2),
+                0.8,
+                0.4139572387005028 - 14.172854007473892j,
+            ),
+            (
+                40.0j,
+                (0, 2),
+                0.9999,
+                17564.42829265535 + 18116.241908510303j,
+            ),
+            (
+                40.0j,
+                (18, 30),
+                0.99,
+                -76.43399416173187 + 239.7692905184143j,
+            ),
+            (
+                100.0j,
+                (0, 12),
+                0.3,
+                8.490166103015484 - 3.3661105747391294j,
+            ),
+            (
+                100.0j,
+                (0, 12),
+                0.9999,
+                21386.27311027389 - 33677.92904683124j,
+            ),
+            (
+                -0.8 + 40.0j,
+                (0, 0),
+                0.99,
+                -0.04735844117720991 + 0.22228780502080048j,
+            ),
+        )
+        for exponent, orders, ratio, expected in cases:
+            actual = _weber_unit_power(
+                exponent, *orders, ratio, 1.0e-12
+            )
+            tolerance = 3.0e-6 if exponent == 100.0j and ratio == 0.3 else 5.0e-11
+            np.testing.assert_allclose(actual, expected, rtol=tolerance)
+
+    def test_reflected_weber_expands_in_one_minus_ratio_squared(self):
+        ratio = 0.9
+        with patch(
+            "fastnc.threepcf.slepian._hyp2f1",
+            wraps=_hyp2f1,
+        ) as hypergeometric:
+            _weber_unit_power(40.0j, 0, 2, ratio, 1.0e-12)
+        self.assertEqual(hypergeometric.call_count, 2)
+        for call in hypergeometric.call_args_list:
+            self.assertAlmostEqual(call.args[3], 1.0 - ratio**2)
 
     def test_unique_ratio_kernel_matches_pointwise_evaluation(self):
         x = np.geomspace(8.0e-3, 7.0e-2, 4)

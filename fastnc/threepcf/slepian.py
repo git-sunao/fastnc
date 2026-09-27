@@ -391,12 +391,121 @@ def _hyp2f1(a, b, c, z: float, rtol: float):
     raise RuntimeError("hypergeometric series did not converge")
 
 
+def _eta_zero_weber_unit_power(
+    order_small: int, order_big: int, ratio: float
+) -> complex:
+    """Evaluate the regular eta-zero Weber kernel for even order differences."""
+    mu, sign_small = _canonical_bessel_order(order_small)
+    nu_big, sign_big = _canonical_bessel_order(order_big)
+    difference = nu_big - mu
+    if difference <= 0:
+        return 0.0j
+    if difference % 2:
+        raise ValueError("eta-zero polynomial requires an even order difference")
+
+    degree = difference // 2 - 1
+    a = (mu + nu_big + 2) // 2
+    b = 1 - difference // 2
+    c = mu + 1
+    z = float(ratio) ** 2
+    term = 1.0
+    polynomial = term
+    for index in range(degree):
+        term *= (
+            (a + index)
+            * (b + index)
+            * z
+            / ((c + index) * (index + 1.0))
+        )
+        polynomial += term
+
+    log_prefactor = (
+        np.log(2.0)
+        + loggamma(mu + difference // 2 + 1)
+        - loggamma(difference // 2)
+        - loggamma(mu + 1)
+    )
+    return (
+        sign_small
+        * sign_big
+        * ratio**mu
+        * np.exp(log_prefactor)
+        * polynomial
+    )
+
+
+_WEBER_REFLECTION_MAX_RATIO = 1.0 / np.sqrt(2.0)
+_WEBER_REFLECTION_MIN_RATIO = 0.25
+_WEBER_REFLECTION_INDEX_SCALE = 8.0
+
+
+def _weber_reflection_ratio(exponent) -> float:
+    """Return the Mellin-index-dependent connection-formula boundary."""
+    imaginary_index = abs(complex(exponent).imag)
+    if imaginary_index == 0.0:
+        return _WEBER_REFLECTION_MAX_RATIO
+    return max(
+        _WEBER_REFLECTION_MIN_RATIO,
+        min(
+            _WEBER_REFLECTION_MAX_RATIO,
+            _WEBER_REFLECTION_INDEX_SCALE / imaginary_index,
+        ),
+    )
+
+
+def _reflected_weber_unit_power(
+    exponent, order_small: int, order_big: int, ratio: float, rtol: float
+) -> complex:
+    """Evaluate the Weber kernel with hypergeometric series about ratio one."""
+    mu, sign_small = _canonical_bessel_order(order_small)
+    nu_big, sign_big = _canonical_bessel_order(order_big)
+    lam = -complex(exponent) - 1.0
+    A = (nu_big + mu - lam + 1.0) / 2.0
+    B = (mu - nu_big - lam + 1.0) / 2.0
+    C = complex(mu + 1.0)
+    D = (nu_big - mu + lam + 1.0) / 2.0
+    complement = 1.0 - float(ratio) ** 2
+    common = mu * np.log(float(ratio)) - lam * np.log(2.0)
+    log_coefficient_1 = (
+        common
+        + loggamma(A)
+        + loggamma(lam)
+        - loggamma(D)
+        - loggamma(C - A)
+        - loggamma(C - B)
+    )
+    log_coefficient_2 = (
+        common
+        + lam * np.log(complement)
+        + loggamma(-lam)
+        - loggamma(D)
+        - loggamma(B)
+    )
+    hypergeometric_1 = _hyp2f1(A, B, 1.0 - lam, complement, rtol)
+    hypergeometric_2 = _hyp2f1(
+        C - A, C - B, 1.0 + lam, complement, rtol
+    )
+    return sign_small * sign_big * (
+        np.exp(log_coefficient_1) * hypergeometric_1
+        + np.exp(log_coefficient_2) * hypergeometric_2
+    )
+
+
 def _weber_unit_power(
     exponent, order_small: int, order_big: int, ratio: float, rtol: float
 ):
     mu, sign_small = _canonical_bessel_order(order_small)
     nu_big, sign_big = _canonical_bessel_order(order_big)
+    if complex(exponent) == 0.0j and (nu_big - mu) % 2 == 0:
+        return _eta_zero_weber_unit_power(order_small, order_big, ratio)
     lam = -complex(exponent) - 1.0
+    integer_lambda = abs(lam.imag) < 1.0e-15 and np.isclose(
+        lam.real, round(lam.real), atol=1.0e-12
+    )
+    if ratio >= _weber_reflection_ratio(exponent) and not integer_lambda:
+        return _reflected_weber_unit_power(
+            exponent, order_small, order_big, ratio, rtol
+        )
     A = (nu_big + mu - lam + 1.0) / 2.0
     B = (mu - nu_big - lam + 1.0) / 2.0
     C = mu + 1.0
