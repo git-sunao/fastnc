@@ -370,6 +370,28 @@ against brute fine is `0.0594`. Subsequent convergence tests should use
 `kmax=24` and vary Mellin `n_ell` next rather than attributing the remaining
 difference to the regular kernel formula.
 
+With `kmax=24` fixed, increasing the Mellin grid gave the following residuals
+for the same component:
+
+```text
+n_ell       brute max residual       brute L2 residual
+  64              0.1007                   0.0594
+  96              0.0454                   0.0518
+ 128              0.0447                   0.0515
+ 160              0.0453                   0.0505
+```
+
+Successive Slepian L2 changes were `0.0410`, `0.0192`, and `0.0182`, while
+the maximum changes were `0.131`, `0.0623`, and `0.0730`. The nonmonotonic
+maximum at 160 occurs at the largest theta pair and the phi bin nearest pi;
+the brute value lies between the 128- and 160-point predictions there. Thus
+the global result is approaching a stable roughly five-percent L2 difference,
+but local angular extrema are not cleanly Mellin-converged. Increasing `n_ell`
+also introduces larger imaginary Mellin indices, precisely where the current
+Weber evaluator is known to become unreliable. The next isolation test should
+compare direct and interpolated Weber evaluation at a fixed affordable Mellin
+grid before increasing `n_ell` further.
+
 ## Canonical validation path
 
 Use `dev/slepian-old/threepcf_slepian_toy.ipynb` for the earlier end-to-end implementation. It
