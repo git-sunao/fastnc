@@ -404,37 +404,47 @@ B(ell1, ell2, ell3)
 
 In the fastnc coordinate convention, `theta2` is the radius of the single
 leg-1 transform and `(theta2, theta1)` are the two radii of the leg-2 double
-transform. Define
+transform. For Fourier mode `k`, define `q=abs(k)` and
 
 ```text
 S_a(t) = exp[-t^2/(4a)] [1 - t^2/(4a)] / (2a^2),
 
-D_b(r,s) = -d/db {
-    exp[-(r^2+s^2)/(4b)] I_0(rs/(2b)) / (2b)
+D_{b,q}(r,s) = -d/db {
+    exp[-(r^2+s^2)/(4b)] I_q(rs/(2b)) / (2b)
 }.
 ```
 
 Writing `u=rs/(2b)` gives
 
 ```text
-D_b(r,s) = exp[-(r^2+s^2)/(4b)] I_0(u) / (2b)
-  * [1/b - (r^2+s^2)/(4b^2)
-     + rs I_1(u)/(2b^2 I_0(u))].
+D_{b,q}(r,s) = exp[-(r^2+s^2)/(4b)] / (2b)
+  * {[1/b - (r^2+s^2)/(4b^2)] I_q(u)
+     + rs I'_q(u)/(2b^2)},
+
+I'_0(u) = I_1(u),
+I'_q(u) = [I_{q-1}(u) + I_{q+1}(u)]/2  (q > 0).
 ```
 
-The exact 3PCF is therefore
+The exact mode and the result truncated at `abs(k) <= K` are therefore
 
 ```text
-zeta(theta1, theta2)
-  = A S_a(theta2) D_b(theta2, theta1) / (2 pi)^2,
+ZetaK_k(theta1, theta2)
+  = A S_a(theta2) D_{b,abs(k)}(theta2, theta1) / (2 pi)^2,
+
+zeta_K(theta1, theta2, phi)
+  = sum_{k=-K}^{K} ZetaK_k(theta1, theta2) exp(i k phi).
 ```
 
-independent of phi. With `ell` in `[1e-3,500]`, taper fraction `0.1`, and the
-theta range `[0.003,0.02]`, the maximum error was `3.9e-3`, `5.4e-6`, and
-`2.3e-2` for `n_ell=64`, `128`, and `256`. The excellent 128-point agreement
-fixes the normalization and axis convention without brute force. The loss of
-accuracy at 256 is direct end-to-end evidence that adding larger imaginary
-Mellin indices can expose Weber instability. The local script and notebook are
+The `k=0` special case reduces to the earlier expression containing `I_0` and
+`I_1`, but it is only a mode-truncated result and must not be interpreted as
+the complete scalar 3PCF. With `ell` in `[1e-3,500]`, taper fraction `0.1`, and
+the theta range `[0.003,0.02]`, its maximum error was `3.9e-3`, `5.4e-6`, and
+`2.3e-2` for `n_ell=64`, `128`, and `256`. At `n_ell=128`, the maximum-norm
+relative errors for `abs(k)=0,1,2,3` were approximately `5.4e-6`, `2.1e-5`,
+`7.5e-5`, and `1.3e-3`. This fixes the mode normalization, phase convention,
+and axis convention without brute force. The loss of accuracy at 256 is direct
+end-to-end evidence that adding larger imaginary Mellin indices can expose
+Weber instability. The local script and notebook are
 `dev/slepian/slepian_analytic_gaussian_contact.py` and
 `dev/slepian/slepian_analytic_gaussian_contact.ipynb`.
 

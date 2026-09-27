@@ -112,7 +112,7 @@ class SlepianRouteTests(unittest.TestCase):
             table.get_for_mode((1, 1, 1), 1.0), 3.0
         )
 
-    def test_scalar_gaussian_contact_toy_matches_analytic_zeta(self):
+    def test_scalar_gaussian_contact_modes_match_analytic_zetak_and_zeta(self):
         amplitude = 1.7
         a = 1.0e-3
         b = 5.0e-4
@@ -138,7 +138,7 @@ class SlepianRouteTests(unittest.TestCase):
         phi = np.linspace(0.2, 2.9, 5)
         manager = ThreePCF(
             ThreePCFConfig(
-                kmax=0.0,
+                kmax=2.0,
                 ell_min=1.0e-3,
                 ell_max=500.0,
                 n_ell=128,
@@ -159,26 +159,47 @@ class SlepianRouteTests(unittest.TestCase):
         radius_sum = theta1**2 + theta2**2
         radius_product = theta1 * theta2
         argument = radius_product / (2.0 * b)
-        double_zero = (
-            np.exp(-radius_sum / (4.0 * b))
-            * iv(0, argument)
-            / (2.0 * b)
+        k_values = np.arange(-2, 3)
+        expected_modes = []
+        for k in k_values:
+            order = abs(int(k))
+            derivative = (
+                iv(1, argument)
+                if order == 0
+                else 0.5
+                * (iv(order - 1, argument) + iv(order + 1, argument))
+            )
+            double = np.exp(-radius_sum / (4.0 * b)) / (2.0 * b) * (
+                (1.0 / b - radius_sum / (4.0 * b**2))
+                * iv(order, argument)
+                + radius_product * derivative / (2.0 * b**2)
+            )
+            expected_modes.append(
+                amplitude * single * double / (2.0 * np.pi) ** 2
+            )
+        expected_modes = np.stack(expected_modes)
+        zetak = manager.zetak()
+        actual_modes = np.stack(
+            [
+                zetak.get_for_mode((1, 1, 1), float(k))
+                for k in k_values
+            ]
         )
-        double = double_zero * (
-            1.0 / b
-            - radius_sum / (4.0 * b**2)
-            + radius_product
-            * iv(1, argument)
-            / (2.0 * b**2 * iv(0, argument))
-        )
-        expected = amplitude * single * double / (2.0 * np.pi) ** 2
+        phase = np.exp(1j * k_values[:, None] * phi[None, :])
+        expected = np.tensordot(expected_modes, phase, axes=(0, 0))
         actual = manager.zeta().values[0]
 
         np.testing.assert_allclose(
+            actual_modes,
+            expected_modes,
+            rtol=0.0,
+            atol=2.0e-4 * np.max(np.abs(expected_modes)),
+        )
+        np.testing.assert_allclose(
             actual,
-            np.broadcast_to(expected[:, :, None], actual.shape),
-            rtol=1.0e-5,
-            atol=1.0e-8 * np.max(np.abs(expected)),
+            expected,
+            rtol=0.0,
+            atol=2.0e-4 * np.max(np.abs(expected)),
         )
 
     def test_weber_method_configuration_is_explicit(self):

@@ -306,8 +306,12 @@ with constant leg 3, zero angular orders, and scalar spin. In the fastnc
 theta-axis convention its exact result is the product of a single Gaussian
 Hankel transform on `theta2` and a Gaussian double-Bessel transform on
 `(theta2, theta1)`, including the route's `(2 pi)^-2` normalization. This test
-must cover `Bispectrum2D -> ZetaK -> Zeta`, verify phi independence, and scan
-the Mellin grid so increasing resolution cannot silently reduce accuracy.
+must cover every retained `ZetaK` mode and their finite Fourier sum in `Zeta`.
+Although the bispectrum has no explicit opening-angle dependence, its
+double-Bessel transform generally has nonzero modes: the scalar assembly is
+`sum_k ZetaK_k exp(i k phi)`. The test must therefore verify both the mode
+amplitudes and the resulting phi dependence, and scan the Mellin grid so
+increasing resolution cannot silently reduce accuracy.
 
 Subsequent analytic references should add angular harmonics and then a regular
 constant-leg kernel. Spinful brute comparisons remain useful only after these
