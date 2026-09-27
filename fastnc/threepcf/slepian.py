@@ -349,9 +349,8 @@ def _contact_coefficient(order_x: int, order_theta: int) -> int:
 
 
 def _regular_quadrature_supported(order_x: int, order_theta: int) -> bool:
-    """Return whether the current direct quadrature has one-sided support."""
-    difference = abs(abs(int(order_x)) - abs(int(order_theta)))
-    return difference > 0 and difference % 2 == 0
+    """Return whether unequal canonical orders require regular quadrature."""
+    return abs(int(order_x)) != abs(int(order_theta))
 
 
 def _single_bessel_factor(exponents, order: int):

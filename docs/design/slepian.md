@@ -172,6 +172,21 @@ radial factors, angular orders, Bessel orders, Fourier mode, and target-theta
 axes while keeping leg 1 fixed. This is a restricted leg-2/leg-3 symmetry, not
 a full three-leg canonicalization.
 
+The maintained native-2D SPT reference follows this rule. For each supported
+pair `12` and `13`, `SPTMatterF2Bispectrum2D` decomposes
+`2 F2(ell_i, ell_j) P_i P_j` into the finite modes `m=0,+/-1,+/-2`.
+The `m=+/-1` coefficient is stored as two separable radial products,
+`ell_i P_i * P_j/ell_j` and `P_i/ell_i * ell_j P_j`; it must not be collapsed
+into a nonseparable term. Pair `23` has constant leg 1 and is deliberately not
+given a Slepian representation. A future hybrid calculation must obtain that
+cyclic contribution from the semi-analytic or numeric route.
+
+Odd angular harmonics on nonconstant SPT legs do not by themselves imply an
+odd-order constant-leg kernel. Odd-order constant-leg regular support is a
+separate, more general case. When it occurs, its contact coefficient is zero
+and both open regions `x < theta` and `x > theta` must be integrated; neither
+branch may be dropped.
+
 ## Spin scope
 
 The Slepian radial transforms use the effective spin

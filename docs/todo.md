@@ -201,8 +201,9 @@ The documentation build must:
 
 ## Physical models and representation coverage
 
-**Status:** Not started systematically. Numeric representations exist broadly;
-Slepian and semi-analytic coverage remains model- and term-dependent.
+**Status:** Started with the native-2D tree-level SPT `F2` reference. Numeric
+representations exist broadly; Slepian and semi-analytic coverage remains
+model- and term-dependent.
 
 Add alternative representations to the maintained models term by term. Each
 term must keep its numeric representation as the universal reference and may
@@ -213,8 +214,11 @@ transform caches belong to route calculators rather than model terms.
 For every added representation, test the representation against the numeric
 form at the bispectrum level and compare its final 3PCF contribution through
 an independent route. Record unsupported terms explicitly instead of silently
-approximating or dropping them. Start with one simple SPT matter term before
-expanding to permutations, bias terms, one-halo, or fitted models.
+approximating or dropping them. The supported `F2` pairs `12` and `13` now
+cover their complete finite harmonic content `m=0,+/-1,+/-2`; pair `23` is
+explicitly excluded because it would make physical leg 1 constant. Continue
+with the hybrid fallback for pair `23`, then bias terms, one-halo terms, and
+fitted models.
 
 ## Physical LOS benchmarks for the Slepian route
 

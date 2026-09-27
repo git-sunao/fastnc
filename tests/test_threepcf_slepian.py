@@ -17,6 +17,7 @@ from fastnc.bispectrum import (
     SlepianRadialFactor3D,
     SlepianRepresentation2D,
     SlepianRepresentation3D,
+    SPTMatterF2Bispectrum2D,
     SPTMatterF2Mu2Bispectrum2D,
 )
 from fastnc.projection import LOSProjector
@@ -121,6 +122,43 @@ class SlepianRouteTests(unittest.TestCase):
             slepian = tables["slepian"].get_for_mode((1, 1, 1), mode)
             scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
             self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 2.0e-3)
+
+    def test_full_spt_f2_supported_pairs_match_numeric_route(self):
+        def angular_power(ell):
+            ell = np.asarray(ell, dtype=float)
+            return ell**2 * np.exp(-5.0e-4 * ell**2)
+
+        config = ThreePCFConfig(
+            kmax=2,
+            Lmax=6,
+            ell_min=1.0e-3,
+            ell_max=500.0,
+            n_ell=64,
+            use_coupling_cache=False,
+            multipole=NumericMultipoleConfig(
+                n_angle=257,
+                delta_beta_min=0.0,
+                delta_beta_max=np.pi,
+            ),
+            slepian=SlepianConfig(bias=-1.0, regular_n_ratio=32),
+        )
+        bispectrum = SPTMatterF2Bispectrum2D(angular_power)
+        theta = np.geomspace(3.0e-3, 2.0e-2, 3)
+        tables = {
+            route: ThreePCF(
+                config,
+                bispectrum,
+                theta=theta,
+                phi=np.linspace(0.2, 2.8, 5),
+                route=route,
+            ).zetak()
+            for route in ("numeric", "slepian")
+        }
+        for mode in range(-2, 3):
+            numeric = tables["numeric"].get_for_mode((1, 1, 1), mode)
+            slepian = tables["slepian"].get_for_mode((1, 1, 1), mode)
+            scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
+            self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 4.0e-3)
 
     def test_route_builds_shared_zetak_contract_without_hkernel(self):
         size = self.theta.size
@@ -358,7 +396,7 @@ class SlepianRouteTests(unittest.TestCase):
         self.assertTrue(_regular_quadrature_supported(4, -2))
         self.assertFalse(_regular_quadrature_supported(0, 0))
         self.assertFalse(_regular_quadrature_supported(-1, 1))
-        self.assertFalse(_regular_quadrature_supported(0, 1))
+        self.assertTrue(_regular_quadrature_supported(0, 1))
 
     def test_regular_x_grid_contains_targets_and_padded_range(self):
         config = SlepianConfig(regular_n_x=16, regular_x_padding=5.0)
@@ -434,20 +472,78 @@ class SlepianRouteTests(unittest.TestCase):
         expected = np.trapezoid(integrand, x, axis=0) / (2.0 * np.pi) ** 2
         np.testing.assert_allclose(result, expected)
 
-    def test_regular_quadrature_rejects_two_sided_odd_order_kernel(self):
-        radial = SlepianRadialFactor2D(lambda ell: np.exp(-np.asarray(ell)))
-        expression = SlepianExpression2D(
-            coefficient=1.0,
-            radial_factors=(radial, radial, SlepianRadialFactor2D.constant()),
-            angular_orders=(-1, 0, 1),
-        )
-        bispectrum = Bispectrum2D(
-            (BispectrumTerm2D("two-sided", (expression,)),)
-        )
-        with self.assertRaisesRegex(NotImplementedError, "positive even"):
-            SlepianCalculator(SlepianConfig()).evaluate_modes(
-                bispectrum, np.geomspace(1.0, 10.0, 12), np.array([0.5]), [0]
+    def test_two_sided_odd_regular_kernel_matches_numeric_route(self):
+        def radial(ell, scale):
+            ell = np.asarray(ell, dtype=float)
+            return ell**2 * np.exp(-ell**2 / scale)
+
+        f1 = lambda ell: radial(ell, 4000.0)
+        f2 = lambda ell: radial(ell, 6000.0)
+
+        def phase13(ell1, ell2, ell3, mode):
+            with np.errstate(divide="ignore", invalid="ignore"):
+                mu13 = (ell2**2 - ell1**2 - ell3**2) / (2.0 * ell1 * ell3)
+            mu13 = np.nan_to_num(mu13)
+            return np.exp(
+                1j * mode * np.arccos(np.clip(mu13, -1.0, 1.0))
             )
+
+        terms = []
+        for mode in (-1, 1):
+            terms.append(
+                BispectrumTerm2D(
+                    f"odd:{mode}",
+                    (
+                        NumericExpression2D(
+                            lambda ell1, ell2, ell3, _mode=mode: (
+                                f1(ell1)
+                                * f2(ell2)
+                                * phase13(ell1, ell2, ell3, _mode)
+                            )
+                        ),
+                        SlepianExpression2D(
+                            coefficient=1.0,
+                            radial_factors=(
+                                SlepianRadialFactor2D(f1),
+                                SlepianRadialFactor2D(f2),
+                                SlepianRadialFactor2D.constant(),
+                            ),
+                            angular_orders=(mode, 0, -mode),
+                        ),
+                    ),
+                )
+            )
+        bispectrum = Bispectrum2D(tuple(terms))
+        theta = np.geomspace(3.0e-3, 2.0e-2, 3)
+        config = ThreePCFConfig(
+            kmax=2,
+            Lmax=6,
+            ell_min=1.0e-3,
+            ell_max=500.0,
+            n_ell=64,
+            use_coupling_cache=False,
+            multipole=NumericMultipoleConfig(
+                n_angle=257,
+                delta_beta_min=0.0,
+                delta_beta_max=np.pi,
+            ),
+            slepian=SlepianConfig(bias=-1.0, regular_n_ratio=32),
+        )
+        tables = {
+            route: ThreePCF(
+                config,
+                bispectrum,
+                theta=theta,
+                phi=np.linspace(0.2, 2.8, 5),
+                route=route,
+            ).zetak()
+            for route in ("numeric", "slepian")
+        }
+        for mode in range(-2, 3):
+            numeric = tables["numeric"].get_for_mode((1, 1, 1), mode)
+            slepian = tables["slepian"].get_for_mode((1, 1, 1), mode)
+            scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
+            self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 3.0e-3)
 
     def test_full_matrix_contraction_validates_coefficient_shapes(self):
         matrix = RegularMellinMatrix(
