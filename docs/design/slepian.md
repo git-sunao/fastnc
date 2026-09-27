@@ -291,3 +291,24 @@ opening-angle and shear-projection assembly is shared with other routes.
 The calculator must preserve a direct benchmark path, report unsupported
 representations explicitly, and never hide a route fallback that changes the
 meaning of the requested term or epsilon tuple.
+
+## Analytic validation hierarchy
+
+An analytic native-2D toy is the primary normalization and convergence
+reference; brute-force integration is a later independent integration test,
+not the definition of the exact result. The first maintained toy is
+
+```text
+B = A ell1^2 exp(-a ell1^2) ell2^2 exp(-b ell2^2),
+```
+
+with constant leg 3, zero angular orders, and scalar spin. In the fastnc
+theta-axis convention its exact result is the product of a single Gaussian
+Hankel transform on `theta2` and a Gaussian double-Bessel transform on
+`(theta2, theta1)`, including the route's `(2 pi)^-2` normalization. This test
+must cover `Bispectrum2D -> ZetaK -> Zeta`, verify phi independence, and scan
+the Mellin grid so increasing resolution cannot silently reduce accuracy.
+
+Subsequent analytic references should add angular harmonics and then a regular
+constant-leg kernel. Spinful brute comparisons remain useful only after these
+component-level analytic contracts pass.

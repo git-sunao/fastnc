@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-from scipy.special import jv
+from scipy.special import iv, jv
 
 from fastnc.bispectrum import (
     Bispectrum2D,
@@ -110,6 +110,75 @@ class SlepianRouteTests(unittest.TestCase):
         )
         np.testing.assert_allclose(
             table.get_for_mode((1, 1, 1), 1.0), 3.0
+        )
+
+    def test_scalar_gaussian_contact_toy_matches_analytic_zeta(self):
+        amplitude = 1.7
+        a = 1.0e-3
+        b = 5.0e-4
+
+        def factor(ell, width):
+            ell = np.asarray(ell, dtype=float)
+            return ell**2 * np.exp(-width * ell**2)
+
+        f1 = lambda ell: factor(ell, a)
+        f2 = lambda ell: factor(ell, b)
+        expression = SlepianExpression2D(
+            coefficient=amplitude,
+            radial_factors=(
+                SlepianRadialFactor2D(f1),
+                SlepianRadialFactor2D(f2),
+                SlepianRadialFactor2D.constant(),
+            ),
+        )
+        bispectrum = Bispectrum2D(
+            (BispectrumTerm2D("analytic-gaussian", (expression,)),)
+        )
+        theta = np.geomspace(3.0e-3, 2.0e-2, 6)
+        phi = np.linspace(0.2, 2.9, 5)
+        manager = ThreePCF(
+            ThreePCFConfig(
+                kmax=0.0,
+                ell_min=1.0e-3,
+                ell_max=500.0,
+                n_ell=128,
+                slepian=SlepianConfig(taper_fraction=0.1),
+            ),
+            bispectrum,
+            theta,
+            phi,
+            route="slepian",
+        )
+
+        theta1, theta2 = np.meshgrid(theta, theta, indexing="ij")
+        single = (
+            (1.0 - theta2**2 / (4.0 * a))
+            * np.exp(-theta2**2 / (4.0 * a))
+            / (2.0 * a**2)
+        )
+        radius_sum = theta1**2 + theta2**2
+        radius_product = theta1 * theta2
+        argument = radius_product / (2.0 * b)
+        double_zero = (
+            np.exp(-radius_sum / (4.0 * b))
+            * iv(0, argument)
+            / (2.0 * b)
+        )
+        double = double_zero * (
+            1.0 / b
+            - radius_sum / (4.0 * b**2)
+            + radius_product
+            * iv(1, argument)
+            / (2.0 * b**2 * iv(0, argument))
+        )
+        expected = amplitude * single * double / (2.0 * np.pi) ** 2
+        actual = manager.zeta().values[0]
+
+        np.testing.assert_allclose(
+            actual,
+            np.broadcast_to(expected[:, :, None], actual.shape),
+            rtol=1.0e-5,
+            atol=1.0e-8 * np.max(np.abs(expected)),
         )
 
     def test_weber_method_configuration_is_explicit(self):

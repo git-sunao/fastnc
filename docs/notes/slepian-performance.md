@@ -392,6 +392,52 @@ Weber evaluator is known to become unreliable. The next isolation test should
 compare direct and interpolated Weber evaluation at a fixed affordable Mellin
 grid before increasing `n_ell` further.
 
+## Analytic Gaussian contact reference
+
+A separate validation family avoids treating finite-band brute integration as
+the exact answer. For scalar spin and constant leg 3, define
+
+```text
+B(ell1, ell2, ell3)
+  = A ell1^2 exp(-a ell1^2) ell2^2 exp(-b ell2^2).
+```
+
+In the fastnc coordinate convention, `theta2` is the radius of the single
+leg-1 transform and `(theta2, theta1)` are the two radii of the leg-2 double
+transform. Define
+
+```text
+S_a(t) = exp[-t^2/(4a)] [1 - t^2/(4a)] / (2a^2),
+
+D_b(r,s) = -d/db {
+    exp[-(r^2+s^2)/(4b)] I_0(rs/(2b)) / (2b)
+}.
+```
+
+Writing `u=rs/(2b)` gives
+
+```text
+D_b(r,s) = exp[-(r^2+s^2)/(4b)] I_0(u) / (2b)
+  * [1/b - (r^2+s^2)/(4b^2)
+     + rs I_1(u)/(2b^2 I_0(u))].
+```
+
+The exact 3PCF is therefore
+
+```text
+zeta(theta1, theta2)
+  = A S_a(theta2) D_b(theta2, theta1) / (2 pi)^2,
+```
+
+independent of phi. With `ell` in `[1e-3,500]`, taper fraction `0.1`, and the
+theta range `[0.003,0.02]`, the maximum error was `3.9e-3`, `5.4e-6`, and
+`2.3e-2` for `n_ell=64`, `128`, and `256`. The excellent 128-point agreement
+fixes the normalization and axis convention without brute force. The loss of
+accuracy at 256 is direct end-to-end evidence that adding larger imaginary
+Mellin indices can expose Weber instability. The local script and notebook are
+`dev/slepian/slepian_analytic_gaussian_contact.py` and
+`dev/slepian/slepian_analytic_gaussian_contact.ipynb`.
+
 ## Canonical validation path
 
 Use `dev/slepian-old/threepcf_slepian_toy.ipynb` for the earlier end-to-end implementation. It
