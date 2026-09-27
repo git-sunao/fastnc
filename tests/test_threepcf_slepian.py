@@ -19,6 +19,7 @@ from fastnc.bispectrum import (
     SlepianRepresentation3D,
     SPTMatterF2Bispectrum2D,
     SPTMatterF2Mu2Bispectrum2D,
+    SPTMatterBispectrum3D,
 )
 from fastnc.projection import LOSProjector
 from fastnc.threepcf import (
@@ -159,6 +160,112 @@ class SlepianRouteTests(unittest.TestCase):
             slepian = tables["slepian"].get_for_mode((1, 1, 1), mode)
             scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
             self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 4.0e-3)
+
+    def test_projected_spt_matter_supported_terms_match_numeric_route(self):
+        chi = 1000.0
+
+        def linear_power(k, z):
+            ell = np.asarray(k, dtype=float) * chi
+            return ell**2 * np.exp(-5.0e-4 * ell**2) / (1.0 + np.asarray(z)) ** 2
+
+        source = SPTMatterBispectrum3D(linear_power)
+        supported = Bispectrum3D(
+            tuple(
+                weighted
+                for weighted in source.iter_terms()
+                if weighted.term.name != "tree:F2:23"
+            )
+        )
+        projected = LOSProjector.delta_like(z=0.5, chi=chi).project(supported)
+        theta = np.geomspace(3.0e-3, 2.0e-2, 4)
+        config = ThreePCFConfig(
+            kmax=2,
+            Lmax=6,
+            ell_min=1.0e-3,
+            ell_max=500.0,
+            n_ell=64,
+            use_coupling_cache=False,
+            multipole=NumericMultipoleConfig(
+                n_angle=257,
+                delta_beta_min=0.0,
+                delta_beta_max=np.pi,
+            ),
+            slepian=SlepianConfig(bias=-1.0, regular_n_ratio=32),
+        )
+        tables = {
+            route: ThreePCF(
+                config,
+                projected,
+                theta=theta,
+                phi=np.linspace(0.2, 2.8, 5),
+                route=route,
+            ).zetak()
+            for route in ("numeric", "slepian")
+        }
+        for mode in range(-2, 3):
+            numeric = tables["numeric"].get_for_mode((1, 1, 1), mode)
+            slepian = tables["slepian"].get_for_mode((1, 1, 1), mode)
+            scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
+            self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 3.0e-3)
+
+    def test_hybrid_spt_equals_slepian_plus_numeric_fallback(self):
+        chi = 1000.0
+
+        def linear_power(k, z):
+            ell = np.asarray(k, dtype=float) * chi
+            return ell**2 * np.exp(-5.0e-4 * ell**2) / (1.0 + np.asarray(z)) ** 2
+
+        source = SPTMatterBispectrum3D(linear_power)
+        projector = LOSProjector.delta_like(z=0.5, chi=chi)
+        full = projector.project(source)
+        slepian_names = tuple(
+            term.name for term in source.terms if term.name != "tree:F2:23"
+        )
+        slepian_only = projector.project(source.select_terms(*slepian_names))
+        numeric_only = projector.project(source.select_terms("tree:F2:23"))
+        theta = np.geomspace(3.0e-3, 2.0e-2, 3)
+        phi = np.linspace(0.2, 2.8, 5)
+        config = ThreePCFConfig(
+            kmax=2,
+            Lmax=6,
+            ell_min=1.0e-3,
+            ell_max=500.0,
+            n_ell=64,
+            use_coupling_cache=False,
+            multipole=NumericMultipoleConfig(
+                n_angle=257,
+                delta_beta_min=0.0,
+                delta_beta_max=np.pi,
+            ),
+            slepian=SlepianConfig(bias=-1.0, regular_n_ratio=32),
+        )
+        managers = {
+            "hybrid": ThreePCF(
+                config, full, theta=theta, phi=phi, route="hybrid"
+            ),
+            "slepian": ThreePCF(
+                config, slepian_only, theta=theta, phi=phi, route="slepian"
+            ),
+            "numeric_fallback": ThreePCF(
+                config, numeric_only, theta=theta, phi=phi, route="numeric"
+            ),
+            "numeric": ThreePCF(
+                config, full, theta=theta, phi=phi, route="numeric"
+            ),
+        }
+        tables = {name: manager.zetak() for name, manager in managers.items()}
+        self.assertIs(managers["hybrid"].zetak(), tables["hybrid"])
+
+        for mode in range(-2, 3):
+            hybrid = tables["hybrid"].get_for_mode((1, 1, 1), mode)
+            expected = (
+                tables["slepian"].get_for_mode((1, 1, 1), mode)
+                + tables["numeric_fallback"].get_for_mode((1, 1, 1), mode)
+            )
+            numeric = tables["numeric"].get_for_mode((1, 1, 1), mode)
+            np.testing.assert_array_equal(hybrid, expected)
+            scale = max(np.max(np.abs(hybrid)), np.max(np.abs(numeric)))
+            self.assertLess(np.max(np.abs(hybrid - numeric)) / scale, 2.0e-3)
 
     def test_route_builds_shared_zetak_contract_without_hkernel(self):
         size = self.theta.size

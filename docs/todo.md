@@ -217,8 +217,13 @@ an independent route. Record unsupported terms explicitly instead of silently
 approximating or dropping them. The supported `F2` pairs `12` and `13` now
 cover their complete finite harmonic content `m=0,+/-1,+/-2`; pair `23` is
 explicitly excluded because it would make physical leg 1 constant. Continue
-with the hybrid fallback for pair `23`, then bias terms, one-halo terms, and
-fitted models.
+with the hybrid fallback for pair `23`, then one-halo terms and fitted models.
+
+The same finite decomposition is attached to the maintained 3D matter and
+galaxy SPT models. Galaxy quadratic-bias and tidal-bias terms for pairs 12 and
+31 are covered as well. The remaining SPT work is therefore hybrid assembly
+of the numeric-only pair-23 terms and physical finite-width LOS validation,
+not additional constant-leg representations for these models.
 
 ## Physical LOS benchmarks for the Slepian route
 
@@ -274,9 +279,8 @@ pin the accepted accuracy without depending on one accidental grid choice.
 
 ## Term-wise hybrid route planning
 
-**Status:** Not implemented. `ThreePCF` currently selects one route for the
-whole bispectrum; projected representations can coexist on terms, but there is
-no completed term-wise hybrid planner and assembler.
+**Status:** Numeric/Slepian hybrid assembly is implemented. A maintained
+semi-analytic representation type and its planner capability remain pending.
 
 Implement an explicit route-selection policy for bispectra containing multiple
 terms with different available representations. Under a `hybrid` policy, each
@@ -310,3 +314,10 @@ Completion requires mixed-term tests for all representation combinations,
 permutation-invariant assembly, equality with manually summed single-route
 calculations, explicit missing-capability failures, and preservation of
 source-independent caches across model updates.
+
+The current `hybrid` policy assigns every Slepian-capable term to the direct
+Slepian-to-ZetaK path and every remaining numerically evaluable term to the
+shared numeric/semi-analytic HKernel path. It sums route-independent ZetaK
+keys and caches only the assembled table. Extend this planner with explicit
+semi-analytic capability and configurable priority after those representations
+are introduced; do not duplicate the already shared HKernel-to-ZetaK stage.

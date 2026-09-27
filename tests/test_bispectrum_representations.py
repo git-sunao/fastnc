@@ -12,6 +12,7 @@ from fastnc.bispectrum import (
     NumericExpression2D,
     NumericExpression3D,
     SlepianExpression2D,
+    SlepianExpression3D,
     SlepianRadialFactor2D,
     SPTGalaxyBispectrum3D,
     SPTMatterF2Mu2Bispectrum2D,
@@ -144,10 +145,25 @@ class SPTMatterTermTests(unittest.TestCase):
         model = SPTMatterBispectrum3D(self.linear_power)
         expected = self.direct_reference(0.7, 1.1, 1.3, 0.4)
         self.assertAlmostEqual(model.evaluate(0.7, 1.1, 1.3, 0.4), expected)
+        self.assertEqual(len(model.terms), 15)
         self.assertEqual(
-            [term.name for term in model.terms],
-            ["tree:F2:12", "tree:F2:23", "tree:F2:31"],
+            sum(name.startswith("tree:F2:12:") for name in (
+                term.name for term in model.terms
+            )),
+            7,
         )
+        self.assertEqual(
+            sum(name.startswith("tree:F2:31:") for name in (
+                term.name for term in model.terms
+            )),
+            7,
+        )
+        pair23 = model.select_terms("tree:F2:23").terms[0]
+        with self.assertRaises(LookupError):
+            pair23.get_representation(SlepianExpression3D)
+        for term in model.terms:
+            if term.name != "tree:F2:23":
+                term.get_representation(SlepianExpression3D)
 
     def test_spt_terms_match_direct_formula_for_los_shaped_inputs(self):
         model = SPTMatterBispectrum3D(self.linear_power)
@@ -165,7 +181,7 @@ class SPTMatterTermTests(unittest.TestCase):
     def test_state_update_is_seen_by_existing_terms(self):
         model = SPTMatterBispectrum3D(self.linear_power)
         terms_before = model.terms
-        selected = model.select_terms("tree:F2:12")
+        selected = model.select_terms("tree:F2:12:m+0")
         value_before = model.evaluate(0.7, 1.1, 1.3, 0.4)
         revision_before = model.state_revision
         token_before = selected.state_token
@@ -344,7 +360,18 @@ class MigratedPhysicalModelTests(unittest.TestCase):
             + 2.0 * b1**2 * bK2 * tidal
         )
         np.testing.assert_allclose(model(k1, k2, k3, z), expected)
-        self.assertEqual(len(model.terms), 9)
+        self.assertEqual(len(model.terms), 25)
+        numeric_only = {
+            "tree:F2:23",
+            "bias:quadratic:23",
+            "bias:tidal:23",
+        }
+        for term in model.terms:
+            if term.name in numeric_only:
+                with self.assertRaises(LookupError):
+                    term.get_representation(SlepianExpression3D)
+            else:
+                term.get_representation(SlepianExpression3D)
 
     def test_one_halo_is_one_weighted_product_term(self):
         model = NFWOneHaloBispectrum3D(

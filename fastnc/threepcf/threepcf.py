@@ -7,6 +7,11 @@ from typing import Callable, Iterable
 
 import numpy as np
 
+from fastnc.bispectrum import (
+    Bispectrum2D,
+    NumericRepresentation2D,
+    SlepianRepresentation2D,
+)
 from fastnc.coupling import CouplingCacheSession, CouplingMatrix
 from fastnc.coupling.cache import resolve_coupling_cache_file
 from fastnc.hankel import double_hankel_transform, make_fftlog_grid
@@ -49,7 +54,9 @@ def _coordinate(values, name: str, *, positive: bool) -> np.ndarray:
 class ThreePCF:
     """A 2D bispectrum prediction on fixed theta and phi coordinates."""
 
-    _supported_routes = frozenset({"numeric", "slepian", "semi_analytic"})
+    _supported_routes = frozenset(
+        {"numeric", "slepian", "semi_analytic", "hybrid"}
+    )
 
     def __init__(
         self,
@@ -77,6 +84,9 @@ class ThreePCF:
         self._coupling_cache_sessions: dict[Path, CouplingCacheSession] = {}
         self._couplings: dict[tuple[int, int, int], object] = {}
         self._multipole: BispectrumMultipole | None = None
+        self._numeric_semianalytic_source: Bispectrum2D | None = None
+        self._slepian_source: Bispectrum2D | None = None
+        self._hybrid_plan_ready = False
         self._slepian_calculator: SlepianCalculator | None = None
         self._hkernel_tables: dict[
             tuple[tuple[int, int, int], ...], HKernelTable
@@ -127,11 +137,17 @@ class ThreePCF:
 
     def _clear_route_results(self) -> None:
         self._multipole = None
+        self._numeric_semianalytic_source = None
+        self._slepian_source = None
+        self._hybrid_plan_ready = False
         self._slepian_calculator = None
         self._clear_grid_results()
 
     def _clear_source_results(self) -> None:
         self._multipole = None
+        self._numeric_semianalytic_source = None
+        self._slepian_source = None
+        self._hybrid_plan_ready = False
         if self._slepian_calculator is not None:
             self._slepian_calculator._clear_source_cache()
         self._clear_grid_results()
@@ -214,13 +230,66 @@ class ThreePCF:
             self._couplings[sigma] = coupling
         return self._couplings[sigma]
 
+    @staticmethod
+    def _term_supports(term, representation_type) -> bool:
+        return any(
+            isinstance(representation, representation_type)
+            for representation in term.representations
+        )
+
+    def _plan_hybrid_sources(
+        self,
+    ) -> tuple[Bispectrum2D | None, Bispectrum2D | None]:
+        """Partition terms once into direct-ZetaK and HKernel pipelines."""
+        if not isinstance(self._bispectrum, Bispectrum2D):
+            raise TypeError("the hybrid route requires a Bispectrum2D")
+        if self._hybrid_plan_ready:
+            return self._slepian_source, self._numeric_semianalytic_source
+
+        slepian_names = []
+        numeric_names = []
+        unsupported = []
+        for term in self._bispectrum.terms:
+            if self._term_supports(term, SlepianRepresentation2D):
+                slepian_names.append(term.name)
+            elif self._term_supports(term, NumericRepresentation2D):
+                numeric_names.append(term.name)
+            else:
+                unsupported.append(term.name)
+        if unsupported:
+            raise TypeError(
+                "hybrid route found terms with no supported representation: "
+                f"{unsupported}"
+            )
+
+        self._slepian_source = (
+            self._bispectrum.select_terms(*slepian_names)
+            if slepian_names
+            else None
+        )
+        self._numeric_semianalytic_source = (
+            self._bispectrum.select_terms(*numeric_names)
+            if numeric_names
+            else None
+        )
+        self._hybrid_plan_ready = True
+        return self._slepian_source, self._numeric_semianalytic_source
+
+    def _numeric_pipeline_source(self):
+        if self.route != "hybrid":
+            return self._bispectrum
+        _, numeric_source = self._plan_hybrid_sources()
+        if numeric_source is None:
+            raise ValueError("hybrid route has no numeric/semi-analytic terms")
+        return numeric_source
+
     def multipoles(self) -> BispectrumMultipole:
-        """Return the lazy numeric multipole facade for the retained source."""
+        """Return multipoles for terms assigned to the HKernel pipeline."""
         self._sync_source_state()
         if self._multipole is None:
             self._multipole = BispectrumMultipole.from_numeric(
                 self.config.multipole,
-                self._bispectrum,
+                self._numeric_pipeline_source(),
                 basis=self.config.basis,
             )
         return self._multipole
@@ -346,7 +415,7 @@ class ThreePCF:
         *,
         epsilons: Iterable[tuple[int, int, int]] | None = None,
     ) -> ZetaKTable:
-        """Return opening-angle modes using the retained route policy."""
+        """Return cached or term-wise assembled opening-angle modes."""
         self._sync_source_state()
         if self.route == "semi_analytic":
             raise NotImplementedError(
@@ -357,7 +426,64 @@ class ThreePCF:
             return self._zetak_tables[requested_epsilons]
 
         if self.route == "slepian":
-            return self._zetak_slepian(requested_epsilons)
+            table = self._zetak_slepian(
+                requested_epsilons, self._bispectrum
+            )
+        elif self.route == "hybrid":
+            slepian_source, numeric_source = self._plan_hybrid_sources()
+            contributions = []
+            if slepian_source is not None:
+                contributions.append(
+                    self._zetak_slepian(requested_epsilons, slepian_source)
+                )
+            if numeric_source is not None:
+                contributions.append(
+                    self._zetak_numeric_semianalytic(requested_epsilons)
+                )
+            table = self._sum_zetak_tables(contributions)
+        else:
+            table = self._zetak_numeric_semianalytic(requested_epsilons)
+
+        self._zetak_tables[requested_epsilons] = table
+        return table
+
+    @staticmethod
+    def _sum_zetak_tables(tables) -> ZetaKTable:
+        tables = tuple(tables)
+        if not tables:
+            raise ValueError("at least one ZetaK contribution is required")
+        reference = tables[0]
+        aliases = dict(reference.aliases)
+        keys = []
+        for table in tables:
+            if not np.array_equal(table.theta, reference.theta):
+                raise ValueError("ZetaK contributions use different theta grids")
+            if dict(table.aliases) != aliases:
+                raise ValueError("ZetaK contributions use different mode aliases")
+            for key in table.keys:
+                if key not in keys:
+                    keys.append(key)
+        values = []
+        for key in keys:
+            total = np.zeros(
+                (reference.theta.size, reference.theta.size), dtype=complex
+            )
+            for table in tables:
+                if key in table.keys:
+                    total += table.get(key)
+            values.append(total)
+        return ZetaKTable(
+            reference.theta,
+            tuple(keys),
+            np.stack(values),
+            aliases=aliases,
+        )
+
+    def _zetak_numeric_semianalytic(
+        self,
+        requested_epsilons: tuple[tuple[int, int, int], ...],
+    ) -> ZetaKTable:
+        """Transform the shared BispectrumMultipole/HKernel pipeline."""
 
         spin_spec = SpinSpec(self.config.spin)
         htable = self.hkernel(epsilons=requested_epsilons)
@@ -402,12 +528,12 @@ class ThreePCF:
             np.stack([values[key] for key in keys]),
             aliases=aliases,
         )
-        self._zetak_tables[requested_epsilons] = table
         return table
 
     def _zetak_slepian(
         self,
         requested_epsilons: tuple[tuple[int, int, int], ...],
+        bispectrum,
     ) -> ZetaKTable:
         if self._slepian_calculator is None:
             self._slepian_calculator = SlepianCalculator(self.config.slepian)
@@ -420,7 +546,7 @@ class ThreePCF:
             effective = as_effective_spin_triple(sigma)
             k_values = effective.k_values(self.config.kmax)
             mode_values = self._slepian_calculator.evaluate_modes(
-                self._bispectrum,
+                bispectrum,
                 self.grid.ell,
                 self.theta,
                 k_values,
@@ -441,7 +567,6 @@ class ThreePCF:
             np.stack([values[key] for key in keys]),
             aliases=aliases,
         )
-        self._zetak_tables[requested_epsilons] = table
         return table
 
     def zeta(

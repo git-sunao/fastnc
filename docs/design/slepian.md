@@ -181,6 +181,16 @@ into a nonseparable term. Pair `23` has constant leg 1 and is deliberately not
 given a Slepian representation. A future hybrid calculation must obtain that
 cyclic contribution from the semi-analytic or numeric route.
 
+The maintained 3D models use the same decomposition before LOS projection.
+`SPTMatterBispectrum3D` exposes all seven tree-level harmonic terms for each
+of pairs `12` and `31`. `SPTGalaxyBispectrum3D` additionally exposes the
+quadratic-bias `m=0` term and the tidal-bias `m=0,+/-2` terms for those pairs.
+Every such additive term carries both `NumericExpression3D` and
+`SlepianExpression3D`; the corresponding pair-23 tree, quadratic, and tidal
+terms remain explicitly numeric-only. Splitting the former pair aggregate is
+required because one additive term may expose only one representation of each
+concrete type, and because hybrid route selection operates term by term.
+
 Odd angular harmonics on nonconstant SPT legs do not by themselves imply an
 odd-order constant-leg kernel. Odd-order constant-leg regular support is a
 separate, more general case. When it occurs, its contact coefficient is zero

@@ -14,7 +14,9 @@ from ..representations import (
     NumericExpression2D,
     NumericExpression3D,
     SlepianExpression2D,
+    SlepianExpression3D,
     SlepianRadialFactor2D,
+    SlepianRadialFactor3D,
 )
 from ..support import Support2D, Support3D
 from ..terms import BispectrumTerm2D, BispectrumTerm3D, WeightedTerm3D
@@ -86,6 +88,131 @@ def _pair_cosine(k1, k2, k3):
     k3 = np.asarray(k3, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         return (k3**2 - k1**2 - k2**2) / (2.0 * k1 * k2)
+
+
+_SLEPIAN_PAIR_LAYOUTS_3D = {
+    "12": ((0, 1), 2),
+    "31": ((2, 0), 1),
+}
+
+
+def _safe_phase(k_left, k_right, k_opposite, mode):
+    mu = np.nan_to_num(
+        _pair_cosine(k_left, k_right, k_opposite),
+        nan=0.0,
+        posinf=1.0,
+        neginf=-1.0,
+    )
+    return np.exp(1j * int(mode) * np.arccos(np.clip(mu, -1.0, 1.0)))
+
+
+def _scaled_linear_power(linear_power, k, z, k_power):
+    k = np.asarray(k, dtype=float)
+    values = np.asarray(linear_power(k, z))
+    target_shape = np.broadcast_shapes(k.shape, np.shape(z), values.shape)
+    values = np.broadcast_to(values, target_shape)
+    k = np.broadcast_to(k, target_shape)
+    if k_power == 0:
+        return values
+    if k_power > 0:
+        return values * k**k_power
+    result = np.zeros(target_shape, dtype=values.dtype)
+    return np.divide(values, k ** (-k_power), out=result, where=k != 0.0)
+
+
+def _separable_pair_term_3d(
+    owner,
+    *,
+    name,
+    pair,
+    mode,
+    left_power,
+    right_power,
+    coefficient,
+):
+    (left, right), constant = _SLEPIAN_PAIR_LAYOUTS_3D[pair]
+    powers = (left_power, right_power)
+
+    def factor(index):
+        radial_power = powers[index]
+        return SlepianRadialFactor3D(
+            lambda k, z, _power=radial_power: _scaled_linear_power(
+                owner.linear_power, k, z, _power
+            )
+        )
+
+    radial_factors = [None, None, None]
+    radial_factors[left] = factor(0)
+    radial_factors[right] = factor(1)
+    radial_factors[constant] = SlepianRadialFactor3D.constant()
+    angular_orders = [0, 0, 0]
+    angular_orders[left] = mode
+    angular_orders[right] = -mode
+
+    def numeric(k1, k2, k3, z, **params):
+        k = (k1, k2, k3)
+        return (
+            coefficient
+            * _scaled_linear_power(owner.linear_power, k[left], z, left_power)
+            * _scaled_linear_power(owner.linear_power, k[right], z, right_power)
+            * _safe_phase(k[left], k[right], k[constant], mode)
+        )
+
+    return BispectrumTerm3D(
+        name=name,
+        representations=(
+            NumericExpression3D(numeric),
+            SlepianExpression3D(
+                coefficient=coefficient,
+                radial_factors=tuple(radial_factors),
+                angular_orders=tuple(angular_orders),
+            ),
+        ),
+    )
+
+
+def _pair_terms_3d(owner, pair, kind):
+    """Return exact finite Slepian components for one supported SPT pair."""
+    if pair not in _SLEPIAN_PAIR_LAYOUTS_3D:
+        raise ValueError("Slepian-compatible 3D pairs are '12' and '31'")
+    if kind == "tree":
+        specifications = [(0, 0, 0, 12.0 / 7.0, "")]
+        for mode in (-1, 1):
+            specifications.extend(
+                (
+                    (mode, 1, -1, 0.5, ":r+1"),
+                    (mode, -1, 1, 0.5, ":r-1"),
+                )
+            )
+        specifications.extend(
+            ((-2, 0, 0, 1.0 / 7.0, ""), (2, 0, 0, 1.0 / 7.0, ""))
+        )
+        prefix = "tree:F2"
+    elif kind == "quadratic":
+        specifications = [(0, 0, 0, 1.0, "")]
+        prefix = "bias:quadratic"
+    elif kind == "tidal":
+        specifications = [
+            (0, 0, 0, 1.0 / 6.0, ""),
+            (-2, 0, 0, 1.0 / 4.0, ""),
+            (2, 0, 0, 1.0 / 4.0, ""),
+        ]
+        prefix = "bias:tidal"
+    else:
+        raise ValueError("kind must be 'tree', 'quadratic', or 'tidal'")
+
+    return tuple(
+        _separable_pair_term_3d(
+            owner,
+            name=f"{prefix}:{pair}:m{mode:+d}{suffix}",
+            pair=pair,
+            mode=mode,
+            left_power=left_power,
+            right_power=right_power,
+            coefficient=coefficient,
+        )
+        for mode, left_power, right_power, coefficient, suffix in specifications
+    )
 
 
 class SPTMatterF2Bispectrum2D(Bispectrum2D):
@@ -294,9 +421,10 @@ class SPTMatterBispectrum3D(Bispectrum3D):
         = 2F_2(\mathbf{k}_1,\mathbf{k}_2)P_L(k_1,z)P_L(k_2,z)
         + 2\ \mathrm{cyc.}
 
-    directly for each triangle.  Unlike the semi-analytic SPT multipole model,
-    no FFTLog/separable decomposition is used here.  This makes the class a
-    useful independent reference for LOS projection and multipole validation.
+    The pair-12 and pair-31 contributions are decomposed exactly into their
+    finite Fourier harmonics and expose both numeric and Slepian
+    representations. Pair 23 remains one numeric-only term because treating
+    it as a constant-leg Slepian expression would eliminate physical leg 1.
     """
 
     def __init__(
@@ -307,21 +435,15 @@ class SPTMatterBispectrum3D(Bispectrum3D):
         if not callable(linear_power):
             raise TypeError("linear_power must be callable as linear_power(k, z)")
         self.linear_power = linear_power
-        terms = (
-            BispectrumTerm3D(
-                name="tree:F2:12",
-                representations=(NumericExpression3D(self._evaluate_12),),
-            ),
+        terms = [*_pair_terms_3d(self, "12", "tree")]
+        terms.append(
             BispectrumTerm3D(
                 name="tree:F2:23",
                 representations=(NumericExpression3D(self._evaluate_23),),
-            ),
-            BispectrumTerm3D(
-                name="tree:F2:31",
-                representations=(NumericExpression3D(self._evaluate_31),),
-            ),
+            )
         )
-        super().__init__(terms, support=support)
+        terms.extend(_pair_terms_3d(self, "31", "tree"))
+        super().__init__(tuple(terms), support=support)
 
     @classmethod
     def simple_debug(
@@ -440,8 +562,9 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
 
         S_{ij}=\mu_{ij}^2-\frac13.
 
-    This class evaluates the full triangle directly and does not use the
-    semi-analytic multipole decomposition.
+    Terms from pairs 12 and 31 expose every exact finite Slepian harmonic.
+    Pair-23 terms remain numeric-only because leg 1 cannot be the eliminated
+    constant leg of the current ZetaK convention.
     """
 
     def __init__(
@@ -459,49 +582,59 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
         self.b1 = b1
         self.b2 = b2
         self.bK2 = bK2
-        terms = []
-        for pair, evaluator in (
-            ("12", self._evaluate_tree_12),
-            ("23", self._evaluate_tree_23),
-            ("31", self._evaluate_tree_31),
-        ):
-            terms.append(
-                WeightedTerm3D(
-                    coefficient=self._tree_coefficient,
-                    term=BispectrumTerm3D(
-                        name=f"tree:F2:{pair}",
-                        representations=(NumericExpression3D(evaluator),),
-                    ),
-                )
+        terms = [
+            WeightedTerm3D(self._tree_coefficient, term)
+            for term in _pair_terms_3d(self, "12", "tree")
+        ]
+        terms.append(
+            WeightedTerm3D(
+                self._tree_coefficient,
+                BispectrumTerm3D(
+                    name="tree:F2:23",
+                    representations=(NumericExpression3D(self._evaluate_tree_23),),
+                ),
             )
-        for pair, evaluator in (
-            ("12", self._evaluate_quadratic_12),
-            ("23", self._evaluate_quadratic_23),
-            ("31", self._evaluate_quadratic_31),
-        ):
-            terms.append(
-                WeightedTerm3D(
-                    coefficient=self._quadratic_coefficient,
-                    term=BispectrumTerm3D(
-                        name=f"bias:quadratic:{pair}",
-                        representations=(NumericExpression3D(evaluator),),
+        )
+        terms.extend(
+            WeightedTerm3D(self._tree_coefficient, term)
+            for term in _pair_terms_3d(self, "31", "tree")
+        )
+        terms.extend(
+            WeightedTerm3D(self._quadratic_coefficient, term)
+            for term in _pair_terms_3d(self, "12", "quadratic")
+        )
+        terms.append(
+            WeightedTerm3D(
+                self._quadratic_coefficient,
+                BispectrumTerm3D(
+                    name="bias:quadratic:23",
+                    representations=(
+                        NumericExpression3D(self._evaluate_quadratic_23),
                     ),
-                )
+                ),
             )
-        for pair, evaluator in (
-            ("12", self._evaluate_tidal_12),
-            ("23", self._evaluate_tidal_23),
-            ("31", self._evaluate_tidal_31),
-        ):
-            terms.append(
-                WeightedTerm3D(
-                    coefficient=self._tidal_coefficient,
-                    term=BispectrumTerm3D(
-                        name=f"bias:tidal:{pair}",
-                        representations=(NumericExpression3D(evaluator),),
-                    ),
-                )
+        )
+        terms.extend(
+            WeightedTerm3D(self._quadratic_coefficient, term)
+            for term in _pair_terms_3d(self, "31", "quadratic")
+        )
+        terms.extend(
+            WeightedTerm3D(self._tidal_coefficient, term)
+            for term in _pair_terms_3d(self, "12", "tidal")
+        )
+        terms.append(
+            WeightedTerm3D(
+                self._tidal_coefficient,
+                BispectrumTerm3D(
+                    name="bias:tidal:23",
+                    representations=(NumericExpression3D(self._evaluate_tidal_23),),
+                ),
             )
+        )
+        terms.extend(
+            WeightedTerm3D(self._tidal_coefficient, term)
+            for term in _pair_terms_3d(self, "31", "tidal")
+        )
         super().__init__(terms, support=support)
 
     @classmethod

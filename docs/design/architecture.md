@@ -156,9 +156,17 @@ to `ZetaKTable`; the semi-analytic route may contribute through its appropriate
 multipole or radial kernel. The agreed hybrid-route contract is term-wise: use
 the requested specialized representation where available and fall back to
 interpolated or direct numeric evaluation otherwise. Contributions from
-different routes are summed into the same route-independent table keys. The
-current implementation still selects one route for the `ThreePCF` instance;
-term-wise planning and mixed-route assembly remain to be implemented.
+different routes are summed into the same route-independent table keys.
+
+`route="hybrid"` implements this contract for the currently available
+representations. Terms carrying a Slepian representation are evaluated by
+`_zetak_slepian`; remaining terms carrying a numeric representation are sent
+through `_zetak_numeric_semianalytic`, whose BispectrumMultipole, coupling,
+HKernel, and HKernel-to-ZetaK stages are shared with the future semi-analytic
+implementation. Public `zetak()` alone combines and caches the contributions.
+The planner assigns each term exactly once, so a term carrying both numeric
+and Slepian representations is not double counted. Semi-analytic capability
+selection remains pending until its maintained representation type exists.
 
 `threepcf.zeta(projection="x")` returns the cached x-projection by default and
 may convert it cheaply to another shear projection such as `"centroid"` at
