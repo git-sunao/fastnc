@@ -360,6 +360,16 @@ result fixed and scan one Slepian control at a time: `kmax`, Mellin `n_ell`,
 `regular_n_ratio`, and direct versus interpolated Weber evaluation. The local
 archive is `dev/slepian/slepian_spin_brute_validation_ratio_gauss.npz`.
 
+Holding that brute result and all other Slepian controls fixed, the worst
+component `epsilon=(+,+,+)` gave relative maximum residuals `0.540`, `0.380`,
+`0.135`, `0.103`, and `0.101` at `kmax=8`, `12`, `16`, `20`, and `24`.
+The Slepian result changed by `0.0189` in relative maximum norm and `0.0081`
+in relative L2 norm from `kmax=20` to `24`. The mode sum is therefore close
+to convergence for this toy by `kmax=24`; the remaining relative L2 residual
+against brute fine is `0.0594`. Subsequent convergence tests should use
+`kmax=24` and vary Mellin `n_ell` next rather than attributing the remaining
+difference to the regular kernel formula.
+
 ## Canonical validation path
 
 Use `dev/slepian-old/threepcf_slepian_toy.ipynb` for the earlier end-to-end implementation. It
