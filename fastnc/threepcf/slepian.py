@@ -747,6 +747,18 @@ def regular_mellin_matrix(
     if ell.ndim != 1 or x.ndim != 1 or theta.ndim != 1:
         raise ValueError("ell, x, and theta must be one-dimensional")
     if config.regular_quadrature == "ratio_gauss":
+        if config.regular_matrix_implementation == "vectorized":
+            return _regular_mellin_matrix_ratio_vectorized(
+                ell,
+                single_exponents,
+                double_exponents,
+                single_order,
+                double_orders,
+                constant_orders,
+                theta,
+                config,
+                interpolation_cache=interpolation_cache,
+            )
         nodes, weights = leggauss(config.regular_n_ratio)
         ratio_min = config.regular_ratio_min
         ratio = 0.5 * ((1.0 - ratio_min) * nodes + 1.0 + ratio_min)
@@ -904,6 +916,140 @@ def regular_mellin_matrix(
         double_exponents,
         single_exponents,
         x,
+        theta,
+        single_order,
+        double_orders,
+        constant_orders,
+    )
+
+
+def _regular_mellin_matrix_ratio_vectorized(
+    ell,
+    single_exponents,
+    double_exponents,
+    single_order: int,
+    double_orders: tuple[int, int],
+    constant_orders: tuple[int, int],
+    theta,
+    config: SlepianConfig,
+    *,
+    interpolation_cache: dict | None = None,
+) -> RegularMellinMatrix:
+    """Construct ratio-Gauss ``F_ab`` by batching all radial coordinates."""
+    nodes, weights = leggauss(config.regular_n_ratio)
+    ratio_min = config.regular_ratio_min
+    ratio = 0.5 * ((1.0 - ratio_min) * nodes + 1.0 + ratio_min)
+    weights = 0.5 * (1.0 - ratio_min) * weights
+
+    theta = np.asarray(theta, dtype=float)
+    theta_column = theta[:, None]
+    branch_x = np.stack(
+        (theta_column * ratio[None, :], theta_column / ratio[None, :]),
+        axis=1,
+    )
+    ntheta, nbranch, nratio = branch_x.shape
+    flat_x = branch_x.reshape(-1)
+
+    order_x, order_theta = constant_orders
+    if config.weber_method == "direct":
+        def evaluate_constant(left, right):
+            return np.array(
+                [
+                    _weber_unit_power(
+                        0.0, left, right, value, config.weber_rtol
+                    )
+                    for value in ratio
+                ]
+            )
+    else:
+        def evaluate_constant(left, right):
+            return _interpolated_weber_unit_power(
+                0.0,
+                left,
+                right,
+                ratio,
+                nodes=config.weber_interpolation_nodes,
+                max_ratio=config.weber_interpolation_max_ratio,
+                rtol=config.weber_rtol,
+                table_cache=interpolation_cache,
+            )
+
+    constant_less = evaluate_constant(order_x, order_theta)
+    constant_greater = evaluate_constant(order_theta, order_x)
+
+    regular = np.empty_like(branch_x, dtype=complex)
+    regular[:, 0, :] = theta_column**-2 * constant_less[None, :]
+    regular[:, 1, :] = (
+        theta_column / ratio[None, :]
+    ) ** -2 * constant_greater[None, :]
+    jacobian = np.empty_like(branch_x)
+    jacobian[:, 0, :] = theta_column**2 * ratio[None, :]
+    jacobian[:, 1, :] = theta_column**2 / ratio[None, :] ** 3
+    radial_weight = weights[None, None, :] * jacobian * regular
+
+    single_factor = _single_bessel_factor(single_exponents, single_order)
+    single_basis = (
+        single_factor[:, None]
+        * flat_x[None, :] ** (-single_exponents[:, None] - 2.0)
+    ).reshape(single_exponents.size, ntheta, nbranch, nratio)
+
+    geometry = WeberGeometry.from_coordinates(flat_x, theta)
+    values = np.empty(
+        (
+            double_exponents.size,
+            single_exponents.size,
+            ntheta,
+            ntheta,
+        ),
+        dtype=complex,
+    )
+    double_order_x, double_order_theta = double_orders
+    for index, exponent in enumerate(double_exponents):
+        double_basis = _powerlaw_double_kernel(
+            exponent,
+            double_order_x,
+            double_order_theta,
+            flat_x,
+            theta,
+            rtol=config.weber_rtol,
+            omit_diagonal=config.diagonal_correction == "brute",
+            geometry=geometry,
+            method=config.weber_method,
+            interpolation_nodes=config.weber_interpolation_nodes,
+            interpolation_max_ratio=config.weber_interpolation_max_ratio,
+            interpolation_cache=interpolation_cache,
+            max_ratio=(
+                config.weber_brute_min_ratio
+                if config.diagonal_correction == "brute"
+                else 1.0
+            ),
+        ).reshape(ntheta, nbranch, nratio, ntheta)
+        if config.diagonal_correction == "brute":
+            brute_mask = geometry.ratio >= config.weber_brute_min_ratio
+            if np.any(brute_mask):
+                brute = _double_radial_brute(
+                    ell,
+                    ell**exponent,
+                    double_order_x,
+                    double_order_theta,
+                    flat_x,
+                    theta,
+                )
+                reshaped = double_basis.reshape(flat_x.size, theta.size)
+                reshaped[brute_mask] = brute[brute_mask]
+        values[index] = np.einsum(
+            "cpr,bcpr,cpri->bic",
+            radial_weight,
+            single_basis,
+            double_basis,
+            optimize=True,
+        )
+
+    return RegularMellinMatrix(
+        values,
+        double_exponents,
+        single_exponents,
+        ratio,
         theta,
         single_order,
         double_orders,
@@ -1322,6 +1468,7 @@ class SlepianCalculator:
             self.config.diagonal_correction,
             self.config.weber_brute_min_ratio,
             self.config.regular_quadrature,
+            self.config.regular_matrix_implementation,
             self.config.regular_n_ratio,
             self.config.regular_ratio_min,
         )
@@ -1371,6 +1518,7 @@ class SlepianCalculator:
             self.config.diagonal_correction,
             self.config.weber_brute_min_ratio,
             self.config.regular_quadrature,
+            self.config.regular_matrix_implementation,
             self.config.regular_n_ratio,
             self.config.regular_ratio_min,
             self.config.regular_low_rank_rank,

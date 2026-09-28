@@ -62,6 +62,7 @@ The implemented unequal-order regular reference uses an independent field:
 SlepianConfig(
     regular_method="quadrature",
     regular_quadrature="ratio_gauss",  # ratio_gauss | legacy_log
+    regular_matrix_implementation="vectorized",  # vectorized | scalar
     regular_n_ratio=64,
     regular_ratio_min=0.05,
 )
@@ -86,6 +87,15 @@ an independent SVD at each `(theta1, theta2)`, discards the full matrix, and
 caches only the truncated factors. `regular_low_rank_rank` fixes a common rank;
 when it is `None`, `regular_low_rank_rtol` selects the smallest common rank that
 satisfies the relative Frobenius-tail tolerance at every theta pair.
+
+For `full_matrix` and `low_rank` with ratio-Gauss quadrature, `vectorized`
+batches every `(theta_constant, branch, ratio node)` coordinate and evaluates
+the double Weber kernel once per Mellin exponent. It changes only the order of
+the finite quadrature sums. `scalar` preserves the original nested-loop
+implementation as a direct regression and performance reference. With direct
+Weber evaluation the two implementations must agree to floating-point
+roundoff. Interpolated Weber values may differ at the interpolation-error level
+because the scalar and batched requests span different spline intervals.
 
 The current quadrature accepts only a positive even difference between the
 canonical Bessel orders. Such kernels have one-sided Heaviside support. Odd

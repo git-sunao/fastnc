@@ -28,6 +28,9 @@ class SlepianConfig:
     regular_method: Literal[
         "quadrature", "full_matrix", "low_rank"
     ] = "quadrature"
+    regular_matrix_implementation: Literal["scalar", "vectorized"] = (
+        "vectorized"
+    )
     regular_quadrature: Literal["ratio_gauss", "legacy_log"] = "ratio_gauss"
     regular_n_ratio: int = 64
     regular_ratio_min: float = 0.05
@@ -57,6 +60,10 @@ class SlepianConfig:
         if self.regular_method not in {"quadrature", "full_matrix", "low_rank"}:
             raise ValueError(
                 "regular_method must be 'quadrature', 'full_matrix', or 'low_rank'"
+            )
+        if self.regular_matrix_implementation not in {"scalar", "vectorized"}:
+            raise ValueError(
+                "regular_matrix_implementation must be 'scalar' or 'vectorized'"
             )
         if self.regular_quadrature not in {"ratio_gauss", "legacy_log"}:
             raise ValueError(

@@ -455,3 +455,28 @@ defines one native-2D term with numeric and Slepian representations, compares
 the `ZetaK` modes, and reports target-grid and cache behavior. Files under
 `dev/slepian-old` contains historical development evidence, not the public
 route API.
+# Vectorized ratio-Gauss regular matrix
+
+The original ratio-Gauss `F_ab` builder looped over target constant-leg
+theta, the two `x < theta` and `x > theta` branches, and the double Mellin
+index. The vectorized implementation batches all `(theta, branch, ratio)`
+coordinates and calls the double Weber evaluator once per Mellin index.
+The quadrature nodes, weights, branch substitutions, and contractions are
+unchanged. The scalar implementation remains selectable with
+`regular_matrix_implementation="scalar"`.
+
+For a representative spin-2 matrix with 66 single and double Mellin indices,
+12 theta bins, 32 ratio nodes, and Bessel orders `single=1`, `double=(6,-3)`,
+`constant=(-7,5)`, direct Weber evaluation gave 3.63 s for the scalar builder
+and 1.59 s for the vectorized builder, a factor 2.27 speedup. Their maximum
+difference divided by the maximum scalar amplitude was `5.35e-15`.
+
+With the interpolated Weber evaluator, the corresponding measurements were
+2.57 s and 0.92 s. Both differed from the direct result at approximately
+`6e-5` in the same scaled norm, while they differed from each other at
+approximately `4e-5`. This is not a quadrature-order discrepancy: the legacy
+interpolator builds tables over request-dependent local intervals, whereas
+the batched evaluator builds a table over the combined interval. Direct Weber
+evaluation is therefore the strict regression reference. Interpolated route
+accuracy must be assessed against that reference and eventually made
+independent of request batching.

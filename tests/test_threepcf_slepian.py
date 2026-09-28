@@ -793,9 +793,17 @@ class SlepianRouteTests(unittest.TestCase):
             regular_n_x=32,
             regular_x_padding=10.0,
             regular_n_ratio=24,
+            weber_method="direct",
         )
         quadrature = SlepianCalculator(
             SlepianConfig(**common, regular_method="quadrature")
+        ).evaluate_modes(bispectrum, ell, theta, [0])[0]
+        scalar_matrix = SlepianCalculator(
+            SlepianConfig(
+                **common,
+                regular_method="full_matrix",
+                regular_matrix_implementation="scalar",
+            )
         ).evaluate_modes(bispectrum, ell, theta, [0])[0]
         calculator = SlepianCalculator(
             SlepianConfig(**common, regular_method="full_matrix")
@@ -810,6 +818,7 @@ class SlepianRouteTests(unittest.TestCase):
             repeated = calculator.evaluate_modes(bispectrum, ell, theta, [0])[0]
 
         np.testing.assert_allclose(full_matrix, quadrature, rtol=2.0e-12)
+        np.testing.assert_allclose(full_matrix, scalar_matrix, rtol=2.0e-12)
         np.testing.assert_allclose(repeated, full_matrix)
         self.assertEqual(build.call_count, 1)
         self.assertEqual(len(calculator._regular_mellin_matrices), 1)
