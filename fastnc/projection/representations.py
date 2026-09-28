@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from fastnc.bispectrum import (
     NumericRepresentation2D,
     NumericRepresentation3D,
+    SemiAnalyticRepresentation2D,
+    SemiAnalyticRepresentation3D,
     SlepianRepresentation2D,
     SlepianRepresentation3D,
     WeightedTerm3D,
@@ -102,5 +104,28 @@ class ProjectedSlepianRepresentation2D(SlepianRepresentation2D):
                 "integrate_coefficients",
                 "is_delta_like",
             )
+        ):
+            raise TypeError("projector must provide LOS projection settings")
+
+
+@dataclass(frozen=True)
+class ProjectedSemiAnalyticRepresentation2D(SemiAnalyticRepresentation2D):
+    """Deferred coefficient-level LOS projection recipe."""
+
+    source_term: WeightedTerm3D
+    source_representation: SemiAnalyticRepresentation3D
+    projector: object
+    sample_combination: tuple[str, ...] | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.source_term, WeightedTerm3D):
+            raise TypeError("source_term must be a WeightedTerm3D")
+        if not isinstance(self.source_representation, SemiAnalyticRepresentation3D):
+            raise TypeError("source_representation must be semi-analytic")
+        if self.sample_combination is not None:
+            object.__setattr__(self, "sample_combination", tuple(self.sample_combination))
+        if not all(
+            hasattr(self.projector, name)
+            for name in ("z", "chi", "integrate_coefficients", "is_delta_like")
         ):
             raise TypeError("projector must provide LOS projection settings")

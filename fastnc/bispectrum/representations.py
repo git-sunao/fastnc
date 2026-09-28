@@ -35,6 +35,67 @@ class SlepianRepresentation2D(BispectrumRepresentation2D):
     """Capability marker for separable native-2D Slepian expressions."""
 
 
+class SemiAnalyticRepresentation3D(BispectrumRepresentation3D):
+    """Capability marker for coefficient-factorized 3D expressions."""
+
+
+class SemiAnalyticRepresentation2D(BispectrumRepresentation2D):
+    """Capability marker for native or projected semi-analytic expressions."""
+
+
+@dataclass(frozen=True)
+class SemiAnalyticExpression3D(SemiAnalyticRepresentation3D):
+    r"""Factorized expression used by the Appendix-C route.
+
+    The represented term is
+    ``U(k2/k, k3/k) V(k2, k3, z) (k1/k)**p W(k1, z)``, where
+    ``k = sqrt(k2**2 + k3**2)`` and
+    ``W(k1, z) = sum_n w_n(z) k1**nu_n``.  The calculator, rather than this
+    passive object, performs the angular contraction and LOS projection.
+    """
+
+    exponents: np.ndarray
+    coefficient_evaluator: Callable
+    u_evaluator: Callable
+    v_evaluator: Callable
+    power: float = 0.0
+
+    def __post_init__(self):
+        exponents = np.asarray(self.exponents, dtype=complex)
+        if exponents.ndim != 1 or exponents.size == 0:
+            raise ValueError("exponents must be a non-empty one-dimensional array")
+        if np.any(~np.isfinite(exponents)):
+            raise ValueError("exponents must be finite")
+        for name in ("coefficient_evaluator", "u_evaluator", "v_evaluator"):
+            if not callable(getattr(self, name)):
+                raise TypeError(f"{name} must be callable")
+        exponents = np.array(exponents, copy=True)
+        exponents.setflags(write=False)
+        object.__setattr__(self, "exponents", exponents)
+        object.__setattr__(self, "power", float(self.power))
+
+    def coefficients(self, z) -> np.ndarray:
+        """Return ``w_n(z)`` with the Mellin index on the final axis."""
+        z = np.asarray(z, dtype=float)
+        values = np.asarray(self.coefficient_evaluator(z), dtype=complex)
+        expected = z.shape + (self.exponents.size,)
+        try:
+            values = np.broadcast_to(values, expected)
+        except ValueError as exc:
+            raise ValueError(
+                f"coefficient_evaluator output must broadcast to {expected}"
+            ) from exc
+        if np.any(~np.isfinite(values)):
+            raise ValueError("coefficient_evaluator returned non-finite values")
+        return values
+
+    def evaluate_u(self, ratio2, ratio3):
+        return np.asarray(self.u_evaluator(ratio2, ratio3))
+
+    def evaluate_v(self, k2, k3, z):
+        return np.asarray(self.v_evaluator(k2, k3, z))
+
+
 @dataclass(frozen=True)
 class SlepianRadialFactor3D:
     """One radial factor ``f(k, z)`` of a separable 3D bispectrum term."""

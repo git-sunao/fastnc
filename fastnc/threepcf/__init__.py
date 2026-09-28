@@ -8,6 +8,7 @@ from .bruteforce import (
     BruteForceX3PCF,
 )
 from .config import SlepianConfig, ThreePCFConfig
+from .semi_analytic import SemiAnalyticCalculator, SemiAnalyticConfig
 from .tables import (
     ComponentModeKey,
     HKernelKey,
@@ -29,6 +30,8 @@ __all__ = [
     "ThreePCF",
     "ThreePCFConfig",
     "SlepianConfig",
+    "SemiAnalyticCalculator",
+    "SemiAnalyticConfig",
     "ZetaKKey",
     "ZetaKTable",
     "ZetaTable",

@@ -22,6 +22,7 @@ from fastnc.bispectrum import (
 from fastnc.projection import LOSProjector
 from fastnc.threepcf import (
     ComponentModeKey,
+    SemiAnalyticConfig,
     SlepianConfig,
     ThreePCF,
     ThreePCFConfig,
@@ -99,7 +100,7 @@ class SlepianRouteTests(unittest.TestCase):
             tuple(
                 weighted
                 for weighted in source.iter_terms()
-                if weighted.term.name != "tree:F2:23"
+                if not weighted.term.name.startswith("tree:F2:23:")
             )
         )
         projected = LOSProjector.delta_like(z=0.5, chi=chi).project(supported)
@@ -134,7 +135,7 @@ class SlepianRouteTests(unittest.TestCase):
             scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
             self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 3.0e-3)
 
-    def test_hybrid_spt_equals_slepian_plus_numeric_fallback(self):
+    def test_hybrid_spt_equals_slepian_plus_semi_analytic(self):
         chi = 1000.0
 
         def linear_power(k, z):
@@ -145,10 +146,17 @@ class SlepianRouteTests(unittest.TestCase):
         projector = LOSProjector.delta_like(z=0.5, chi=chi)
         full = projector.project(source)
         slepian_names = tuple(
-            term.name for term in source.terms if term.name != "tree:F2:23"
+            term.name
+            for term in source.terms
+            if not term.name.startswith("tree:F2:23:")
         )
         slepian_only = projector.project(source.select_terms(*slepian_names))
-        numeric_only = projector.project(source.select_terms("tree:F2:23"))
+        pair23_names = tuple(
+            term.name
+            for term in source.terms
+            if term.name.startswith("tree:F2:23:")
+        )
+        numeric_only = projector.project(source.select_terms(*pair23_names))
         theta = np.geomspace(3.0e-3, 2.0e-2, 3)
         phi = np.linspace(0.2, 2.8, 5)
         config = ThreePCFConfig(
@@ -172,8 +180,8 @@ class SlepianRouteTests(unittest.TestCase):
             "slepian": ThreePCF(
                 config, slepian_only, theta=theta, phi=phi, route="slepian"
             ),
-            "numeric_fallback": ThreePCF(
-                config, numeric_only, theta=theta, phi=phi, route="numeric"
+            "semi_analytic": ThreePCF(
+                config, numeric_only, theta=theta, phi=phi, route="semi_analytic"
             ),
             "numeric": ThreePCF(
                 config, full, theta=theta, phi=phi, route="numeric"
@@ -186,12 +194,61 @@ class SlepianRouteTests(unittest.TestCase):
             hybrid = tables["hybrid"].get_for_mode((1, 1, 1), mode)
             expected = (
                 tables["slepian"].get_for_mode((1, 1, 1), mode)
-                + tables["numeric_fallback"].get_for_mode((1, 1, 1), mode)
+                + tables["semi_analytic"].get_for_mode((1, 1, 1), mode)
             )
             numeric = tables["numeric"].get_for_mode((1, 1, 1), mode)
             np.testing.assert_array_equal(hybrid, expected)
             scale = max(np.max(np.abs(hybrid)), np.max(np.abs(numeric)))
             self.assertLess(np.max(np.abs(hybrid - numeric)) / scale, 2.0e-3)
+
+    def test_finite_width_spt_hybrid_zetak_and_zeta_match_numeric(self):
+        def linear_power(k, z):
+            ell = np.asarray(k, dtype=float) * 800.0
+            return ell**2 * np.exp(-2.0e-3 * ell**2) / (
+                1.0 + np.asarray(z)
+            ) ** 2
+
+        projected = LOSProjector(
+            z=np.array([0.2, 0.5, 0.9]),
+            chi=np.array([700.0, 1200.0, 1900.0]),
+            prefactor=1.0,
+        ).project(SPTMatterBispectrum3D(linear_power))
+        config = ThreePCFConfig(
+            Lmax=6,
+            kmax=2,
+            ell_min=1.0e-3,
+            ell_max=500.0,
+            n_ell=64,
+            use_coupling_cache=False,
+            multipole=NumericMultipoleConfig(
+                n_angle=257,
+                delta_beta_min=0.0,
+                delta_beta_max=np.pi,
+            ),
+            slepian=SlepianConfig(bias=-1.0, regular_n_ratio=32),
+            semi_analytic=SemiAnalyticConfig(angular_nodes=512),
+        )
+        theta = np.geomspace(3.0e-3, 2.0e-2, 3)
+        phi = np.linspace(0.3, 2.7, 4)
+        hybrid = ThreePCF(
+            config, projected, theta=theta, phi=phi, route="hybrid"
+        )
+        numeric = ThreePCF(
+            config, projected, theta=theta, phi=phi, route="numeric"
+        )
+
+        for hybrid_values, numeric_values in (
+            (hybrid.zetak().values, numeric.zetak().values),
+            (hybrid.zeta().values, numeric.zeta().values),
+        ):
+            scale = max(
+                np.max(np.abs(hybrid_values)),
+                np.max(np.abs(numeric_values)),
+            )
+            self.assertLess(
+                np.max(np.abs(hybrid_values - numeric_values)) / scale,
+                2.0e-3,
+            )
 
     def test_route_builds_shared_zetak_contract_without_hkernel(self):
         size = self.theta.size

@@ -12,6 +12,7 @@ import numpy as np
 from ..bispectrum import Bispectrum3D
 from ..representations import (
     NumericExpression3D,
+    SemiAnalyticExpression3D,
     SlepianExpression2D,
     SlepianExpression3D,
     SlepianRadialFactor3D,
@@ -213,6 +214,62 @@ def _pair_terms_3d(owner, pair, kind):
     )
 
 
+def _semi_analytic_pair23_terms_3d(owner):
+    r"""Return pair 23 split into powers of ``k1/k``.
+
+    Writing ``x=k2/k``, ``y=k3/k``, and ``k^2=k2^2+k3^2``, direct expansion
+    of ``2 F2(k2,k3)`` gives contributions with ``p=0,2,4``. Each has
+    ``W(k1,z)=1`` and ``V=P_L(k2,z)P_L(k3,z)``.
+    """
+
+    def v(k2, k3, z):
+        return owner.linear_power(k2, z) * owner.linear_power(k3, z)
+
+    def u0(x, y):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio_sum = x / y + y / x
+            return 10.0 / 7.0 - ratio_sum / (2.0 * x * y) + 1.0 / (
+                7.0 * x**2 * y**2
+            )
+
+    def u2(x, y):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio_sum = x / y + y / x
+            return ratio_sum / (2.0 * x * y) - 2.0 / (
+                7.0 * x**2 * y**2
+            )
+
+    def u4(x, y):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return 1.0 / (7.0 * x**2 * y**2)
+
+    terms = []
+    for power, u in ((0.0, u0), (2.0, u2), (4.0, u4)):
+        expression = SemiAnalyticExpression3D(
+            exponents=np.array([0.0]),
+            coefficient_evaluator=lambda z: np.ones(np.shape(z) + (1,)),
+            u_evaluator=u,
+            v_evaluator=v,
+            power=power,
+        )
+
+        def numeric(k1, k2, k3, z, _u=u, _power=power, **params):
+            k = np.sqrt(np.asarray(k2) ** 2 + np.asarray(k3) ** 2)
+            return (
+                _u(np.asarray(k2) / k, np.asarray(k3) / k)
+                * v(k2, k3, z)
+                * np.power(np.asarray(k1) / k, _power)
+            )
+
+        terms.append(
+            BispectrumTerm3D(
+                name=f"tree:F2:23:p{int(power)}",
+                representations=(NumericExpression3D(numeric), expression),
+            )
+        )
+    return tuple(terms)
+
+
 class SPTMatterBispectrum3D(Bispectrum3D):
     r"""Direct tree-level real-space matter bispectrum in SPT.
 
@@ -237,8 +294,8 @@ class SPTMatterBispectrum3D(Bispectrum3D):
 
     The pair-12 and pair-31 contributions are decomposed exactly into their
     finite Fourier harmonics and expose both numeric and Slepian
-    representations. Pair 23 remains one numeric-only term because treating
-    it as a constant-leg Slepian expression would eliminate physical leg 1.
+    representations. Pair 23 is split into three powers of ``k1/k`` carrying
+    numeric and semi-analytic representations.
     """
 
     def __init__(
@@ -250,12 +307,7 @@ class SPTMatterBispectrum3D(Bispectrum3D):
             raise TypeError("linear_power must be callable as linear_power(k, z)")
         self.linear_power = linear_power
         terms = [*_pair_terms_3d(self, "12", "tree")]
-        terms.append(
-            BispectrumTerm3D(
-                name="tree:F2:23",
-                representations=(NumericExpression3D(self._evaluate_23),),
-            )
-        )
+        terms.extend(_semi_analytic_pair23_terms_3d(self))
         terms.extend(_pair_terms_3d(self, "31", "tree"))
         super().__init__(tuple(terms), support=support)
 

@@ -35,6 +35,14 @@ A representation describes mathematics. It does not own sampled grids, route
 caches, LOS state, or downstream calculators. Every term must have a numeric
 representation so the numeric route remains the universal fallback.
 
+A semi-analytic representation stores the factorization `U`, `V`, `W`, `p`
+and the Mellin expansion of `W`, but owns no route cache. Projection retains
+that rule and the `LOSProjector`. `SemiAnalyticCalculator` projects the
+redshift-dependent Mellin coefficients before constructing the bispectrum
+multipoles, without sampling a projected angular bispectrum over the triangle
+angle. The result then uses the shared `BispectrumMultipole -> HKernel ->
+ZetaK` stages.
+
 Term addition produces a new term whose guaranteed representation is numeric.
 It must not claim that separability, Slepian structure, or semi-analytic
 structure survives an arbitrary sum. A caller can therefore combine selected
@@ -158,15 +166,15 @@ the requested specialized representation where available and fall back to
 interpolated or direct numeric evaluation otherwise. Contributions from
 different routes are summed into the same route-independent table keys.
 
-`route="hybrid"` implements this contract for the currently available
-representations. Terms carrying a Slepian representation are evaluated by
-`_zetak_slepian`; remaining terms carrying a numeric representation are sent
-through `_zetak_numeric_semianalytic`, whose BispectrumMultipole, coupling,
-HKernel, and HKernel-to-ZetaK stages are shared with the future semi-analytic
-implementation. Public `zetak()` alone combines and caches the contributions.
+`route="hybrid"` implements this contract term by term. Terms carrying a
+Slepian representation are evaluated by `_zetak_slepian`; remaining terms use
+a coefficient-factorized semi-analytic representation when available and
+otherwise fall back to numeric angular decomposition. The latter two produce
+bispectrum multipoles through separate calculators and then share coupling,
+HKernel, and HKernel-to-ZetaK processing. Public `zetak()` alone combines and
+caches the contributions.
 The planner assigns each term exactly once, so a term carrying both numeric
-and Slepian representations is not double counted. Semi-analytic capability
-selection remains pending until its maintained representation type exists.
+and Slepian representations is not double counted.
 
 `threepcf.zeta(projection="x")` returns the cached x-projection by default and
 may convert it cheaply to another shear projection such as `"centroid"` at

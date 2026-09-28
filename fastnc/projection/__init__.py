@@ -7,6 +7,7 @@ from .projector import LOSProjector
 from .representations import (
     ProjectedNumericRepresentation2D,
     ProjectedSlepianRepresentation2D,
+    ProjectedSemiAnalyticRepresentation2D,
 )
 from .strategies import NumericLOSProjectionRule
 
@@ -16,6 +17,7 @@ __all__ = [
     "LOSProjector",
     "ProjectedNumericRepresentation2D",
     "ProjectedSlepianRepresentation2D",
+    "ProjectedSemiAnalyticRepresentation2D",
     "NumericLOSProjectionRule",
     "angular_to_comoving",
     "integrate_coefficients",

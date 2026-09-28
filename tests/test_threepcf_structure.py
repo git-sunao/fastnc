@@ -23,6 +23,8 @@ class ThreePCFStructureTests(unittest.TestCase):
                 "ThreePCF",
                 "ThreePCFConfig",
                 "SlepianConfig",
+                "SemiAnalyticCalculator",
+                "SemiAnalyticConfig",
                 "ZetaKKey",
                 "ZetaKTable",
                 "ZetaTable",

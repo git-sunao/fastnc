@@ -15,6 +15,7 @@ from .numeric import (
     decompose_angular_multipoles,
     triangle_closing_side,
 )
+from .semi_analytic import HybridBispectrumMultipoleCalculator
 
 __all__ = [
     "AngularBispectrumSamples",
@@ -26,6 +27,7 @@ __all__ = [
     "MultipoleSine",
     "NumericBispectrumMultipoleCalculator",
     "NumericMultipoleConfig",
+    "HybridBispectrumMultipoleCalculator",
     "decompose_angular_multipoles",
     "triangle_closing_side",
 ]

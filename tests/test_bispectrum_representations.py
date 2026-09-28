@@ -11,6 +11,7 @@ from fastnc.bispectrum import (
     NFWOneHaloBispectrum3D,
     NumericExpression2D,
     NumericExpression3D,
+    SemiAnalyticExpression3D,
     SlepianExpression2D,
     SlepianExpression3D,
     SlepianRadialFactor2D,
@@ -143,7 +144,7 @@ class SPTMatterTermTests(unittest.TestCase):
         model = SPTMatterBispectrum3D(self.linear_power)
         expected = self.direct_reference(0.7, 1.1, 1.3, 0.4)
         self.assertAlmostEqual(model.evaluate(0.7, 1.1, 1.3, 0.4), expected)
-        self.assertEqual(len(model.terms), 15)
+        self.assertEqual(len(model.terms), 17)
         self.assertEqual(
             sum(name.startswith("tree:F2:12:") for name in (
                 term.name for term in model.terms
@@ -156,11 +157,16 @@ class SPTMatterTermTests(unittest.TestCase):
             )),
             7,
         )
-        pair23 = model.select_terms("tree:F2:23").terms[0]
-        with self.assertRaises(LookupError):
-            pair23.get_representation(SlepianExpression3D)
+        pair23 = tuple(
+            term for term in model.terms if term.name.startswith("tree:F2:23:")
+        )
+        self.assertEqual(len(pair23), 3)
+        for term in pair23:
+            term.get_representation(SemiAnalyticExpression3D)
+            with self.assertRaises(LookupError):
+                term.get_representation(SlepianExpression3D)
         for term in model.terms:
-            if term.name != "tree:F2:23":
+            if not term.name.startswith("tree:F2:23:"):
                 term.get_representation(SlepianExpression3D)
 
     def test_spt_terms_match_direct_formula_for_los_shaped_inputs(self):

@@ -9,6 +9,8 @@ from fastnc.coupling import CachePolicy
 from fastnc.hankel import DoubleHankelConfig
 from fastnc.multipole import NumericMultipoleConfig
 
+from .semi_analytic import SemiAnalyticConfig
+
 
 @dataclass(frozen=True)
 class SlepianConfig:
@@ -127,6 +129,7 @@ class ThreePCFConfig:
     coupling_atol: float = 1.0e-14
     hankel: DoubleHankelConfig = field(default_factory=DoubleHankelConfig)
     slepian: SlepianConfig = field(default_factory=SlepianConfig)
+    semi_analytic: SemiAnalyticConfig = field(default_factory=SemiAnalyticConfig)
     bin_width_logtheta: float | None = None
 
     def __post_init__(self):
@@ -153,6 +156,8 @@ class ThreePCFConfig:
             raise TypeError("multipole must be a NumericMultipoleConfig")
         if not isinstance(self.slepian, SlepianConfig):
             raise TypeError("slepian must be a SlepianConfig")
+        if not isinstance(self.semi_analytic, SemiAnalyticConfig):
+            raise TypeError("semi_analytic must be a SemiAnalyticConfig")
         if int(self.coupling_npsi) < 3:
             raise ValueError("coupling_npsi must be at least three")
         if self.coupling_cache_policy not in {"read_only", "lazy", "refresh"}:

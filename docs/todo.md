@@ -281,8 +281,10 @@ pin the accepted accuracy without depending on one accidental grid choice.
 
 ## Term-wise hybrid route planning
 
-**Status:** Numeric/Slepian hybrid assembly is implemented. A maintained
-semi-analytic representation type and its planner capability remain pending.
+**Status:** Numeric/Slepian/semi-analytic hybrid assembly is implemented. The
+generic calculator and `U`, `V`, `W`, `p` representation exist; physical model
+coverage remains incomplete. SPT matter pair 23 is implemented and has
+independent numeric accuracy and warm-speed validation.
 
 Implement an explicit route-selection policy for bispectra containing multiple
 terms with different available representations. Under a `hybrid` policy, each
@@ -318,8 +320,7 @@ calculations, explicit missing-capability failures, and preservation of
 source-independent caches across model updates.
 
 The current `hybrid` policy assigns every Slepian-capable term to the direct
-Slepian-to-ZetaK path and every remaining numerically evaluable term to the
-shared numeric/semi-analytic HKernel path. It sums route-independent ZetaK
-keys and caches only the assembled table. Extend this planner with explicit
-semi-analytic capability and configurable priority after those representations
-are introduced; do not duplicate the already shared HKernel-to-ZetaK stage.
+Slepian-to-ZetaK path. Remaining terms use coefficient-level semi-analytic
+multipoles when available and numeric angular decomposition otherwise. The
+calculators are separate, but both feed the shared HKernel path. The planner
+sums route-independent ZetaK keys and caches only the assembled table.

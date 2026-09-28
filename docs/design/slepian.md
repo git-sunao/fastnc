@@ -185,8 +185,9 @@ radial products and must not be collapsed into a nonseparable term.
 `SPTGalaxyBispectrum3D` additionally exposes the
 quadratic-bias `m=0` term and the tidal-bias `m=0,+/-2` terms for those pairs.
 Every such additive term carries both `NumericExpression3D` and
-`SlepianExpression3D`; the corresponding pair-23 tree, quadratic, and tidal
-terms remain explicitly numeric-only. Splitting the former pair aggregate is
+`SlepianExpression3D`. The matter pair-23 tree contribution is split into
+`p=0,2,4` terms carrying numeric and semi-analytic representations. Galaxy
+pair-23 terms remain numeric-only. Splitting the former pair aggregate is
 required because one additive term may expose only one representation of each
 concrete type, and because hybrid route selection operates term by term.
 
