@@ -16,9 +16,12 @@ line-of-sight projection, and a :class:`~fastnc.threepcf.ThreePCF` route.
    :maxdepth: 2
    :caption: User guide
 
+   user_guide/architecture
    user_guide/bispectrum
    user_guide/projection
    user_guide/threepcf
+   user_guide/configuration
+   user_guide/results
    user_guide/logging
 
 .. toctree::

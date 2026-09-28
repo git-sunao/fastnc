@@ -1,9 +1,11 @@
 Quick Start
 ===========
 
-The following example constructs a three-dimensional tree-level SPT matter
-bispectrum, evaluates it at one redshift, and computes a scalar 3PCF through
-the numeric route.
+This example follows the complete public workflow: construct a physical 3D
+bispectrum, define a line-of-sight projection, obtain an angular bispectrum,
+and calculate a scalar 3PCF. ``simple_debug`` supplies a self-contained power
+spectrum for examples; scientific analyses should use their own cosmology and
+linear-power implementation.
 
 .. code-block:: python
 
@@ -35,12 +37,29 @@ the numeric route.
    zeta = threepcf.zeta()
 
 ``zeta`` is a passive :class:`~fastnc.threepcf.ZetaTable`. Its ``values``
-array is indexed by component, the two radial coordinates, and opening angle.
+array has shape ``(n_component, n_theta, n_theta, n_phi)``. For this scalar
+example the default component is ``(1, 1, 1)``:
 
-The same projected bispectrum can be evaluated with a different route when
-its terms provide the required representations:
+.. code-block:: python
+
+   scalar = zeta.get((1, 1, 1))
+   diagonal = scalar[np.arange(theta.size), np.arange(theta.size)]
+
+``diagonal`` has shape ``(n_theta, n_phi)`` and contains isosceles triangles.
+
+The same projected bispectrum can use a different route when its terms provide
+the required representations:
 
 .. code-block:: python
 
    hybrid = ThreePCF(config, b2d, theta, phi, route="hybrid")
    zeta_hybrid = hybrid.zeta()
+
+The route is fixed on the instance but may be changed explicitly with
+:meth:`~fastnc.threepcf.ThreePCF.set_route`. This clears route-dependent
+results while preserving reusable grid resources.
+
+The expensive stages are lazy. Constructing ``ThreePCF`` allocates no
+bispectrum multipoles or radial transforms; the first call to ``zeta`` builds
+the required chain. Repeating the same call returns the in-memory cached
+result. Enable logging to see which stages are built or reused.
