@@ -11,7 +11,10 @@ here.
 
 ## Structured calculation logging
 
-**Status:** Deferred until the numerical routes and cache lifecycle stabilize.
+**Status:** Initial progress logging is implemented. `INFO` reports major
+ThreePCF stages and elapsed times; `DEBUG` reports route planning, cache reuse,
+grid sizes, modes, and calculator details. Further route coverage and stable
+machine-readable fields remain pending.
 
 Design logging as one coherent facility rather than adding isolated messages
 inside individual kernels. For the Slepian low-rank route, record at least the
@@ -25,6 +28,20 @@ grid dimensions and ranges, automatic truncation choices, recomputation after
 state changes, and measured stage timings. Define consistent log levels and
 message fields, keep default library operation quiet, and avoid logging large
 arrays or one message per inner-loop evaluation.
+
+## Calculation-graph visualization
+
+**Status:** Deferred.
+
+Add a `ThreePCF` inspection API that displays the planned calculation graph
+before expensive evaluation. The graph must show how every bispectrum term is
+assigned to numeric, Slepian, or semi-analytic processing, group terms that
+share the same route, and show the shared downstream products such as
+BispectrumMultipole, HKernel, ZetaK, and Zeta. It should be useful as both a
+text representation and an inline notebook visualization, without executing
+the numerical graph merely to inspect it. The visualization must be derived
+from the same planner data used for execution so that documentation and actual
+route selection cannot diverge.
 
 ## Weber evaluator stability at large imaginary Mellin index
 

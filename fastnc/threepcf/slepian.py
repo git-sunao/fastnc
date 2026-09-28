@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from numbers import Number
 
 import numpy as np
@@ -21,6 +22,9 @@ from fastnc.projection import ProjectedSlepianRepresentation2D
 
 from .config import SlepianConfig
 from .conventions import as_effective_spin_triple
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -1358,6 +1362,12 @@ class SlepianCalculator:
             self.config.regular_low_rank_rtol,
         )
         if key not in self._low_rank_regular_mellin_matrices:
+            logger.info(
+                "building low-rank regular Mellin matrix: double=%d single=%d theta=%d",
+                power2.exponents.size,
+                power1.exponents.size,
+                np.asarray(theta).size,
+            )
             full = regular_mellin_matrix(
                 ell,
                 power1.exponents,
@@ -1379,6 +1389,15 @@ class SlepianCalculator:
                     rtol=self.config.regular_low_rank_rtol,
                 )
             )
+            compressed = self._low_rank_regular_mellin_matrices[key]
+            logger.info(
+                "low-rank regular Mellin matrix retained rank %d/%d (relative error %.3e)",
+                compressed.retained_rank,
+                min(power1.exponents.size, power2.exponents.size),
+                compressed.relative_reconstruction_error,
+            )
+        else:
+            logger.debug("low-rank regular Mellin matrix cache hit")
         return self._low_rank_regular_mellin_matrices[key]
 
     @staticmethod
@@ -1680,6 +1699,13 @@ class SlepianCalculator:
         ell = np.asarray(ell, dtype=float)
         theta = np.asarray(theta, dtype=float)
         effective = as_effective_spin_triple(sigma)
+        logger.debug(
+            "Slepian modes: terms=%d modes=%d sigma=%s regular_method=%s",
+            len(bispectrum.terms),
+            len(k_values),
+            effective.sigma,
+            self.config.regular_method,
+        )
         results = {
             float(k): np.zeros((theta.size, theta.size), dtype=complex)
             for k in k_values

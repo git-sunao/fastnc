@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import logging
+import time
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -17,6 +19,7 @@ from fastnc.coupling import CouplingCacheSession, CouplingMatrix
 from fastnc.coupling.cache import resolve_coupling_cache_file
 from fastnc.hankel import double_hankel_transform, make_fftlog_grid
 from fastnc.multipole import BispectrumMultipole
+from fastnc._logging import log
 
 from .config import ThreePCFConfig
 from .conventions import SpinSpec, as_effective_spin_triple
@@ -32,6 +35,9 @@ from .tables import (
     ZetaKTable,
     ZetaTable,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _coordinate(values, name: str, *, positive: bool) -> np.ndarray:
@@ -169,6 +175,7 @@ class ThreePCF:
         token = self._source_state_token()
         if token == self._bispectrum_state_token:
             return
+        log(logger, logging.INFO, "bispectrum state changed; clearing source-dependent results")
         self._bispectrum_state_token = token
         self._clear_source_results()
 
@@ -177,6 +184,7 @@ class ThreePCF:
         updated = _coordinate(theta, "theta", positive=True)
         if np.array_equal(updated, self._theta):
             return
+        log(logger, logging.INFO, "theta grid changed; rebuilding radial grid and results")
         self._theta = updated
         self.grid = self._make_grid()
         self._slepian_calculator = None
@@ -189,6 +197,7 @@ class ThreePCF:
         updated = _coordinate(phi, "phi", positive=False)
         if np.array_equal(updated, self._phi):
             return
+        log(logger, logging.INFO, "phi grid changed; clearing resummed Zeta results")
         self._phi = updated
         self._zeta_tables.clear()
 
@@ -198,6 +207,7 @@ class ThreePCF:
             raise TypeError("bispectrum must be a callable 2D bispectrum")
         if bispectrum is self._bispectrum:
             return
+        log(logger, logging.INFO, "bispectrum replaced; clearing source-dependent results")
         self._bispectrum = bispectrum
         self._bispectrum_state_token = self._source_state_token()
         self._clear_source_results()
@@ -207,6 +217,7 @@ class ThreePCF:
         updated = self._validate_route(route)
         if updated == self._route:
             return
+        log(logger, logging.INFO, "route changed from %s to %s", self._route, updated)
         self._route = updated
         self._clear_route_results()
 
@@ -224,6 +235,7 @@ class ThreePCF:
         if len(sigma) != 3:
             raise ValueError("sigma must contain exactly three entries")
         if sigma not in self._couplings:
+            log(logger, logging.DEBUG, "constructing coupling matrix sigma=%s basis=%s", sigma, self.config.basis)
             if self._coupling_factory is not None:
                 coupling = self._coupling_factory(sigma, self.config.basis)
             else:
@@ -239,6 +251,8 @@ class ThreePCF:
             if not callable(coupling):
                 raise TypeError("coupling_factory must return a callable object")
             self._couplings[sigma] = coupling
+        else:
+            log(logger, logging.DEBUG, "coupling cache hit sigma=%s", sigma)
         return self._couplings[sigma]
 
     @staticmethod
@@ -296,6 +310,14 @@ class ThreePCF:
             else None
         )
         self._hybrid_plan_ready = True
+        log(
+            logger,
+            logging.DEBUG,
+            "hybrid plan: slepian=%s semi_analytic=%s numeric=%s",
+            slepian_names,
+            semi_analytic_names,
+            numeric_names,
+        )
         return self._slepian_source, self._semi_analytic_source, self._numeric_source
 
     def _numeric_pipeline_source(self):
@@ -412,7 +434,20 @@ class ThreePCF:
         self._sync_source_state()
         requested_epsilons = self._epsilons(epsilons)
         if requested_epsilons in self._hkernel_tables:
+            log(logger, logging.DEBUG, "HKernel cache hit epsilons=%s", requested_epsilons)
             return self._hkernel_tables[requested_epsilons]
+
+        log(
+            logger,
+            logging.INFO,
+            "building HKernel: route=%s epsilons=%d multipoles=%d ell_grid=%dx%d",
+            self.route,
+            len(requested_epsilons),
+            self._multipole_modes().size,
+            self.grid.ell.size,
+            self.grid.ell.size,
+        )
+        started = time.perf_counter()
 
         spin_spec = SpinSpec(self.config.spin)
         ell2, ell3 = np.meshgrid(self.grid.ell, self.grid.ell, indexing="ij")
@@ -454,6 +489,7 @@ class ThreePCF:
             aliases=aliases,
         )
         self._hkernel_tables[requested_epsilons] = table
+        log(logger, logging.INFO, "HKernel finished in %.3f s", time.perf_counter() - started)
         return table
 
     def zetak(
@@ -465,7 +501,11 @@ class ThreePCF:
         self._sync_source_state()
         requested_epsilons = self._epsilons(epsilons)
         if requested_epsilons in self._zetak_tables:
+            log(logger, logging.DEBUG, "ZetaK cache hit epsilons=%s", requested_epsilons)
             return self._zetak_tables[requested_epsilons]
+
+        log(logger, logging.INFO, "building ZetaK with route=%s", self.route)
+        started = time.perf_counter()
 
         if self.route == "slepian":
             table = self._zetak_slepian(
@@ -487,6 +527,7 @@ class ThreePCF:
             table = self._zetak_numeric_semianalytic(requested_epsilons)
 
         self._zetak_tables[requested_epsilons] = table
+        log(logger, logging.INFO, "ZetaK finished in %.3f s", time.perf_counter() - started)
         return table
 
     @staticmethod
@@ -587,6 +628,13 @@ class ThreePCF:
             sigma = spin_spec.sigma_from_epsilon(epsilon)
             effective = as_effective_spin_triple(sigma)
             k_values = effective.k_values(self.config.kmax)
+            log(
+                logger,
+                logging.INFO,
+                "evaluating Slepian contribution: epsilon=%s modes=%d",
+                epsilon,
+                k_values.size,
+            )
             mode_values = self._slepian_calculator.evaluate_modes(
                 bispectrum,
                 self.grid.ell,
@@ -622,11 +670,21 @@ class ThreePCF:
         requested_epsilons = self._epsilons(epsilons)
         target_projection = _projection_name(projection)
         if requested_epsilons in self._zeta_tables:
+            log(logger, logging.DEBUG, "Zeta cache hit; converting projection to %s", target_projection)
             return self._zeta_tables[requested_epsilons].to_projection(
                 target_projection
             )
 
         spin_spec = SpinSpec(self.config.spin)
+        log(
+            logger,
+            logging.INFO,
+            "resumming Zeta: epsilons=%d phi_bins=%d projection=%s",
+            len(requested_epsilons),
+            self.phi.size,
+            target_projection,
+        )
+        started = time.perf_counter()
         zetak = self.zetak(epsilons=requested_epsilons)
         values = []
         sigmas = []
@@ -651,4 +709,5 @@ class ThreePCF:
             projection="x",
         )
         self._zeta_tables[requested_epsilons] = x_table
+        log(logger, logging.INFO, "Zeta finished in %.3f s", time.perf_counter() - started)
         return x_table.to_projection(target_projection)

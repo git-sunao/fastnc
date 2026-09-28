@@ -11,6 +11,7 @@ from . import hankel
 from . import multipole
 from . import projection
 from . import threepcf
+from ._logging import configure_logging, disable_logging
 
 __all__ = [
     "bispectrum",
@@ -19,8 +20,10 @@ __all__ = [
     "multipole",
     "projection",
     "threepcf",
+    "configure_logging",
+    "disable_logging",
 ]
 
-__version__ = "2.0.70"
+__version__ = "2.0.71"
 __author__ = 'Sunao Sugiyama, Rafael Heringer Gomes'
 __url__ = 'https://github.com/git-sunao/fastnc'

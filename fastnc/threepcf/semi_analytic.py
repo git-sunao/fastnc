@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 import numpy as np
 
 from fastnc.bispectrum import Bispectrum2D
 from fastnc.projection import ProjectedSemiAnalyticRepresentation2D
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,7 @@ class SemiAnalyticCalculator:
         )
         cached = self._kernel_cache.get(key)
         if cached is not None:
+            logger.debug("semi-analytic angular-kernel cache hit: mode=%d", int(mode))
             return cached
         nphi = self.config.angular_nodes
         phi = (np.arange(nphi, dtype=float) + 0.5) * (2.0 * np.pi / nphi)
@@ -66,6 +71,12 @@ class SemiAnalyticCalculator:
             axis=0,
         )
         self._kernel_cache[key] = values
+        logger.debug(
+            "constructed semi-analytic angular kernel: mode=%d exponent=%s nodes=%d",
+            int(mode),
+            complex(exponent),
+            nphi,
+        )
         return values
 
     @staticmethod
@@ -131,6 +142,12 @@ class SemiAnalyticCalculator:
         if requested.ndim > 1 or requested.size == 0:
             raise ValueError("mode must be a scalar or non-empty 1D array")
         modes = np.atleast_1d(requested).astype(int, copy=False)
+        logger.debug(
+            "semi-analytic multipoles: terms=%d modes=%d ell_shape=%s",
+            len(source.terms),
+            modes.size,
+            np.broadcast(np.asarray(ell2), np.asarray(ell3)).shape,
+        )
 
         contributions = []
         for weighted in source.iter_terms():
