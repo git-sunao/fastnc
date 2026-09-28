@@ -16,6 +16,12 @@ ThreePCF stages and elapsed times; `DEBUG` reports route planning, cache reuse,
 grid sizes, modes, and calculator details. Further route coverage and stable
 machine-readable fields remain pending.
 
+The Slepian low-rank path now separates cumulative wall time for full
+`F_ab` construction, SVD compression, and coefficient contraction, and emits
+an epsilon-level timing summary. Use these measurements before choosing among
+order canonicalization, shared kernel construction, or truncated SVD. A
+persistent disk cache is intentionally not part of the planned design.
+
 Design logging as one coherent facility rather than adding isolated messages
 inside individual kernels. For the Slepian low-rank route, record at least the
 requested rank or matrix tolerance, the retained rank, the maximum available

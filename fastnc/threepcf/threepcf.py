@@ -635,12 +635,41 @@ class ThreePCF:
                 epsilon,
                 k_values.size,
             )
+            timing_before = self._slepian_calculator.timing_summary
+            started = time.perf_counter()
             mode_values = self._slepian_calculator.evaluate_modes(
                 bispectrum,
                 self.grid.ell,
                 self.theta,
                 k_values,
                 sigma=sigma,
+            )
+            elapsed = time.perf_counter() - started
+            timing_after = self._slepian_calculator.timing_summary
+            delta = {
+                key: timing_after.get(key, 0.0) - timing_before.get(key, 0.0)
+                for key in timing_after.keys() | timing_before.keys()
+            }
+            build_seconds = delta.get("regular_matrix_build_seconds", 0.0)
+            compression_seconds = delta.get(
+                "low_rank_compression_seconds", 0.0
+            )
+            contraction_seconds = delta.get(
+                "low_rank_contraction_seconds", 0.0
+            )
+            tracked = build_seconds + compression_seconds + contraction_seconds
+            log(
+                logger,
+                logging.INFO,
+                "Slepian epsilon=%s finished in %.3f s: F_ab=%.3f s, SVD=%.3f s, contraction=%.3f s, other=%.3f s, builds=%d, hits=%d",
+                epsilon,
+                elapsed,
+                build_seconds,
+                compression_seconds,
+                contraction_seconds,
+                max(elapsed - tracked, 0.0),
+                round(delta.get("low_rank_matrix_builds", 0.0)),
+                round(delta.get("low_rank_cache_hits", 0.0)),
             )
             for k in k_values:
                 hkey = self._hkey(sigma, float(k))

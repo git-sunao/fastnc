@@ -852,6 +852,14 @@ class SlepianRouteTests(unittest.TestCase):
         np.testing.assert_allclose(repeated, low_rank)
         self.assertEqual(len(calculator._low_rank_regular_mellin_matrices), 1)
         self.assertEqual(calculator._regular_mellin_matrices, {})
+        timing = calculator.timing_summary
+        self.assertEqual(timing["low_rank_matrix_builds"], 1.0)
+        self.assertEqual(timing["low_rank_cache_hits"], 1.0)
+        self.assertGreaterEqual(timing["regular_matrix_build_seconds"], 0.0)
+        self.assertGreaterEqual(timing["low_rank_compression_seconds"], 0.0)
+        self.assertGreaterEqual(timing["low_rank_contraction_seconds"], 0.0)
+        calculator.reset_timings()
+        self.assertEqual(calculator.timing_summary, {})
 
     def test_route_supports_spin_on_nonreference_leg(self):
         manager = ThreePCF(

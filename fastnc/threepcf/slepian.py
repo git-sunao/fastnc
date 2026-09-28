@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import time
 from numbers import Number
 
 import numpy as np
@@ -1142,6 +1143,19 @@ class SlepianCalculator:
         self._low_rank_regular_mellin_matrices: dict[
             tuple, LowRankRegularMellinMatrix
         ] = {}
+        self._timings: dict[str, float] = {}
+
+    @property
+    def timing_summary(self) -> dict[str, float]:
+        """Return cumulative coarse-grained Slepian timing counters."""
+        return dict(self._timings)
+
+    def reset_timings(self) -> None:
+        """Reset timing counters without invalidating numerical caches."""
+        self._timings.clear()
+
+    def _record_timing(self, name: str, value: float = 1.0) -> None:
+        self._timings[name] = self._timings.get(name, 0.0) + float(value)
 
     def clear(self) -> None:
         self._power_sums.clear()
@@ -1151,6 +1165,7 @@ class SlepianCalculator:
         self._constant_leg_kernels.clear()
         self._regular_mellin_matrices.clear()
         self._low_rank_regular_mellin_matrices.clear()
+        self.reset_timings()
 
     def _clear_source_cache(self) -> None:
         self._power_sums.clear()
@@ -1362,12 +1377,13 @@ class SlepianCalculator:
             self.config.regular_low_rank_rtol,
         )
         if key not in self._low_rank_regular_mellin_matrices:
-            logger.info(
+            logger.debug(
                 "building low-rank regular Mellin matrix: double=%d single=%d theta=%d",
                 power2.exponents.size,
                 power1.exponents.size,
                 np.asarray(theta).size,
             )
+            started = time.perf_counter()
             full = regular_mellin_matrix(
                 ell,
                 power1.exponents,
@@ -1382,21 +1398,31 @@ class SlepianCalculator:
                 constant_kernel=constant_kernel,
                 interpolation_cache=self._weber_interpolators,
             )
-            self._low_rank_regular_mellin_matrices[key] = (
-                compress_regular_mellin_matrix(
-                    full,
-                    rank=self.config.regular_low_rank_rank,
-                    rtol=self.config.regular_low_rank_rtol,
-                )
+            build_seconds = time.perf_counter() - started
+            self._record_timing("regular_matrix_build_seconds", build_seconds)
+
+            started = time.perf_counter()
+            compressed = compress_regular_mellin_matrix(
+                full,
+                rank=self.config.regular_low_rank_rank,
+                rtol=self.config.regular_low_rank_rtol,
             )
-            compressed = self._low_rank_regular_mellin_matrices[key]
-            logger.info(
-                "low-rank regular Mellin matrix retained rank %d/%d (relative error %.3e)",
+            compression_seconds = time.perf_counter() - started
+            self._record_timing(
+                "low_rank_compression_seconds", compression_seconds
+            )
+            self._record_timing("low_rank_matrix_builds")
+            self._low_rank_regular_mellin_matrices[key] = compressed
+            logger.debug(
+                "low-rank matrix finished: F_ab=%.3f s SVD=%.3f s rank=%d/%d error=%.3e",
+                build_seconds,
+                compression_seconds,
                 compressed.retained_rank,
                 min(power1.exponents.size, power2.exponents.size),
                 compressed.relative_reconstruction_error,
             )
         else:
+            self._record_timing("low_rank_cache_hits")
             logger.debug("low-rank regular Mellin matrix cache hit")
         return self._low_rank_regular_mellin_matrices[key]
 
@@ -1670,8 +1696,13 @@ class SlepianCalculator:
                         single_exponents=exponents1,
                         double_exponents=exponents_double,
                     )
+                    started = time.perf_counter()
                     contribution += contract_low_rank_regular_mellin_matrix_los(
                         matrix, factors
+                    )
+                    self._record_timing(
+                        "low_rank_contraction_seconds",
+                        time.perf_counter() - started,
                     )
                 else:  # guarded by SlepianConfig
                     raise ValueError("unsupported regular_method")
@@ -1851,10 +1882,15 @@ class SlepianCalculator:
                             theta,
                             regular_kernel,
                         )
+                        started = time.perf_counter()
                         contribution += contract_low_rank_regular_mellin_matrix(
                             matrix,
                             power1.coefficients,
                             power_double.coefficients,
+                        )
+                        self._record_timing(
+                            "low_rank_contraction_seconds",
+                            time.perf_counter() - started,
                         )
                     else:  # guarded by SlepianConfig
                         raise ValueError("unsupported regular_method")
