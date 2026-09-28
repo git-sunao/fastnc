@@ -84,6 +84,11 @@ Read `docs/dev/notes/slepian-performance.md` when detailed derivations, experime
 history, or benchmark interpretation are needed. Notes are non-normative; when
 they conflict with `docs/dev/design/`, the design document wins.
 
+Before changing the BiHalofit model or adding its structured representations,
+read `docs/dev/notes/bihalofit-structured-routes.md`. Preserve the distinction
+between exact Bh1 and an explicitly approximate fixed-shape Bh1 model, and
+retain stable grouped evaluation of squeezed cyclic Bh3 contributions.
+
 Before planning or starting new implementation work, read `docs/dev/todo.md` and
 check whether the change resolves, depends on,
 or must preserve a recorded deferred issue. Update the TODO when new evidence

@@ -1,5 +1,13 @@
 # fastnc development TODO
 
+## BiHalofit structured representations
+
+The formulation and implementation order are recorded in
+`docs/dev/notes/bihalofit-structured-routes.md`. Split exact Bh3 into finite
+separable primitives, extend Slepian evaluation to three non-constant legs,
+and keep fixed-`(r1,r2)` Bh1 as an explicitly approximate model rather than a
+representation of exact Bh1.
+
 Status: Tracked deferred work. These items are not normative architecture;
 accepted contracts belong in `docs/dev/design/` and supporting evidence belongs in
 `docs/dev/notes/`.
