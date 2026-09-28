@@ -8,10 +8,12 @@ from fastnc.bispectrum import (
     Bispectrum2D,
     Bispectrum3D,
     BiHalofitBispectrum3D,
+    BiHalofitFixedShapeOneHaloBispectrum3D,
     NFWOneHaloBispectrum3D,
     NumericExpression2D,
     NumericExpression3D,
     SemiAnalyticExpression3D,
+    SemiAnalyticRadialExpression3D,
     SlepianExpression2D,
     SlepianExpression3D,
     SlepianRadialFactor2D,
@@ -347,6 +349,89 @@ class MigratedPhysicalModelTests(unittest.TestCase):
         )
         np.testing.assert_allclose(direct.real, expected_direct, rtol=5.0e-11)
         np.testing.assert_allclose(expected, expected_direct, rtol=2.0e-14)
+
+    def test_bihalofit_pair23_exposes_only_the_supported_semi_analytic_terms(self):
+        model = BiHalofitBispectrum3D.simple_debug(
+            k=np.logspace(-4, 2, 256),
+            z=np.linspace(0.0, 1.0, 32),
+        )
+        pair23 = [
+            term for term in model.terms
+            if term.name.startswith("bihalofit:Bh3:23:")
+        ]
+        self.assertEqual(len(pair23), 8)
+        for term in pair23:
+            term.get_representation(SemiAnalyticRadialExpression3D)
+
+        numeric_only = [
+            term for term in model.terms
+            if term.name == "bihalofit:Bh1"
+            or term.name.startswith("bihalofit:Bh3:12:")
+            or term.name.startswith("bihalofit:Bh3:31:")
+        ]
+        self.assertEqual(len(numeric_only), 17)
+        for term in numeric_only:
+            with self.assertRaises(LookupError):
+                term.get_representation(SemiAnalyticRadialExpression3D)
+
+    def test_bihalofit_pair23_semi_analytic_primitives_match_numeric_ones(self):
+        model = BiHalofitBispectrum3D.simple_debug(
+            k=np.logspace(-4, 2, 256),
+            z=np.linspace(0.0, 1.0, 32),
+        )
+        k2 = np.array([0.08, 0.2, 0.7])
+        k3 = np.array([0.13, 0.35, 1.1])
+        phi = np.array([0.3, 1.2, 2.4])
+        k1 = np.sqrt(k2**2 + k3**2 + 2.0 * k2 * k3 * np.cos(phi))
+        z = np.array([0.15, 0.45, 0.8])
+
+        for term in model.terms:
+            if not term.name.startswith("bihalofit:Bh3:23:"):
+                continue
+            numeric = term.get_representation(NumericExpression3D)
+            radial = term.get_representation(SemiAnalyticRadialExpression3D)
+            np.testing.assert_allclose(
+                radial(k1, k2, k3, z),
+                numeric(k1, k2, k3, z),
+                rtol=2.0e-13,
+                atol=0.0,
+                err_msg=term.name,
+            )
+
+    def test_fixed_shape_bh1_is_one_numeric_and_semi_analytic_term(self):
+        model = BiHalofitFixedShapeOneHaloBispectrum3D.simple_debug(
+            fiducial_r1=0.8,
+            fiducial_r2=0.6,
+            k=np.logspace(-4, 2, 256),
+            z=np.linspace(0.0, 1.0, 32),
+        )
+        self.assertEqual(len(model.terms), 1)
+        term = model.terms[0]
+        term.get_representation(NumericExpression3D)
+        term.get_representation(SemiAnalyticRadialExpression3D)
+        k1 = np.array([0.12, 0.3, 0.8])
+        k2 = np.array([0.18, 0.45, 1.0])
+        k3 = np.array([0.22, 0.6, 1.4])
+        z = np.array([0.2, 0.5, 0.8])
+        expected = model.profile(k1, z) * model.profile(k2, z) * model.profile(k3, z)
+        np.testing.assert_allclose(model(k1, k2, k3, z), expected)
+
+    def test_equilateral_fixed_shape_bh1_matches_exact_bihalofit(self):
+        exact = BiHalofitBispectrum3D.simple_debug(
+            k=np.logspace(-4, 2, 256),
+            z=np.linspace(0.0, 1.0, 32),
+        )
+        fixed = BiHalofitFixedShapeOneHaloBispectrum3D.from_bihalofit(
+            exact, fiducial_r1=1.0, fiducial_r2=1.0
+        )
+        k = np.array([0.03, 0.1, 0.5, 2.0])
+        z = np.array([0.1, 0.3, 0.6, 0.9])
+        expected = exact.select_terms("bihalofit:Bh1")(k, k, k, z)
+        np.testing.assert_allclose(fixed(k, k, k, z), expected, rtol=2.0e-14)
+
+        token = fixed.state_token
+        fixed.set_fiducial_shape(0.7, 0.4)
+        self.assertNotEqual(fixed.state_token, token)
 
 
 if __name__ == "__main__":

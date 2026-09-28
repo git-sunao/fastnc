@@ -7,7 +7,10 @@ import numpy as np
 
 from ..bispectrum import Bispectrum3D
 from ..halofit import Halofit
-from ..representations import NumericExpression3D
+from ..representations import (
+    NumericExpression3D,
+    SemiAnalyticRadialExpression3D,
+)
 from ..support import Support3D
 from ..terms import BispectrumTerm3D
 from fastnc.utils.cosmology import (
@@ -63,24 +66,35 @@ class BiHalofitBispectrum3D(Bispectrum3D):
                 representations=(NumericExpression3D(self._evaluate_bh1),),
             )
         ]
-        terms.extend(
-            BispectrumTerm3D(
-                name=f"bihalofit:Bh3:{pair}:{label}",
-                representations=(
-                    NumericExpression3D(
-                        self._make_bh3_primitive_evaluator(
-                            pair,
-                            mode=mode,
-                            ratio_power=ratio_power,
-                            coefficient=coefficient,
-                            extra=extra,
-                        )
-                    ),
-                ),
+        for pair, label, mode, ratio_power, coefficient, extra in (
+            _bh3_primitive_specs()
+        ):
+            representations = [
+                NumericExpression3D(
+                    self._make_bh3_primitive_evaluator(
+                        pair,
+                        mode=mode,
+                        ratio_power=ratio_power,
+                        coefficient=coefficient,
+                        extra=extra,
+                    )
+                )
+            ]
+            if pair == "23":
+                representations.append(
+                    self._make_bh3_pair23_semi_expression(
+                        mode=mode,
+                        ratio_power=ratio_power,
+                        coefficient=coefficient,
+                        extra=extra,
+                    )
+                )
+            terms.append(
+                BispectrumTerm3D(
+                    name=f"bihalofit:Bh3:{pair}:{label}",
+                    representations=tuple(representations),
+                )
             )
-            for pair, label, mode, ratio_power, coefficient, extra
-            in _bh3_primitive_specs()
-        )
         super().__init__(tuple(terms), support=support or Support3D(policy=support_policy))
 
     @property
@@ -281,6 +295,67 @@ class BiHalofitBispectrum3D(Bispectrum3D):
         radial = tuple(di * ei for di, ei in zip(damping, effective_power))
         return (k1, k2, k3), q, damping, radial, coefficients, physical
 
+    def _bh3_leg_components(self, k, z):
+        """Return ``q``, damping, and effective radial power for one leg."""
+        self.halofit.update()
+        k, z = np.broadcast_arrays(
+            np.asarray(k, dtype=float), np.asarray(z, dtype=float)
+        )
+        coefficients = self.halofit.get_bihalofit_coeffs(z)
+        q = np.maximum(k * coefficients["r_sigma"], 1.0e-100)
+        linear_power = self.halofit.get_interpolated_pklin(k, z)
+        effective_power = (
+            (1.0 + coefficients["fn"] * q**2)
+            / (1.0 + coefficients["gn"] * q + coefficients["hn"] * q**2)
+            * linear_power
+            + 1.0
+            / (
+                coefficients["mn"] * q ** coefficients["mun"]
+                + coefficients["nn"] * q ** coefficients["nun"]
+            )
+            / (1.0 + (coefficients["pn"] * q) ** -3)
+        )
+        damping = 1.0 / (1.0 + coefficients["en"] * q)
+        return q, damping, damping * effective_power, coefficients
+
+    def _make_bh3_pair23_semi_expression(
+        self,
+        *,
+        mode,
+        ratio_power,
+        coefficient,
+        extra,
+    ):
+        """Return the grid-free semi-analytic expression for pair ``23|1``."""
+
+        def u(ratio2, ratio3):
+            if ratio_power == 1:
+                radial_ratio = ratio2 / ratio3
+            elif ratio_power == -1:
+                radial_ratio = ratio3 / ratio2
+            else:
+                radial_ratio = 1.0
+            return coefficient * radial_ratio
+
+        def v(k2, k3, z):
+            return (
+                self._bh3_leg_components(k2, z)[2]
+                * self._bh3_leg_components(k3, z)[2]
+            )
+
+        def w(k1, z):
+            q1, damping1, _, fit = self._bh3_leg_components(k1, z)
+            if extra:
+                return fit["dn"] * q1 * damping1
+            return damping1
+
+        return SemiAnalyticRadialExpression3D(
+            u_evaluator=u,
+            v_evaluator=v,
+            w_evaluator=w,
+            angular_order=mode,
+        )
+
     def _make_bh3_primitive_evaluator(
         self,
         pair,
@@ -327,3 +402,162 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             else:
                 expanded.append(name)
         return super().select_terms(*expanded)
+
+
+class BiHalofitFixedShapeOneHaloBispectrum3D(Bispectrum3D):
+    r"""Fixed-shape separable approximation to the BiHalofit one-halo term.
+
+    The exact BiHalofit fitting parameters depend on the triangle variables
+    ``r1`` and ``r2``. This model fixes them explicitly, making
+    ``B_1h = H(k1,z) H(k2,z) H(k3,z)`` exactly separable within the
+    approximation. It remains distinct from the exact Bh1 term.
+    """
+
+    def __init__(
+        self,
+        halofit: Halofit,
+        *,
+        fiducial_r1: float,
+        fiducial_r2: float,
+        support: Support3D | None = None,
+        _revision_sources=None,
+    ):
+        if not isinstance(halofit, Halofit):
+            raise TypeError("halofit must be a Halofit instance")
+        self.halofit = halofit
+        self._fiducial_r1, self._fiducial_r2 = self._validate_shape(
+            fiducial_r1, fiducial_r2
+        )
+        term = BispectrumTerm3D(
+            name="bihalofit:Bh1:fixed-shape",
+            representations=(
+                NumericExpression3D(self._evaluate_numeric),
+                SemiAnalyticRadialExpression3D(
+                    u_evaluator=lambda ratio2, ratio3: np.ones(
+                        np.broadcast_shapes(np.shape(ratio2), np.shape(ratio3))
+                    ),
+                    v_evaluator=lambda k2, k3, z: (
+                        self.profile(k2, z) * self.profile(k3, z)
+                    ),
+                    w_evaluator=self.profile,
+                ),
+            ),
+        )
+        if support is None and self.ready:
+            support = Support3D(
+                k_min=float(np.min(self.halofit.k)),
+                k_max=float(np.max(self.halofit.k)),
+                z_min=float(np.min(self.halofit.z)),
+                z_max=float(np.max(self.halofit.z)),
+                policy="zero",
+            )
+        revision_sources = None
+        if _revision_sources is not None:
+            revision_sources = (
+                lambda: self._state_revision,
+                *tuple(_revision_sources),
+            )
+        super().__init__(
+            (term,),
+            support=support or Support3D(policy="ignore"),
+            _revision_sources=revision_sources,
+        )
+
+    @staticmethod
+    def _validate_shape(r1, r2):
+        r1 = float(r1)
+        r2 = float(r2)
+        if not 0.0 < r1 <= 1.0:
+            raise ValueError("fiducial_r1 must lie in (0, 1]")
+        if not 0.0 <= r2 <= 1.0:
+            raise ValueError("fiducial_r2 must lie in [0, 1]")
+        return r1, r2
+
+    @property
+    def ready(self) -> bool:
+        return (
+            getattr(self.halofit, "cosmo", None) is not None
+            and getattr(self.halofit, "k", None) is not None
+            and getattr(self.halofit, "pklin", None) is not None
+            and getattr(self.halofit, "z", None) is not None
+            and getattr(self.halofit, "lgr", None) is not None
+        )
+
+    @property
+    def fiducial_shape(self) -> tuple[float, float]:
+        return self._fiducial_r1, self._fiducial_r2
+
+    def set_fiducial_shape(self, r1, r2):
+        """Update the approximation point and source-state revision."""
+        self._fiducial_r1, self._fiducial_r2 = self._validate_shape(r1, r2)
+        self._state_updated()
+        return self
+
+    @classmethod
+    def from_bihalofit(cls, source, *, fiducial_r1, fiducial_r2):
+        """Construct the approximation from a configured exact model."""
+        if not isinstance(source, BiHalofitBispectrum3D):
+            raise TypeError("source must be a BiHalofitBispectrum3D")
+        return cls(
+            source.halofit,
+            fiducial_r1=fiducial_r1,
+            fiducial_r2=fiducial_r2,
+            support=source.support,
+            _revision_sources=source._revision_sources,
+        )
+
+    @classmethod
+    def simple_debug(cls, *, fiducial_r1, fiducial_r2, **kwargs):
+        """Construct a debug-only approximation from bundled toy inputs."""
+        source = BiHalofitBispectrum3D.simple_debug(**kwargs)
+        return cls.from_bihalofit(
+            source,
+            fiducial_r1=fiducial_r1,
+            fiducial_r2=fiducial_r2,
+        )
+
+    def profile(self, k, z):
+        """Evaluate the fixed-shape one-leg factor ``H(k,z)``."""
+        if not self.ready:
+            raise RuntimeError("the underlying Halofit instance is not configured")
+        self.halofit.update()
+        k, z = np.broadcast_arrays(
+            np.asarray(k, dtype=float), np.asarray(z, dtype=float)
+        )
+        coefficients = self.halofit.get_bihalofit_coeffs(z)
+        q = np.maximum(k * coefficients["r_sigma"], 1.0e-100)
+        r1, r2 = self.fiducial_shape
+        an = 10.0 ** (
+            coefficients["log10an1"]
+            + coefficients["log10an2"] * r1 ** coefficients["gan"]
+        )
+        alpha = 10.0 ** (
+            coefficients["log10aln1"]
+            + coefficients["log10aln2"] * r2**2
+        )
+        alpha = np.minimum(
+            alpha, 1.0 - (2.0 / 3.0) * self.halofit.cosmo["ns"]
+        )
+        beta = 10.0 ** (
+            coefficients["log10ben1"]
+            + coefficients["log10ben2"] * r2
+        )
+        return (
+            1.0 / (an * q**alpha + coefficients["bn"] * q**beta)
+            / (1.0 + 1.0 / (coefficients["cn"] * q))
+        )
+
+    def _evaluate_numeric(self, k1, k2, k3, z, **params):
+        if params:
+            names = ", ".join(sorted(params))
+            raise TypeError(f"unused fixed-shape Bh1 parameters: {names}")
+        k1, k2, k3, z = np.broadcast_arrays(
+            np.asarray(k1, dtype=float),
+            np.asarray(k2, dtype=float),
+            np.asarray(k3, dtype=float),
+            np.asarray(z, dtype=float),
+        )
+        kmin, kmid, kmax = np.sort(np.stack((k1, k2, k3)), axis=0)
+        physical = self.halofit._triangle_physical_mask(kmin, kmid, kmax)
+        values = self.profile(k1, z) * self.profile(k2, z) * self.profile(k3, z)
+        return np.where(physical, values, np.nan)

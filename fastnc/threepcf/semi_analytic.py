@@ -6,7 +6,8 @@ import logging
 
 import numpy as np
 
-from fastnc.bispectrum import Bispectrum2D
+from fastnc.bispectrum import Bispectrum2D, SemiAnalyticRadialExpression3D
+from fastnc.hankel import PowerLawFFTLogConfig, power_law_fftlog_coefficients
 from fastnc.projection import ProjectedSemiAnalyticRepresentation2D
 
 
@@ -18,11 +19,29 @@ class SemiAnalyticConfig:
     """Numerical settings for the universal Appendix-C angular kernel."""
 
     angular_nodes: int = 1024
+    mellin_k_min: float = 1.0e-5
+    mellin_k_max: float = 1.0e2
+    mellin_nodes: int = 1024
+    mellin_bias: float = 0.0
+    mellin_window_width: float = 0.35
 
     def __post_init__(self):
         if int(self.angular_nodes) < 16:
             raise ValueError("angular_nodes must be at least 16")
+        if not 0.0 < float(self.mellin_k_min) < float(self.mellin_k_max):
+            raise ValueError("mellin_k_min and mellin_k_max must be positive and ordered")
+        if int(self.mellin_nodes) < 8 or int(self.mellin_nodes) % 2:
+            raise ValueError("mellin_nodes must be an even integer at least 8")
+        if not 0.0 <= float(self.mellin_window_width) < 0.5:
+            raise ValueError("mellin_window_width must lie in [0, 0.5)")
         object.__setattr__(self, "angular_nodes", int(self.angular_nodes))
+        object.__setattr__(self, "mellin_k_min", float(self.mellin_k_min))
+        object.__setattr__(self, "mellin_k_max", float(self.mellin_k_max))
+        object.__setattr__(self, "mellin_nodes", int(self.mellin_nodes))
+        object.__setattr__(self, "mellin_bias", float(self.mellin_bias))
+        object.__setattr__(
+            self, "mellin_window_width", float(self.mellin_window_width)
+        )
 
 
 class SemiAnalyticCalculator:
@@ -49,6 +68,10 @@ class SemiAnalyticCalculator:
     def clear_grid_cache(self) -> None:
         """Clear kernels tied to angular ratios or Mellin exponents."""
         self._kernel_cache.clear()
+
+    def cache_info(self) -> dict[str, int]:
+        """Return the number of cached universal Appendix-C kernels."""
+        return {"angular_kernels": len(self._kernel_cache)}
 
     def _angular_kernel(self, mode, exponent, ratio):
         ratio = np.asarray(ratio, dtype=float)
@@ -84,7 +107,23 @@ class SemiAnalyticCalculator:
         coefficient = weighted_term.coefficient
         return coefficient(z) if callable(coefficient) else coefficient
 
-    def _evaluate_representation(self, projected, modes, ell2, ell3):
+    @staticmethod
+    def _power_law_coefficients(k_grid, values, config):
+        """FFTLog-expand real or complex samples with common exponents."""
+        values = np.asarray(values)
+        real, exponents = power_law_fftlog_coefficients(
+            k_grid, values.real, config
+        )
+        if not np.iscomplexobj(values):
+            return real, exponents
+        imag, imag_exponents = power_law_fftlog_coefficients(
+            k_grid, values.imag, config
+        )
+        if not np.array_equal(exponents, imag_exponents):
+            raise RuntimeError("real and imaginary FFTLog exponents differ")
+        return real + 1j * imag, exponents
+
+    def _evaluate_mellin_representation(self, projected, modes, ell2, ell3):
         expression = projected.source_representation
         projector = projected.projector
         ell2, ell3 = np.broadcast_arrays(
@@ -129,6 +168,91 @@ class SemiAnalyticCalculator:
             )
             values.append(u * np.sum(integrated * scale_powers * kernels, axis=-1))
         return np.stack(values)
+
+    def _evaluate_radial_representation(self, projected, modes, ell2, ell3):
+        r"""Apply Eqs. (C5), (C8), (C10), and (C11) to ``U V W``.
+
+        ``W(k1,z)`` is FFTLog-expanded independently at each LOS node.  Its
+        coefficients are multiplied by ``V`` and ``chi**(-nu)`` before the LOS
+        integral, producing the projected coefficients ``d_n`` of Eq. (C11).
+        The final contraction uses only universal angular kernels.
+        """
+        expression = projected.source_representation
+        projector = projected.projector
+        ell2, ell3 = np.broadcast_arrays(
+            np.asarray(ell2, dtype=float), np.asarray(ell3, dtype=float)
+        )
+        q2 = ell2 + projector.shift
+        q3 = ell3 + projector.shift
+        scale = np.sqrt(q2**2 + q3**2)
+        if np.any(scale <= 0.0):
+            raise ValueError("semi-analytic angular scales must be positive")
+        ratio = 2.0 * q2 * q3 / scale**2
+        u = np.broadcast_to(
+            expression.evaluate_u(q2 / scale, q3 / scale), scale.shape
+        )
+
+        k_grid = np.geomspace(
+            self.config.mellin_k_min,
+            self.config.mellin_k_max,
+            self.config.mellin_nodes,
+        )
+        fftlog_config = PowerLawFFTLogConfig(
+            bias=self.config.mellin_bias,
+            c_window_width=self.config.mellin_window_width,
+        )
+        los_samples = []
+        exponents = None
+        for z, chi in zip(projector.z, projector.chi):
+            coefficient = self._term_coefficient(projected.source_term, float(z))
+            v = expression.evaluate_v(q2 / chi, q3 / chi, float(z))
+            coefficients, current_exponents = self._power_law_coefficients(
+                k_grid,
+                expression.evaluate_w(k_grid, float(z)),
+                fftlog_config,
+            )
+            if exponents is None:
+                exponents = current_exponents
+            elif not np.array_equal(exponents, current_exponents):
+                raise RuntimeError("FFTLog exponents changed between LOS nodes")
+            los_samples.append(
+                coefficient
+                * v[..., None]
+                * coefficients
+                * np.power(float(chi), -exponents)
+            )
+        integrated = projector.integrate_coefficients(
+            np.stack(los_samples),
+            axis=0,
+            sample_combination=projected.sample_combination,
+        )
+        scale_powers = np.power(scale[..., None].astype(complex), exponents)
+        values = []
+        for mode in modes:
+            kernel_mode = int(mode) - expression.angular_order
+            kernels = np.stack(
+                [
+                    self._angular_kernel(
+                        kernel_mode, exponent + expression.power, ratio
+                    )
+                    for exponent in exponents
+                ],
+                axis=-1,
+            )
+            values.append(
+                u * np.sum(integrated * scale_powers * kernels, axis=-1)
+            )
+        return np.stack(values)
+
+    def _evaluate_representation(self, projected, modes, ell2, ell3):
+        expression = projected.source_representation
+        if isinstance(expression, SemiAnalyticRadialExpression3D):
+            return self._evaluate_radial_representation(
+                projected, modes, ell2, ell3
+            )
+        return self._evaluate_mellin_representation(
+            projected, modes, ell2, ell3
+        )
 
     def evaluate(self, source, mode, *, ell2, ell3, **params):
         """Evaluate one or several Fourier multipoles of a projected source."""

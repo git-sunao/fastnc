@@ -97,6 +97,63 @@ class SemiAnalyticExpression3D(SemiAnalyticRepresentation3D):
 
 
 @dataclass(frozen=True)
+class SemiAnalyticRadialExpression3D(SemiAnalyticRepresentation3D):
+    r"""Grid-free declaration of the separable template in Appendix C.
+
+    The represented term is
+    ``U(k2/k, k3/k) V(k2, k3, z) (k1/k)**p W(k1, z) exp(i m phi23)``,
+    where ``k = sqrt(k2**2 + k3**2)``.  The semi-analytic calculator owns
+    the FFTLog expansion of ``W``, coefficient-level LOS projection, and
+    contraction with the universal angular kernels.  This object owns no
+    Mellin grid or projection grid.
+    """
+
+    u_evaluator: Callable
+    v_evaluator: Callable
+    w_evaluator: Callable
+    power: float = 0.0
+    angular_order: int = 0
+
+    def __post_init__(self):
+        for name in ("u_evaluator", "v_evaluator", "w_evaluator"):
+            if not callable(getattr(self, name)):
+                raise TypeError(f"{name} must be callable")
+        object.__setattr__(self, "power", float(self.power))
+        object.__setattr__(self, "angular_order", int(self.angular_order))
+
+    def evaluate_u(self, ratio2, ratio3):
+        return np.asarray(self.u_evaluator(ratio2, ratio3))
+
+    def evaluate_v(self, k2, k3, z):
+        return np.asarray(self.v_evaluator(k2, k3, z))
+
+    def evaluate_w(self, k1, z):
+        return np.asarray(self.w_evaluator(k1, z))
+
+    def evaluate(self, k1, k2, k3, z):
+        """Evaluate the represented term on a closed 3D triangle."""
+        k1, k2, k3, z = np.broadcast_arrays(
+            np.asarray(k1, dtype=float),
+            np.asarray(k2, dtype=float),
+            np.asarray(k3, dtype=float),
+            np.asarray(z, dtype=float),
+        )
+        scale = np.sqrt(k2**2 + k3**2)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cosine = (k1**2 - k2**2 - k3**2) / (2.0 * k2 * k3)
+            angle = np.arccos(np.clip(cosine, -1.0, 1.0))
+            return (
+                self.evaluate_u(k2 / scale, k3 / scale)
+                * self.evaluate_v(k2, k3, z)
+                * np.power(k1 / scale, self.power)
+                * self.evaluate_w(k1, z)
+                * np.exp(1j * self.angular_order * angle)
+            )
+
+    __call__ = evaluate
+
+
+@dataclass(frozen=True)
 class SlepianRadialFactor3D:
     """One radial factor ``f(k, z)`` of a separable 3D bispectrum term."""
 

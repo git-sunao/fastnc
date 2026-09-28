@@ -1,6 +1,9 @@
 """Physical bispectrum models built from typed term aggregates."""
 
-from .bihalofit import BiHalofitBispectrum3D
+from .bihalofit import (
+    BiHalofitBispectrum3D,
+    BiHalofitFixedShapeOneHaloBispectrum3D,
+)
 from .onehalo import OneHaloProductBispectrum3D, NFWOneHaloBispectrum3D
 from .spt import (
     SPTGalaxyBispectrum3D,
@@ -11,6 +14,7 @@ from .spt import (
 
 __all__ = [
     "BiHalofitBispectrum3D",
+    "BiHalofitFixedShapeOneHaloBispectrum3D",
     "OneHaloProductBispectrum3D",
     "NFWOneHaloBispectrum3D",
     "SPTGalaxyBispectrum3D",
