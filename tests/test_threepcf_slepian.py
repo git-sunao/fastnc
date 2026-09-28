@@ -35,6 +35,7 @@ from fastnc.threepcf.slepian import (
     SlepianCalculator,
     WeberGeometry,
     _contact_coefficient,
+    _double_radial_brute,
     _hyp2f1,
     _interpolated_weber_unit_power,
     _powerlaw_double_kernel,
@@ -87,6 +88,70 @@ class SlepianRouteTests(unittest.TestCase):
             np.linspace(0.0, np.pi, 4),
             route="slepian",
         )
+
+    def test_three_nonconstant_legs_match_direct_radial_integrals(self):
+        ell = np.geomspace(1.0e-2, 1.0e3, 192)
+        theta = np.geomspace(1.0e-2, 4.0e-2, 3)
+
+        def gaussian(scale):
+            return lambda values: np.exp(
+                -(np.asarray(values, dtype=float) / scale) ** 2
+            )
+
+        factors = tuple(
+            SlepianRadialFactor2D(gaussian(scale))
+            for scale in (25.0, 35.0, 45.0)
+        )
+        expression = SlepianExpression2D(
+            coefficient=1.0,
+            radial_factors=factors,
+        )
+        bispectrum = Bispectrum2D(
+            (BispectrumTerm2D("three-leg-toy", (expression,)),)
+        )
+        config = SlepianConfig(
+            bias=-1.0,
+            taper_fraction=0.1,
+            window_fraction=0.1,
+            regular_n_x=256,
+            regular_x_padding=50.0,
+        )
+        actual = SlepianCalculator(config).evaluate_modes(
+            bispectrum, ell, theta, [0]
+        )[0]
+
+        x = np.unique(
+            np.concatenate(
+                (
+                    np.geomspace(
+                        theta[0] / config.regular_x_padding,
+                        theta[-1] * config.regular_x_padding,
+                        config.regular_n_x,
+                    ),
+                    theta,
+                )
+            )
+        )
+        values = [factor.evaluate(ell) for factor in factors]
+        radial1 = np.trapezoid(
+            ell[:, None] ** 2
+            * values[0][:, None]
+            * jv(0, ell[:, None] * x[None, :]),
+            np.log(ell),
+            axis=0,
+        )
+        radial2 = _double_radial_brute(ell, values[1], 0, 0, x, theta)
+        radial3 = _double_radial_brute(ell, values[2], 0, 0, x, theta)
+        expected = np.trapezoid(
+            x[:, None, None]
+            * radial1[:, None, None]
+            * radial2[:, :, None]
+            * radial3[:, None, :],
+            x,
+            axis=0,
+        ) / (2.0 * np.pi) ** 2
+        scale = np.max(np.abs(expected))
+        self.assertLess(np.max(np.abs(actual - expected)) / scale, 6.0e-5)
 
     def test_projected_spt_matter_supported_terms_match_numeric_route(self):
         chi = 1000.0

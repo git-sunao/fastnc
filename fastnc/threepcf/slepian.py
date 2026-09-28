@@ -1439,6 +1439,67 @@ class SlepianCalculator:
             contribution[:, index] = branch_total
         return contribution
 
+    def _three_nonconstant_contribution(
+        self,
+        expression,
+        ell,
+        theta,
+        m: int,
+        n: int,
+        sigma: tuple[int, int, int],
+    ):
+        r"""Evaluate the direct auxiliary-radius integral for three legs.
+
+        For a fully separable expression with no constant radial factor, the
+        retained opening-angle mode is assembled as
+
+        ``int x dx R1(x) R2(x, theta1) R3(x, theta2)``.
+
+        This is the uncompressed reference implementation.  A future Mellin
+        tensor implementation must reproduce this result before introducing
+        a three-index low-rank approximation.
+        """
+        sigma1, sigma2, sigma3 = as_effective_spin_triple(sigma).sigma
+        n1, n2, n3 = expression.angular_orders
+        x = self._regular_x_grid(theta)
+        values1, power1 = self._factor_data(expression, 0, ell)
+        values2, power2 = self._factor_data(expression, 1, ell)
+        values3, power3 = self._factor_data(expression, 2, ell)
+        radial1 = single_radial_transform(power1, n1 + sigma1, x)
+        radial2 = double_radial_transform(
+            ell,
+            values2,
+            power2,
+            n2 + sigma2 - m,
+            m,
+            x,
+            theta,
+            self.config,
+            geometry=self._geometry(x, theta),
+            kernel_cache=self._weber_kernels,
+            interpolation_cache=self._weber_interpolators,
+        )
+        radial3 = double_radial_transform(
+            ell,
+            values3,
+            power3,
+            n3 + sigma3 - n,
+            n,
+            x,
+            theta,
+            self.config,
+            geometry=self._geometry(x, theta),
+            kernel_cache=self._weber_kernels,
+            interpolation_cache=self._weber_interpolators,
+        )
+        integrand = (
+            x[:, None, None]
+            * radial1[:, None, None]
+            * radial2[:, :, None]
+            * radial3[:, None, :]
+        )
+        return np.trapezoid(integrand, x, axis=0)
+
     def _regular_mellin_matrix(
         self,
         ell,
@@ -1915,6 +1976,22 @@ class SlepianCalculator:
             for raw_k in k_values:
                 k = float(raw_k)
                 m, n = effective.bessel_orders(k)
+                if expression.constant_legs == ():
+                    contribution = self._three_nonconstant_contribution(
+                        expression,
+                        ell,
+                        theta,
+                        m,
+                        n,
+                        sigma,
+                    )
+                    results[k] += (
+                        (-1j) ** effective.Sigma
+                        * coefficient
+                        * contribution
+                        / (2.0 * np.pi) ** 2
+                    )
+                    continue
                 layout = _slepian_leg_layout(expression, m, n, sigma)
                 values_double, power_double = self._factor_data(
                     expression, layout.double_leg, ell

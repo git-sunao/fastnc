@@ -167,6 +167,25 @@ Eliminating leg 1 as the constant Slepian leg would remove the angular
 information that `ZetaK` is meant to retain. The Slepian route must therefore
 not support a constant leg 1.
 
+When all three radial factors are nonconstant, no leg is eliminated. For one
+retained mode with Bessel orders `(m,n)`, the uncompressed reference is
+
+```text
+ZetaK(theta1,theta2)
+  = phase * C/(2 pi)^2 int_0^infinity x dx
+      R1[n1+sigma1](x)
+      R2[n2+sigma2-m,m](x,theta1)
+      R3[n3+sigma3-n,n](x,theta2).
+```
+
+This direct auxiliary-radius quadrature is the normative first implementation.
+After Mellin expansion of all three factors it may be written as a contraction
+of three coefficient vectors with a source-independent tensor
+`F_abc(theta1,theta2)`. Do not construct or compress that rank-three tensor
+until the direct quadrature has been validated for native 2D terms, spin and
+nonzero angular orders, projected 3D terms, and final ZetaK modes. Any later
+tensor or low-rank method must remain selectable alongside direct quadrature.
+
 Using one-based physical leg labels, the supported and unsupported cases are
 
 ```text
