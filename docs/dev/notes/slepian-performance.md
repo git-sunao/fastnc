@@ -2,7 +2,7 @@
 
 Status: Development note; non-normative.
 
-Authoritative design: `docs/design/slepian.md`.
+Authoritative design: `docs/dev/design/slepian.md`.
 
 Purpose: Preserve derivations, experiments, benchmark observations, and the
 reasoning behind the staged implementation. If this note conflicts with the
@@ -302,7 +302,7 @@ The required development order is:
    The current direct `hyp2f1` power series is not a reliable reference near
    `r -> 1` at large imaginary Mellin index; its observed artificial jaggedness
    and planned connection-formula repair are recorded in
-   `docs/todo.md`. Until that repair is complete, neither direct
+   `docs/dev/todo.md`. Until that repair is complete, neither direct
    fallback above `0.8` nor an interpolation table sampled from it should be
    interpreted as a high-accuracy result over the full FFTLog index range.
 2. **Constant-leg kernel decomposition.** Implemented. Replace upper-level equality checks

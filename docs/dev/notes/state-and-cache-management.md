@@ -336,7 +336,7 @@ tables, `RegularMellinMatrix`, and `LowRankRegularMellinMatrix`.
    grid signature from its physical-weight token before adding projector-owned
    caches.
 8. After behavior is stable, consolidate cache and state-change logging as
-   recorded in `docs/todo.md`.
+   recorded in `docs/dev/todo.md`.
 
 Every step must test both correctness after mutation and preservation of
 unaffected cache object identities or build counts. In particular, tests must

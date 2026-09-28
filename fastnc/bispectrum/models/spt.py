@@ -401,7 +401,7 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
     b1, b2, bK2 : float or callable, optional
         Eulerian galaxy-bias parameters.  A callable is evaluated as
         ``bias(z)``.  The convention is the same as
-        :class:`SPTGalaxyBispectrumMultipole3D` in the semi-analytic module.
+        :class:`SPTGalaxyBispectrum3D`.
     support : Support3D, optional
         Domain advertised to generic fastnc projection/interpolation machinery.
         If omitted, an unbounded support with policy ``"ignore"`` is used.

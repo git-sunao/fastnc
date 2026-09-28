@@ -2,7 +2,7 @@
 
 Status: Development note; non-normative.
 
-Authoritative design: `docs/design/architecture.md`.
+Authoritative design: `docs/dev/design/architecture.md`.
 
 Purpose: Preserve detailed reasoning, migration history, alternatives, test
 plans, and implementation context for future development. If this note
@@ -262,7 +262,7 @@ valuable.
 > **Design update:** the examples in this section describe the currently
 > implemented `LOSProjector`, which combines physical projection and LOS
 > discretization. The canonical target design is now documented in
-> `docs/design/architecture.md` and `docs/notes/state-and-cache-management.md`:
+> `docs/dev/design/architecture.md` and `docs/dev/notes/state-and-cache-management.md`:
 > `LOSProjector` consistently owns both projection physics and its immutable
 > LOS grid. Projected representations retain the configured projector, while
 > representation-specific route calculators choose whether projection occurs

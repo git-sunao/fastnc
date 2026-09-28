@@ -3,7 +3,7 @@
 Status: Normative numerical and implementation contract.
 
 Detailed derivations, experiments, and rejected alternatives are retained in
-`docs/notes/slepian-performance.md`. Human-oriented notebooks and the TeX/PDF
+`docs/dev/notes/slepian-performance.md`. Human-oriented notebooks and the TeX/PDF
 report are local under `dev/slepian/`.
 
 ## Scope

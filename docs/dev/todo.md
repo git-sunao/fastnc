@@ -1,8 +1,8 @@
 # fastnc development TODO
 
 Status: Tracked deferred work. These items are not normative architecture;
-accepted contracts belong in `docs/design/` and supporting evidence belongs in
-`docs/notes/`.
+accepted contracts belong in `docs/dev/design/` and supporting evidence belongs in
+`docs/dev/notes/`.
 
 This file records deferred work that is specific enough to affect future
 implementation decisions. It is not a general wishlist. Keep completed items
@@ -146,7 +146,7 @@ For each selected function, state as applicable:
   one stage of a longer contraction.
 
 Keep the equations local and concise. Long derivations, experiment history,
-and benchmark plots belong in `docs/notes/` or development notebooks, while
+and benchmark plots belong in `docs/dev/notes/` or development notebooks, while
 the docstring should contain enough notation to understand the implementation
 without reverse-engineering the function body.
 

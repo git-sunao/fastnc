@@ -4,7 +4,7 @@ Status: Normative design contract.
 
 This document records the current package boundaries and public calculation
 model. Detailed reasoning, migration history, and rejected alternatives are in
-`docs/notes/bispectrum-refactor.md`.
+`docs/dev/notes/bispectrum-refactor.md`.
 
 ## Coordinates and domain objects
 

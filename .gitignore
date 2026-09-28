@@ -4,6 +4,8 @@ fastnc/cache/
 .DS_Store
 .vscode/
 dev/
+!docs/dev/
+!docs/dev/**
 archived/
 legacy/
 

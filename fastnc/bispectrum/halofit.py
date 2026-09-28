@@ -503,11 +503,11 @@ class Halofit:
     ):
         """Safely evaluate the cyclic ``F2`` weighted sum.
 
-        This returns
+        This returns::
 
             2 F2(k1,k2) X1 X2
-          + 2 F2(k2,k3) X2 X3
-          + 2 F2(k3,k1) X3 X1
+            + 2 F2(k2,k3) X2 X3
+            + 2 F2(k3,k1) X3 X1
 
         but switches to the squeezed-limit expression when
         ``q/k < eps_sq`` with ``q=min(k1,k2,k3)``.  The switch avoids

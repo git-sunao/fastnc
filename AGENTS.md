@@ -47,7 +47,7 @@ These rules apply to all future development in this repository.
    development notebooks there. The entire `dev/` tree is local working state
    and must remain excluded from Git because notebooks, figures, data, and
    helper scripts change frequently. Preserve durable design decisions in
-   `docs/design/`; promote reusable code and regression coverage into
+   `docs/dev/design/`; promote reusable code and regression coverage into
    `fastnc/` and `tests/` rather than tracking selected files from `dev/`.
 
 Changes limited to documentation, tests, notebooks, Git configuration, or
@@ -56,7 +56,7 @@ new validation notebook.
 
 ## Docstrings
 
-Follow [`docs/docstring.md`](docs/docstring.md) when adding or modifying Python
+Follow [`docs/dev/docstring.md`](docs/dev/docstring.md) when adding or modifying Python
 docstrings.
 
 ## Development environment
@@ -68,28 +68,28 @@ directly so execution does not depend on shell activation.
 ## Architecture
 
 Before modifying bispectrum, projection, route, multipole, interpolation, LOS,
-or Grid code, read `docs/design/architecture.md` and follow its normative
-contracts. Read `docs/notes/bispectrum-refactor.md` when the task requires
+or Grid code, read `docs/dev/design/architecture.md` and follow its normative
+contracts. Read `docs/dev/notes/bispectrum-refactor.md` when the task requires
 historical reasoning, migration context, rejected alternatives, or detailed
 test plans.
 
 Before modifying the Slepian route, Weber evaluation, constant-leg kernels, or
-Mellin contractions, also read `docs/design/slepian.md`.
+Mellin contractions, also read `docs/dev/design/slepian.md`.
 Follow its staged implementation order and preserve every established slower
 method as a selectable benchmark for the next optimization. In particular, do
 not combine Weber interpolation, full `F_ab` construction, and low-rank
 compression in one implementation step.
 
-Read `docs/notes/slepian-performance.md` when detailed derivations, experiment
+Read `docs/dev/notes/slepian-performance.md` when detailed derivations, experiment
 history, or benchmark interpretation are needed. Notes are non-normative; when
-they conflict with `docs/design/`, the design document wins.
+they conflict with `docs/dev/design/`, the design document wins.
 
-Before planning or starting new implementation work, read `docs/todo.md` and
+Before planning or starting new implementation work, read `docs/dev/todo.md` and
 check whether the change resolves, depends on,
 or must preserve a recorded deferred issue. Update the TODO when new evidence
 changes the scope or acceptance criteria of an item.
 
-Treat `docs/design/` as the authoritative source for this refactor; do not
+Treat `docs/dev/design/` as the authoritative source for this refactor; do not
 duplicate its detailed design in `AGENTS.md`. If an implementation requires a
 change to an agreed architectural decision, update the relevant design
 document first and explain the proposed change to the maintainer before

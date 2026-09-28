@@ -94,7 +94,7 @@ class PowerLawFFTLogConfig:
     on the logarithmic input interval.  This is a lightweight interface for
     power-law decompositions used outside Hankel transforms, e.g. analytic
     angular kernels for bispectrum multipoles.  Internally this delegates to
-    :class:`fastnc.hankel.fftlog.fftlog`, so the 1D FFTLog convention is shared
+    ``fastnc.hankel.fftlog.fftlog``, so the 1D FFTLog convention is shared
     with the Hankel-transform machinery.
     """
 
