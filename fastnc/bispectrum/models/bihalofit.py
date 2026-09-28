@@ -1,7 +1,6 @@
 """Direct 3D BiHalofit term aggregate."""
 from __future__ import annotations
 
-from functools import partial
 from typing import Mapping
 
 import numpy as np
@@ -17,6 +16,27 @@ from fastnc.utils.cosmology import (
     simple_debug_pklin,
     simple_linear_growth,
 )
+
+_BH3_PAIR_LAYOUTS = {
+    "12": (0, 1, 2),
+    "23": (1, 2, 0),
+    "31": (2, 0, 1),
+}
+
+
+def _bh3_primitive_specs():
+    """Return labels and Fourier/radial powers for exact Bh3 primitives."""
+    specs = []
+    for pair in _BH3_PAIR_LAYOUTS:
+        specs.append((pair, "m+0", 0, 0, 12.0 / 7.0, False))
+        for mode in (-1, 1):
+            specs.append((pair, f"m{mode:+d}:r+1", mode, 1, 0.5, False))
+            specs.append((pair, f"m{mode:+d}:r-1", mode, -1, 0.5, False))
+        for mode in (-2, 2):
+            specs.append((pair, f"m{mode:+d}", mode, 0, 1.0 / 7.0, False))
+        specs.append((pair, "extra:m+0", 0, 0, 2.0, True))
+    return tuple(specs)
+
 
 class BiHalofitBispectrum3D(Bispectrum3D):
     """Wrapper for the bundled :class:`Halofit` / Bihalofit model.
@@ -37,16 +57,39 @@ class BiHalofitBispectrum3D(Bispectrum3D):
         self.halofit = halofit or Halofit()
         self._support_policy = support_policy
         self._user_support = support is not None
-        terms = tuple(
+        terms = [
             BispectrumTerm3D(
-                name=f"bihalofit:{name}",
+                name="bihalofit:Bh1",
+                representations=(NumericExpression3D(self._evaluate_bh1),),
+            )
+        ]
+        terms.extend(
+            BispectrumTerm3D(
+                name=f"bihalofit:Bh3:{pair}:{label}",
                 representations=(
-                    NumericExpression3D(partial(self._evaluate_term, name)),
+                    NumericExpression3D(
+                        self._make_bh3_primitive_evaluator(
+                            pair,
+                            mode=mode,
+                            ratio_power=ratio_power,
+                            coefficient=coefficient,
+                            extra=extra,
+                        )
+                    ),
                 ),
             )
-            for name in ("Bh1", "Bh3")
+            for pair, label, mode, ratio_power, coefficient, extra
+            in _bh3_primitive_specs()
         )
-        super().__init__(terms, support=support or Support3D(policy=support_policy))
+        terms.append(
+            BispectrumTerm3D(
+                name="bihalofit:Bh3:squeezed-correction",
+                representations=(
+                    NumericExpression3D(self._evaluate_bh3_squeezed_correction),
+                ),
+            )
+        )
+        super().__init__(tuple(terms), support=support or Support3D(policy=support_policy))
 
     @property
     def ready(self) -> bool:
@@ -186,7 +229,7 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             support_policy=support_policy,
         )
 
-    def _evaluate_term(self, name, k1, k2, k3, z, **params):
+    def _validate_evaluation(self, params):
         if not self.ready:
             raise RuntimeError(
                 "BiHalofitBispectrum3D is not configured. "
@@ -198,4 +241,115 @@ class BiHalofitBispectrum3D(Bispectrum3D):
                 "select BiHalofit components with select_terms() instead of "
                 "the legacy which parameter"
             )
-        return self.halofit.get_bihalofit(k1, k2, k3, z, which=name, **params)
+
+    def _evaluate_bh1(self, k1, k2, k3, z, **params):
+        self._validate_evaluation(params)
+        return self.halofit.get_bihalofit(
+            k1, k2, k3, z, which="Bh1", **params
+        )
+
+    def _bh3_radial_values(self, k1, k2, k3, z):
+        self.halofit.update()
+        k1, k2, k3, z = np.broadcast_arrays(
+            np.asarray(k1, dtype=float),
+            np.asarray(k2, dtype=float),
+            np.asarray(k3, dtype=float),
+            np.asarray(z, dtype=float),
+        )
+        kmin, kmid, kmax = np.sort(np.stack((k1, k2, k3)), axis=0)
+        physical, _ = self.halofit._clip_triangle_boundary(kmin, kmid, kmax)
+        coefficients = self.halofit.get_bihalofit_coeffs(z)
+        q_floor = 1.0e-100
+        q = tuple(
+            np.maximum(k * coefficients["r_sigma"], q_floor)
+            for k in (k1, k2, k3)
+        )
+        linear_power = tuple(
+            self.halofit.get_interpolated_pklin(k, z) for k in (k1, k2, k3)
+        )
+        effective_power = tuple(
+            (
+                (1.0 + coefficients["fn"] * qi**2)
+                / (
+                    1.0
+                    + coefficients["gn"] * qi
+                    + coefficients["hn"] * qi**2
+                )
+                * power
+                + 1.0
+                / (
+                    coefficients["mn"] * qi ** coefficients["mun"]
+                    + coefficients["nn"] * qi ** coefficients["nun"]
+                )
+                / (1.0 + (coefficients["pn"] * qi) ** -3)
+            )
+            for qi, power in zip(q, linear_power)
+        )
+        damping = tuple(1.0 / (1.0 + coefficients["en"] * qi) for qi in q)
+        radial = tuple(di * ei for di, ei in zip(damping, effective_power))
+        return (k1, k2, k3), q, damping, radial, coefficients, physical
+
+    def _make_bh3_primitive_evaluator(
+        self,
+        pair,
+        *,
+        mode,
+        ratio_power,
+        coefficient,
+        extra,
+    ):
+        left, right, opposite = _BH3_PAIR_LAYOUTS[pair]
+
+        def evaluate(k1, k2, k3, z, **params):
+            self._validate_evaluation(params)
+            k, q, damping, radial, fit, physical = self._bh3_radial_values(
+                k1, k2, k3, z
+            )
+            value = radial[left] * radial[right] * damping[opposite]
+            if extra:
+                value = value * fit["dn"] * q[opposite]
+            elif ratio_power == 1:
+                value = value * k[left] / k[right]
+            elif ratio_power == -1:
+                value = value * k[right] / k[left]
+            if mode:
+                cosine = (
+                    k[opposite] ** 2 - k[left] ** 2 - k[right] ** 2
+                ) / (2.0 * k[left] * k[right])
+                angle = np.arccos(np.clip(cosine, -1.0, 1.0))
+                value = value * np.exp(1j * mode * angle)
+            value = coefficient * value
+            return np.where(physical, value, np.nan)
+
+        return evaluate
+
+    def _evaluate_bh3_squeezed_correction(self, k1, k2, k3, z, **params):
+        """Return the grouped squeezed-limit correction to direct primitives."""
+        self._validate_evaluation(params)
+        params = dict(params)
+        squeezed_safe = bool(params.pop("squeezed_safe", True))
+        if not squeezed_safe:
+            shape = np.broadcast_shapes(
+                np.shape(k1), np.shape(k2), np.shape(k3), np.shape(z)
+            )
+            return np.zeros(shape, dtype=float)
+        safe = self.halofit.get_bihalofit(
+            k1, k2, k3, z, which="Bh3", squeezed_safe=True, **params
+        )
+        direct = self.halofit.get_bihalofit(
+            k1, k2, k3, z, which="Bh3", squeezed_safe=False, **params
+        )
+        return safe - direct
+
+    def select_terms(self, *names: str):
+        expanded = []
+        for name in names:
+            if name == "bihalofit:Bh3":
+                expanded.extend(
+                    term.name
+                    for term in self.terms
+                    if term.name.startswith("bihalofit:Bh3:")
+                )
+            else:
+                expanded.append(name)
+        return super().select_terms(*expanded)

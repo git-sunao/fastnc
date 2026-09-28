@@ -293,6 +293,67 @@ class MigratedPhysicalModelTests(unittest.TestCase):
             rtol=1.0e-13,
         )
 
+    def test_bihalofit_bh3_primitives_preserve_grouped_numeric_result(self):
+        model = BiHalofitBispectrum3D.simple_debug(
+            k=np.logspace(-5, 2, 256),
+            z=np.linspace(0.0, 1.0, 32),
+        )
+        triangles = np.array(
+            [
+                [0.2, 0.2, 0.2],
+                [0.1, 0.15, 0.2],
+                [0.1, 0.1, 0.199999],
+                [1.0e-3, 0.5, 0.5005],
+                [1.0e-5, 0.5, 0.500005],
+            ]
+        )
+        redshift = np.full(triangles.shape[0], 0.5)
+        primitive_names = [
+            term.name
+            for term in model.terms
+            if term.name.startswith("bihalofit:Bh3:")
+            and term.name != "bihalofit:Bh3:squeezed-correction"
+        ]
+        self.assertEqual(len(primitive_names), 24)
+
+        actual = model.select_terms("bihalofit:Bh3")(
+            triangles[:, 0], triangles[:, 1], triangles[:, 2], redshift
+        )
+        expected = model.halofit.get_bihalofit(
+            triangles[:, 0],
+            triangles[:, 1],
+            triangles[:, 2],
+            redshift,
+            which="Bh3",
+        )
+        np.testing.assert_allclose(actual.real, expected, rtol=5.0e-11)
+        np.testing.assert_allclose(actual.imag, 0.0, atol=2.0e-8)
+
+        correction = model.select_terms(
+            "bihalofit:Bh3:squeezed-correction"
+        )(
+            triangles[:, 0], triangles[:, 1], triangles[:, 2], redshift
+        )
+        np.testing.assert_allclose(correction[:-1], 0.0, atol=0.0)
+        self.assertNotEqual(correction[-1], 0.0)
+
+        direct = model.select_terms("bihalofit:Bh3")(
+            triangles[:, 0],
+            triangles[:, 1],
+            triangles[:, 2],
+            redshift,
+            squeezed_safe=False,
+        )
+        expected_direct = model.halofit.get_bihalofit(
+            triangles[:, 0],
+            triangles[:, 1],
+            triangles[:, 2],
+            redshift,
+            which="Bh3",
+            squeezed_safe=False,
+        )
+        np.testing.assert_allclose(direct.real, expected_direct, rtol=5.0e-11)
+
 
 if __name__ == "__main__":
     unittest.main()
