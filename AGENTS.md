@@ -47,7 +47,7 @@ These rules apply to all future development in this repository.
    development notebooks there. The entire `dev/` tree is local working state
    and must remain excluded from Git because notebooks, figures, data, and
    helper scripts change frequently. Preserve durable design decisions in
-   `docs/dev/design/`; promote reusable code and regression coverage into
+   `dev/markdown-note/design/`; promote reusable code and regression coverage into
    `fastnc/` and `tests/` rather than tracking selected files from `dev/`.
 
 Changes limited to documentation, tests, notebooks, Git configuration, or
@@ -56,7 +56,7 @@ new validation notebook.
 
 ## Docstrings
 
-Follow [`docs/dev/docstring.md`](docs/dev/docstring.md) when adding or modifying Python
+Follow [`dev/markdown-note/docstring.md`](dev/markdown-note/docstring.md) when adding or modifying Python
 docstrings.
 
 ## Development environment
@@ -68,33 +68,33 @@ directly so execution does not depend on shell activation.
 ## Architecture
 
 Before modifying bispectrum, projection, route, multipole, interpolation, LOS,
-or Grid code, read `docs/dev/design/architecture.md` and follow its normative
-contracts. Read `docs/dev/notes/bispectrum-refactor.md` when the task requires
+or Grid code, read `dev/markdown-note/design/architecture.md` and follow its normative
+contracts. Read `dev/markdown-note/notes/bispectrum-refactor.md` when the task requires
 historical reasoning, migration context, rejected alternatives, or detailed
 test plans.
 
 Before modifying the Slepian route, Weber evaluation, constant-leg kernels, or
-Mellin contractions, also read `docs/dev/design/slepian.md`.
+Mellin contractions, also read `dev/markdown-note/design/slepian.md`.
 Follow its staged implementation order and preserve every established slower
 method as a selectable benchmark for the next optimization. In particular, do
 not combine Weber interpolation, full `F_ab` construction, and low-rank
 compression in one implementation step.
 
-Read `docs/dev/notes/slepian-performance.md` when detailed derivations, experiment
+Read `dev/markdown-note/notes/slepian-performance.md` when detailed derivations, experiment
 history, or benchmark interpretation are needed. Notes are non-normative; when
-they conflict with `docs/dev/design/`, the design document wins.
+they conflict with `dev/markdown-note/design/`, the design document wins.
 
 Before changing the BiHalofit model or adding its structured representations,
-read `docs/dev/notes/bihalofit-structured-routes.md`. Preserve the distinction
+read `dev/markdown-note/notes/bihalofit-structured-routes.md`. Preserve the distinction
 between exact Bh1 and an explicitly approximate fixed-shape Bh1 model, and
 retain stable grouped evaluation of squeezed cyclic Bh3 contributions.
 
-Before planning or starting new implementation work, read `docs/dev/todo.md` and
+Before planning or starting new implementation work, read `dev/markdown-note/todo.md` and
 check whether the change resolves, depends on,
 or must preserve a recorded deferred issue. Update the TODO when new evidence
 changes the scope or acceptance criteria of an item.
 
-Treat `docs/dev/design/` as the authoritative source for this refactor; do not
+Treat `dev/markdown-note/design/` as the authoritative source for this refactor; do not
 duplicate its detailed design in `AGENTS.md`. If an implementation requires a
 change to an agreed architectural decision, update the relevant design
 document first and explain the proposed change to the maintainer before
