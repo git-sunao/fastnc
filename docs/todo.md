@@ -201,7 +201,7 @@ The documentation build must:
 
 ## Physical models and representation coverage
 
-**Status:** Started with the native-2D tree-level SPT `F2` reference. Numeric
+**Status:** Started with the projected 3D tree-level SPT `F2` model. Numeric
 representations exist broadly; Slepian and semi-analytic coverage remains
 model- and term-dependent.
 
@@ -219,11 +219,13 @@ cover their complete finite harmonic content `m=0,+/-1,+/-2`; pair `23` is
 explicitly excluded because it would make physical leg 1 constant. Continue
 with the hybrid fallback for pair `23`, then one-halo terms and fitted models.
 
-The same finite decomposition is attached to the maintained 3D matter and
-galaxy SPT models. Galaxy quadratic-bias and tidal-bias terms for pairs 12 and
-31 are covered as well. The remaining SPT work is therefore hybrid assembly
-of the numeric-only pair-23 terms and physical finite-width LOS validation,
-not additional constant-leg representations for these models.
+The finite decomposition is attached directly to the maintained 3D matter
+and galaxy SPT models. A separate 2D SPT model accepting `C_ell` is not part of
+the physical-model API: users obtain the angular bispectrum by projecting the
+3D model. Galaxy quadratic-bias and tidal-bias terms for pairs 12 and 31 are
+covered as well. The remaining SPT work is therefore physical finite-width
+LOS validation and semi-analytic coverage, not additional constant-leg
+representations for these models.
 
 ## Physical LOS benchmarks for the Slepian route
 

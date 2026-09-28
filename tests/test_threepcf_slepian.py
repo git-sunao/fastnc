@@ -17,8 +17,6 @@ from fastnc.bispectrum import (
     SlepianRadialFactor3D,
     SlepianRepresentation2D,
     SlepianRepresentation3D,
-    SPTMatterF2Bispectrum2D,
-    SPTMatterF2Mu2Bispectrum2D,
     SPTMatterBispectrum3D,
 )
 from fastnc.projection import LOSProjector
@@ -88,78 +86,6 @@ class SlepianRouteTests(unittest.TestCase):
             np.linspace(0.0, np.pi, 4),
             route="slepian",
         )
-
-    def test_spt_f2_mu2_term_matches_numeric_route(self):
-        def angular_power(ell):
-            ell = np.asarray(ell, dtype=float)
-            return ell**2 * np.exp(-5.0e-4 * ell**2)
-
-        config = ThreePCFConfig(
-            kmax=3,
-            Lmax=8,
-            ell_min=1.0e-3,
-            ell_max=500.0,
-            n_ell=64,
-            use_coupling_cache=False,
-            multipole=NumericMultipoleConfig(
-                n_angle=257,
-                delta_beta_min=0.0,
-                delta_beta_max=np.pi,
-            ),
-            slepian=SlepianConfig(taper_fraction=0.1, regular_n_ratio=48),
-        )
-        bispectrum = SPTMatterF2Mu2Bispectrum2D(angular_power)
-        theta = np.geomspace(3.0e-3, 2.0e-2, 4)
-        phi = np.linspace(0.2, 2.8, 5)
-        tables = {
-            route: ThreePCF(
-                config, bispectrum, theta=theta, phi=phi, route=route
-            ).zetak()
-            for route in ("numeric", "slepian")
-        }
-
-        for mode in range(-3, 4):
-            numeric = tables["numeric"].get_for_mode((1, 1, 1), mode)
-            slepian = tables["slepian"].get_for_mode((1, 1, 1), mode)
-            scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
-            self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 2.0e-3)
-
-    def test_full_spt_f2_supported_pairs_match_numeric_route(self):
-        def angular_power(ell):
-            ell = np.asarray(ell, dtype=float)
-            return ell**2 * np.exp(-5.0e-4 * ell**2)
-
-        config = ThreePCFConfig(
-            kmax=2,
-            Lmax=6,
-            ell_min=1.0e-3,
-            ell_max=500.0,
-            n_ell=64,
-            use_coupling_cache=False,
-            multipole=NumericMultipoleConfig(
-                n_angle=257,
-                delta_beta_min=0.0,
-                delta_beta_max=np.pi,
-            ),
-            slepian=SlepianConfig(bias=-1.0, regular_n_ratio=32),
-        )
-        bispectrum = SPTMatterF2Bispectrum2D(angular_power)
-        theta = np.geomspace(3.0e-3, 2.0e-2, 3)
-        tables = {
-            route: ThreePCF(
-                config,
-                bispectrum,
-                theta=theta,
-                phi=np.linspace(0.2, 2.8, 5),
-                route=route,
-            ).zetak()
-            for route in ("numeric", "slepian")
-        }
-        for mode in range(-2, 3):
-            numeric = tables["numeric"].get_for_mode((1, 1, 1), mode)
-            slepian = tables["slepian"].get_for_mode((1, 1, 1), mode)
-            scale = max(np.max(np.abs(numeric)), np.max(np.abs(slepian)))
-            self.assertLess(np.max(np.abs(numeric - slepian)) / scale, 4.0e-3)
 
     def test_projected_spt_matter_supported_terms_match_numeric_route(self):
         chi = 1000.0

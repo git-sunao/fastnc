@@ -9,17 +9,15 @@ from typing import Callable, Mapping
 
 import numpy as np
 
-from ..bispectrum import Bispectrum2D, Bispectrum3D
+from ..bispectrum import Bispectrum3D
 from ..representations import (
-    NumericExpression2D,
     NumericExpression3D,
     SlepianExpression2D,
     SlepianExpression3D,
-    SlepianRadialFactor2D,
     SlepianRadialFactor3D,
 )
-from ..support import Support2D, Support3D
-from ..terms import BispectrumTerm2D, BispectrumTerm3D, WeightedTerm3D
+from ..support import Support3D
+from ..terms import BispectrumTerm3D, WeightedTerm3D
 from fastnc.utils.cosmology import (
     default_wmap_like_cosmology,
     eisenstein_hu_like_pklin,
@@ -213,190 +211,6 @@ def _pair_terms_3d(owner, pair, kind):
         )
         for mode, left_power, right_power, coefficient, suffix in specifications
     )
-
-
-class SPTMatterF2Bispectrum2D(Bispectrum2D):
-    r"""Slepian-compatible cyclic pairs of the tree-level SPT bispectrum.
-
-    For each requested pair ``ij`` this model decomposes
-
-    .. math::
-
-        2F_2(\boldsymbol\ell_i,\boldsymbol\ell_j)P_iP_j
-
-    into the finite Fourier harmonics :math:`m=0,\pm1,\pm2`. The
-    :math:`m=\pm1` coefficient is represented as the sum of the two
-    separable radial products
-
-    .. math::
-
-        \frac{1}{2}\left[
-        \ell_iP_i\frac{P_j}{\ell_j}
-        + \frac{P_i}{\ell_i}\ell_jP_j
-        \right]e^{\pm i(\varphi_i-\varphi_j)}.
-
-    Only pairs ``12`` and ``13`` are supported: their constant legs are 3
-    and 2, respectively. Pair ``23`` would eliminate physical leg 1 and is
-    therefore incompatible with the ZetaK angular convention.
-    """
-
-    _PAIR_LAYOUTS = {
-        "12": ((0, 1), 2),
-        "13": ((0, 2), 1),
-    }
-
-    def __init__(
-        self,
-        angular_power: Callable,
-        support: Support2D | None = None,
-        *,
-        pairs=("12", "13"),
-        harmonics=(0, 1, 2),
-    ):
-        if not callable(angular_power):
-            raise TypeError("angular_power must be callable as angular_power(ell)")
-        pairs = tuple(str(pair) for pair in pairs)
-        harmonics = tuple(sorted({abs(int(mode)) for mode in harmonics}))
-        unsupported_pairs = set(pairs) - self._PAIR_LAYOUTS.keys()
-        if unsupported_pairs:
-            raise ValueError("Slepian-compatible pairs are '12' and '13'")
-        if not pairs:
-            raise ValueError("pairs must not be empty")
-        if not harmonics or set(harmonics) - {0, 1, 2}:
-            raise ValueError("harmonics must select from 0, 1, and 2")
-        self.angular_power = angular_power
-        self.pairs = pairs
-        self.harmonics = harmonics
-        terms = []
-        for pair in pairs:
-            if 0 in harmonics:
-                terms.append(self._component_term(pair, 0, 0, 0, 12.0 / 7.0))
-            if 1 in harmonics:
-                for mode in (-1, 1):
-                    terms.append(self._component_term(pair, mode, 1, -1, 0.5))
-                    terms.append(self._component_term(pair, mode, -1, 1, 0.5))
-            if 2 in harmonics:
-                for mode in (-2, 2):
-                    terms.append(self._component_term(pair, mode, 0, 0, 1.0 / 7.0))
-        super().__init__(tuple(terms), support=support)
-
-    def _power(self, ell, ell_power=0):
-        ell = np.asarray(ell, dtype=float)
-        values = np.asarray(self.angular_power(ell))
-        if values.shape != ell.shape:
-            values = np.broadcast_to(values, ell.shape)
-        if ell_power == 0:
-            return values
-        if ell_power > 0:
-            return values * ell**ell_power
-        result = np.zeros(np.broadcast_shapes(values.shape, ell.shape), dtype=values.dtype)
-        return np.divide(values, ell ** (-ell_power), out=result, where=ell != 0.0)
-
-    @staticmethod
-    def _phase(ell_left, ell_right, ell_opposite, mode):
-        mu = np.nan_to_num(
-            _pair_cosine(ell_left, ell_right, ell_opposite),
-            nan=0.0,
-            posinf=1.0,
-            neginf=-1.0,
-        )
-        return np.exp(1j * mode * np.arccos(np.clip(mu, -1.0, 1.0)))
-
-    def _component_term(
-        self,
-        pair: str,
-        mode: int,
-        left_power: int,
-        right_power: int,
-        coefficient: float,
-    ) -> BispectrumTerm2D:
-        (left, right), constant = self._PAIR_LAYOUTS[pair]
-        powers = (left_power, right_power)
-
-        def factor(index):
-            radial_power = powers[index]
-            return SlepianRadialFactor2D(
-                lambda ell, _power=radial_power: self._power(ell, _power)
-            )
-
-        radial_factors = [None, None, None]
-        radial_factors[left] = factor(0)
-        radial_factors[right] = factor(1)
-        radial_factors[constant] = SlepianRadialFactor2D.constant()
-        angular_orders = [0, 0, 0]
-        angular_orders[left] = mode
-        angular_orders[right] = -mode
-
-        def numeric(ell1, ell2, ell3):
-            ell = (ell1, ell2, ell3)
-            return (
-                coefficient
-                * self._power(ell[left], left_power)
-                * self._power(ell[right], right_power)
-                * self._phase(ell[left], ell[right], ell[constant], mode)
-            )
-
-        branch = "" if mode == 0 or abs(mode) == 2 else f":r{left_power:+d}"
-        return BispectrumTerm2D(
-            name=f"tree:F2:{pair}:m{mode:+d}{branch}",
-            representations=(
-                NumericExpression2D(numeric),
-                SlepianExpression2D(
-                    coefficient=coefficient,
-                    radial_factors=tuple(radial_factors),
-                    angular_orders=tuple(angular_orders),
-                ),
-            ),
-        )
-
-    def update_physics(self, *, angular_power: Callable):
-        """Replace the angular power-spectrum evaluator in-place."""
-        if not callable(angular_power):
-            raise TypeError("angular_power must be callable as angular_power(ell)")
-        self.angular_power = angular_power
-        self._state_updated()
-        return self
-
-
-class SPTMatterF2Mu2Bispectrum2D(SPTMatterF2Bispectrum2D):
-    r"""Even angular harmonic of the tree-level SPT pair ``(1, 2)``.
-
-    This model retains the :math:`m=\pm2` contribution generated by the
-    :math:`\mu_{12}^2` part of :math:`2F_2 P_1P_2`,
-
-    .. math::
-
-        B_{12}^{|m|=2}
-        = \frac{2}{7}\cos(2\varphi_{12})P(\ell_1)P(\ell_2)
-        = \sum_{m=\pm2}\frac{1}{7}
-          P(\ell_1)P(\ell_2)e^{im(\varphi_1-\varphi_2)}.
-
-    Each Fourier component is one additive bispectrum term carrying both a
-    direct numeric expression and a separable Slepian expression. Leg 3 is
-    constant, as required when the Slepian route preserves the opening-angle
-    multipoles opposite leg 1. The remaining constant and odd :math:`m=\pm1` parts of
-    the full F2 pair are intentionally outside this model.
-
-    Parameters
-    ----------
-    angular_power : callable
-        Callable ``angular_power(ell)`` returning the fixed-redshift angular
-        power spectrum with NumPy broadcasting support.
-    support : Support2D, optional
-        Domain advertised to interpolation and route machinery.
-    """
-
-    def __init__(
-        self,
-        angular_power: Callable,
-        support: Support2D | None = None,
-    ):
-        super().__init__(
-            angular_power,
-            support=support,
-            pairs=("12",),
-            harmonics=(2,),
-        )
 
 
 class SPTMatterBispectrum3D(Bispectrum3D):

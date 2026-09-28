@@ -172,18 +172,17 @@ radial factors, angular orders, Bessel orders, Fourier mode, and target-theta
 axes while keeping leg 1 fixed. This is a restricted leg-2/leg-3 symmetry, not
 a full three-leg canonicalization.
 
-The maintained native-2D SPT reference follows this rule. For each supported
-pair `12` and `13`, `SPTMatterF2Bispectrum2D` decomposes
-`2 F2(ell_i, ell_j) P_i P_j` into the finite modes `m=0,+/-1,+/-2`.
-The `m=+/-1` coefficient is stored as two separable radial products,
-`ell_i P_i * P_j/ell_j` and `P_i/ell_i * ell_j P_j`; it must not be collapsed
-into a nonseparable term. Pair `23` has constant leg 1 and is deliberately not
-given a Slepian representation. A future hybrid calculation must obtain that
-cyclic contribution from the semi-analytic or numeric route.
+SPT is maintained as a three-dimensional physical model, not as a native-2D
+model parameterized by an angular power spectrum. At each LOS redshift,
+`k_i = ell_i / chi(z)`, so the ratios in the SPT kernel obey
+`k_i / k_j = ell_i / ell_j`. The finite Slepian decomposition can therefore
+be attached to the 3D terms and carried into their projected 2D
+representations without defining a separate 2D SPT model.
 
-The maintained 3D models use the same decomposition before LOS projection.
 `SPTMatterBispectrum3D` exposes all seven tree-level harmonic terms for each
-of pairs `12` and `31`. `SPTGalaxyBispectrum3D` additionally exposes the
+of pairs `12` and `31`. The `m=+/-1` coefficient is stored as two separable
+radial products and must not be collapsed into a nonseparable term.
+`SPTGalaxyBispectrum3D` additionally exposes the
 quadratic-bias `m=0` term and the tidal-bias `m=0,+/-2` terms for those pairs.
 Every such additive term carries both `NumericExpression3D` and
 `SlepianExpression3D`; the corresponding pair-23 tree, quadratic, and tidal

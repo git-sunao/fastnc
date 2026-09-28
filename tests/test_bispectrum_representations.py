@@ -15,8 +15,6 @@ from fastnc.bispectrum import (
     SlepianExpression3D,
     SlepianRadialFactor2D,
     SPTGalaxyBispectrum3D,
-    SPTMatterF2Mu2Bispectrum2D,
-    SPTMatterF2Bispectrum2D,
     SPTMatterBispectrum3D,
 )
 from fastnc.bispectrum.models.spt import _pair_cosine, f2_kernel, tidal_kernel
@@ -198,129 +196,6 @@ class SPTMatterTermTests(unittest.TestCase):
             4.0 * value_before,
         )
 
-
-class SPTMatterF2Mu2TermTests(unittest.TestCase):
-    @staticmethod
-    def angular_power(ell):
-        ell = np.asarray(ell, dtype=float)
-        return ell**-0.75 * np.exp(-(ell / 400.0) ** 2)
-
-    def test_numeric_components_sum_to_even_f2_harmonic(self):
-        model = SPTMatterF2Mu2Bispectrum2D(self.angular_power)
-        ell1 = np.array([20.0, 50.0, 100.0])
-        ell2 = np.array([35.0, 75.0, 120.0])
-        angle = np.array([0.3, 0.8, 1.4])
-        ell3 = np.sqrt(
-            ell1**2 + ell2**2 + 2.0 * ell1 * ell2 * np.cos(angle)
-        )
-        expected = (
-            2.0
-            / 7.0
-            * np.cos(2.0 * angle)
-            * self.angular_power(ell1)
-            * self.angular_power(ell2)
-        )
-        np.testing.assert_allclose(
-            model.evaluate_numeric(ell1, ell2, ell3),
-            expected,
-            rtol=2.0e-14,
-            atol=1.0e-18,
-        )
-
-    def test_components_expose_numeric_and_slepian_representations(self):
-        model = SPTMatterF2Mu2Bispectrum2D(self.angular_power)
-        self.assertEqual(
-            [term.name for term in model.terms],
-            ["tree:F2:12:m-2", "tree:F2:12:m+2"],
-        )
-        for term, mode in zip(model.terms, (-2, 2)):
-            numeric = term.get_representation(NumericExpression2D)
-            slepian = term.get_representation(SlepianExpression2D)
-            self.assertTrue(callable(numeric))
-            self.assertEqual(slepian.angular_orders, (mode, -mode, 0))
-            self.assertEqual(slepian.constant_legs, (2,))
-
-    def test_state_update_changes_existing_component_evaluators(self):
-        model = SPTMatterF2Mu2Bispectrum2D(self.angular_power)
-        selected = model.select_terms("tree:F2:12:m+2")
-        before = selected.evaluate_numeric(80.0, 50.0, 40.0)
-        token = selected.state_token
-        model.update_physics(
-            angular_power=lambda ell: 2.0 * self.angular_power(ell)
-        )
-        self.assertNotEqual(selected.state_token, token)
-        np.testing.assert_allclose(
-            selected.evaluate_numeric(80.0, 50.0, 40.0),
-            4.0 * before,
-        )
-
-
-class SPTMatterF2TermTests(unittest.TestCase):
-    @staticmethod
-    def angular_power(ell):
-        ell = np.asarray(ell, dtype=float)
-        return ell**2 * np.exp(-(ell / 400.0) ** 2)
-
-    def test_full_supported_pairs_match_direct_f2_expression(self):
-        model = SPTMatterF2Bispectrum2D(self.angular_power)
-        ell1 = np.array([20.0, 50.0, 100.0])
-        ell2 = np.array([35.0, 75.0, 120.0])
-        angle12 = np.array([0.3, 0.8, 1.4])
-        ell3 = np.sqrt(
-            ell1**2 + ell2**2 + 2.0 * ell1 * ell2 * np.cos(angle12)
-        )
-        mu12 = _pair_cosine(ell1, ell2, ell3)
-        mu13 = _pair_cosine(ell1, ell3, ell2)
-        expected = (
-            2.0
-            * f2_kernel(ell1, ell2, mu12)
-            * self.angular_power(ell1)
-            * self.angular_power(ell2)
-            + 2.0
-            * f2_kernel(ell1, ell3, mu13)
-            * self.angular_power(ell1)
-            * self.angular_power(ell3)
-        )
-        np.testing.assert_allclose(
-            model.evaluate_numeric(ell1, ell2, ell3),
-            expected,
-            rtol=2.0e-14,
-        )
-
-    def test_pair_thirteen_is_leg_exchange_of_pair_twelve(self):
-        pair12 = SPTMatterF2Bispectrum2D(
-            self.angular_power, pairs=("12",)
-        )
-        pair13 = SPTMatterF2Bispectrum2D(
-            self.angular_power, pairs=("13",)
-        )
-        value12 = pair12.evaluate_numeric(40.0, 55.0, 70.0)
-        value13 = pair13.evaluate_numeric(40.0, 70.0, 55.0)
-        np.testing.assert_allclose(value13, value12, rtol=2.0e-14)
-        self.assertEqual(
-            {
-                representation.constant_legs
-                for term in pair13.terms
-                for representation in term.representations
-                if isinstance(representation, SlepianExpression2D)
-            },
-            {(1,)},
-        )
-
-    def test_full_pair_has_finite_harmonic_decomposition(self):
-        model = SPTMatterF2Bispectrum2D(
-            self.angular_power, pairs=("12",)
-        )
-        self.assertEqual(len(model.terms), 7)
-        orders = [
-            term.get_representation(SlepianExpression2D).angular_orders
-            for term in model.terms
-        ]
-        self.assertEqual(orders.count((0, 0, 0)), 1)
-        self.assertEqual(orders.count((-1, 1, 0)), 2)
-        self.assertEqual(orders.count((1, -1, 0)), 2)
-        self.assertEqual(orders.count((-2, 2, 0)), 1)
-        self.assertEqual(orders.count((2, -2, 0)), 1)
 
 
 class MigratedPhysicalModelTests(unittest.TestCase):
