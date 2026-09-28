@@ -305,6 +305,8 @@ class MigratedPhysicalModelTests(unittest.TestCase):
                 [0.1, 0.1, 0.199999],
                 [1.0e-3, 0.5, 0.5005],
                 [1.0e-5, 0.5, 0.500005],
+                [4.995e-5, 0.5, 0.500024975],
+                [5.005e-5, 0.5, 0.500025025],
             ]
         )
         redshift = np.full(triangles.shape[0], 0.5)
@@ -312,7 +314,6 @@ class MigratedPhysicalModelTests(unittest.TestCase):
             term.name
             for term in model.terms
             if term.name.startswith("bihalofit:Bh3:")
-            and term.name != "bihalofit:Bh3:squeezed-correction"
         ]
         self.assertEqual(len(primitive_names), 24)
 
@@ -328,14 +329,6 @@ class MigratedPhysicalModelTests(unittest.TestCase):
         )
         np.testing.assert_allclose(actual.real, expected, rtol=5.0e-11)
         np.testing.assert_allclose(actual.imag, 0.0, atol=2.0e-8)
-
-        correction = model.select_terms(
-            "bihalofit:Bh3:squeezed-correction"
-        )(
-            triangles[:, 0], triangles[:, 1], triangles[:, 2], redshift
-        )
-        np.testing.assert_allclose(correction[:-1], 0.0, atol=0.0)
-        self.assertNotEqual(correction[-1], 0.0)
 
         direct = model.select_terms("bihalofit:Bh3")(
             triangles[:, 0],
@@ -353,6 +346,7 @@ class MigratedPhysicalModelTests(unittest.TestCase):
             squeezed_safe=False,
         )
         np.testing.assert_allclose(direct.real, expected_direct, rtol=5.0e-11)
+        np.testing.assert_allclose(expected, expected_direct, rtol=2.0e-14)
 
 
 if __name__ == "__main__":

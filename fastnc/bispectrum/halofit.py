@@ -501,7 +501,7 @@ class Halofit:
         dlnX_dlnk_func=None,
         eps_sq=1.0e-4,
     ):
-        """Safely evaluate the cyclic ``F2`` weighted sum.
+        """Evaluate the exact cyclic ``F2`` weighted sum stably.
 
         This returns::
 
@@ -509,11 +509,12 @@ class Halofit:
             + 2 F2(k2,k3) X2 X3
             + 2 F2(k3,k1) X3 X1
 
-        but switches to the squeezed-limit expression when
-        ``q/k < eps_sq`` with ``q=min(k1,k2,k3)``.  The switch avoids
-        direct evaluation of the individually divergent long-short ``F2``
-        terms.  It is not a regulator; it is a numerically stable evaluation
-        of the same leading squeezed limit.
+        For ``q/k < eps_sq`` with ``q=min(k1,k2,k3)``, the same exact cyclic
+        expression is accumulated in extended precision.  This avoids the
+        cancellation error of individually divergent long-short ``F2`` terms
+        without switching to a finite-order squeezed approximation.  The
+        ``dlnX_dlnk_func`` argument is retained for API compatibility and is
+        no longer used.
         """
         k1 = np.asarray(k1, dtype=float)
         k2 = np.asarray(k2, dtype=float)
@@ -562,27 +563,26 @@ class Halofit:
             )
 
         if np.any(squeezed):
-            qs = q[squeezed]
-            kas = ka[squeezed]
-            kbs = kb[squeezed]
-            kk = k[squeezed]
-            zs = z[squeezed]
-
-            mu2 = np.zeros_like(qs)
-            nonzero = qs > 0.0
-            mu2[nonzero] = ((kas[nonzero] - kbs[nonzero]) / qs[nonzero]) ** 2
-            mu2 = np.clip(mu2, 0.0, 1.0)
-
-            if dlnX_dlnk_func is None:
-                n = self.dln_pklin_dlnk(kk, zs)
-            else:
-                n = dlnX_dlnk_func(kk, zs)
-
-            Xq_safe = np.where(qs > 0.0, Xq[squeezed], 0.0)
-            out[squeezed] = Xk[squeezed] * Xq_safe * (
-                13.0 / 7.0
-                + (8.0 / 7.0 - n) * mu2
-            )
+            kd = [
+                np.asarray(values[squeezed], dtype=np.longdouble)
+                for values in (k1, k2, k3)
+            ]
+            xd = [
+                np.asarray(values[squeezed], dtype=np.longdouble)
+                for values in (X1, X2, X3)
+            ]
+            total = np.zeros_like(kd[0], dtype=np.longdouble)
+            for left, right, opposite in ((0, 1, 2), (1, 2, 0), (2, 0, 1)):
+                mu = (
+                    kd[opposite] ** 2 - kd[left] ** 2 - kd[right] ** 2
+                ) / (2.0 * kd[left] * kd[right])
+                twice_f2 = (
+                    10.0 / 7.0
+                    + mu * (kd[left] / kd[right] + kd[right] / kd[left])
+                    + 4.0 / 7.0 * mu**2
+                )
+                total += twice_f2 * xd[left] * xd[right]
+            out[squeezed] = np.asarray(total, dtype=float)
 
         return out
 

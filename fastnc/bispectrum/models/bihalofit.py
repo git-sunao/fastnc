@@ -81,14 +81,6 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             for pair, label, mode, ratio_power, coefficient, extra
             in _bh3_primitive_specs()
         )
-        terms.append(
-            BispectrumTerm3D(
-                name="bihalofit:Bh3:squeezed-correction",
-                representations=(
-                    NumericExpression3D(self._evaluate_bh3_squeezed_correction),
-                ),
-            )
-        )
         super().__init__(tuple(terms), support=support or Support3D(policy=support_policy))
 
     @property
@@ -322,24 +314,6 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             return np.where(physical, value, np.nan)
 
         return evaluate
-
-    def _evaluate_bh3_squeezed_correction(self, k1, k2, k3, z, **params):
-        """Return the grouped squeezed-limit correction to direct primitives."""
-        self._validate_evaluation(params)
-        params = dict(params)
-        squeezed_safe = bool(params.pop("squeezed_safe", True))
-        if not squeezed_safe:
-            shape = np.broadcast_shapes(
-                np.shape(k1), np.shape(k2), np.shape(k3), np.shape(z)
-            )
-            return np.zeros(shape, dtype=float)
-        safe = self.halofit.get_bihalofit(
-            k1, k2, k3, z, which="Bh3", squeezed_safe=True, **params
-        )
-        direct = self.halofit.get_bihalofit(
-            k1, k2, k3, z, which="Bh3", squeezed_safe=False, **params
-        )
-        return safe - direct
 
     def select_terms(self, *names: str):
         expanded = []

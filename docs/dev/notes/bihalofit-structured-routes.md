@@ -68,12 +68,11 @@ Thus `B_h3` has 24 exact primitive terms across three cyclic pairs. This is
 the same finite angular family as tree-level SPT, multiplied by a non-constant
 radial damping factor on the opposite leg.
 
-The bundled numeric model additionally uses one numeric-only
-`squeezed-correction` term. It is the grouped squeezed-safe cyclic F2 result
-minus the grouped direct-F2 result and vanishes outside the configured squeezed
-region. The 24 mathematical primitives plus this correction reproduce the
-legacy stable numeric convention without assigning a cancellation-dependent
-correction to an individual physical harmonic.
+The former implementation switched discontinuously to a leading squeezed
+approximation at `q/K=1e-4`. That switch differed from the direct expression by
+about 6.7% at the boundary. It has been removed. The grouped evaluator now
+accumulates the same exact cyclic expression in extended precision below the
+threshold, so no physical or numerical correction term is required.
 
 Mathematically this is Slepian-separable. It is not yet accepted by the current
 calculator because `_slepian_leg_layout` requires exactly leg 2 or leg 3 to be
@@ -134,7 +133,6 @@ The exact `BiHalofitBispectrum3D` should contain:
 ```text
 bihalofit:Bh1:exact
 bihalofit:Bh3:<pair>:<harmonic/radial label>
-bihalofit:Bh3:squeezed-correction
 ```
 
 `Bh1:exact` initially has only a numeric representation. Every primitive Bh3
