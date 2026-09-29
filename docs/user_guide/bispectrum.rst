@@ -32,6 +32,36 @@ Array inputs follow the broadcasting behavior of the underlying model. The
 wave-number arguments describe a closed Fourier triangle through side lengths;
 invalid-triangle handling is controlled by the model's support policy.
 
+BiHalofit Bh1 representations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``BiHalofitBispectrum3D`` always constructs both the exact numeric Bh1
+representation and a trained low-rank semi-analytic representation. The
+model-level configuration controls how the latter is constructed; it does not
+select a 3PCF route.
+
+.. code-block:: python
+
+   from fastnc.bispectrum import (
+       BiHalofitBh1SemiAnalyticConfig,
+       BiHalofitBispectrum3D,
+   )
+
+   bh1_config = BiHalofitBh1SemiAnalyticConfig(
+       rank=8,
+       trained_basis="broad-debug-v1",
+   )
+   b3d = BiHalofitBispectrum3D.simple_debug(
+       config_semi_analytic=bh1_config,
+   )
+
+Omitting ``config_semi_analytic`` uses its default value rather than disabling
+the representation. A downstream ``ThreePCF`` with the numeric route uses the
+exact representation. The hybrid route may select the semi-analytic
+representation. The ``broad-debug-v1`` basis is the current parameter-domain
+validation basis and the name is intentionally explicit about its training
+domain.
+
 Two-dimensional bispectra
 --------------------------
 

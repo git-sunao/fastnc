@@ -31,6 +31,7 @@ if __name__ == '__main__':
         author_email='sunaosugiyama@gmail.com',
         keywords=['cosmology', 'large scale structure', 'three-point correlation function'],
         packages=find_packages(),
+        package_data={"fastnc.bispectrum.models": ["data/*.npz"]},
         install_requires=get_requirements(),
         classifiers=['Programming Language :: Python :: 3'],
     )

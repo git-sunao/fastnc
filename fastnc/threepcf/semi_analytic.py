@@ -6,7 +6,11 @@ import logging
 
 import numpy as np
 
-from fastnc.bispectrum import Bispectrum2D, SemiAnalyticRadialExpression3D
+from fastnc.bispectrum import (
+    Bispectrum2D,
+    SemiAnalyticLowRankProductExpression3D,
+    SemiAnalyticRadialExpression3D,
+)
 from fastnc.hankel import PowerLawFFTLogConfig, power_law_fftlog_coefficients
 from fastnc.projection import ProjectedSemiAnalyticRepresentation2D
 
@@ -244,8 +248,73 @@ class SemiAnalyticCalculator:
             )
         return np.stack(values)
 
+    def _evaluate_low_rank_product(self, projected, modes, ell2, ell3):
+        r"""Evaluate ``prod_i sum_a A_a V_a(k_i,z)`` without exact Bh1 calls.
+
+        The trained shape amplitudes are source-independent and evaluated once
+        on the angular grid.  At every LOS node only the rank-many radial
+        profiles are updated.  This is the generic result-level realization
+        of a low-rank product representation; it does not contain any
+        BiHalofit-specific formula.
+        """
+        expression = projected.source_representation
+        projector = projected.projector
+        ell2, ell3 = np.broadcast_arrays(
+            np.asarray(ell2, dtype=float), np.asarray(ell3, dtype=float)
+        )
+        q2 = ell2 + projector.shift
+        q3 = ell3 + projector.shift
+        if np.any(q2 <= 0.0) or np.any(q3 <= 0.0):
+            raise ValueError("semi-analytic angular scales must be positive")
+
+        nphi = self.config.angular_nodes
+        phi = (np.arange(nphi, dtype=float) + 0.5) * (2.0 * np.pi / nphi)
+        angular_shape = (nphi,) + (1,) * ell2.ndim
+        cosine = np.cos(phi).reshape(angular_shape)
+        q1 = np.sqrt(
+            q2[None, ...] ** 2
+            + q3[None, ...] ** 2
+            + 2.0 * q2[None, ...] * q3[None, ...] * cosine
+        )
+        q2_angular = np.broadcast_to(q2[None, ...], q1.shape)
+        q3_angular = np.broadcast_to(q3[None, ...], q1.shape)
+        amplitudes = expression.amplitudes(q1, q2_angular, q3_angular)
+        phases = np.exp(-1j * modes[:, None] * phi[None, :]).reshape(
+            (modes.size, nphi) + (1,) * ell2.ndim
+        )
+
+        los_samples = []
+        for z, chi in zip(projector.z, projector.chi):
+            z = float(z)
+            chi = float(chi)
+            radial1 = expression.radial_profiles(q1 / chi, z)
+            radial2 = expression.radial_profiles(q2 / chi, z)
+            radial3 = expression.radial_profiles(q3 / chi, z)
+            leg1 = np.sum(amplitudes * radial1, axis=0)
+            leg2 = np.sum(
+                amplitudes * radial2[:, None, ...], axis=0
+            )
+            leg3 = np.sum(
+                amplitudes * radial3[:, None, ...], axis=0
+            )
+            angular = np.mean(
+                phases * (leg1 * leg2 * leg3)[None, ...], axis=1
+            )
+            coefficient = self._term_coefficient(projected.source_term, z)
+            los_samples.append(coefficient * angular)
+
+        return projector.integrate_coefficients(
+            np.stack(los_samples),
+            axis=0,
+            sample_combination=projected.sample_combination,
+        )
+
     def _evaluate_representation(self, projected, modes, ell2, ell3):
         expression = projected.source_representation
+        if isinstance(expression, SemiAnalyticLowRankProductExpression3D):
+            return self._evaluate_low_rank_product(
+                projected, modes, ell2, ell3
+            )
         if isinstance(expression, SemiAnalyticRadialExpression3D):
             return self._evaluate_radial_representation(
                 projected, modes, ell2, ell3

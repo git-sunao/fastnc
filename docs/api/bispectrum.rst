@@ -39,6 +39,12 @@ Models
 .. autoclass:: fastnc.bispectrum.BiHalofitBispectrum3D
    :members:
 
+.. autoclass:: fastnc.bispectrum.BiHalofitBh1SemiAnalyticConfig
+   :members:
+
+.. autoclass:: fastnc.bispectrum.SemiAnalyticLowRankProductExpression3D
+   :members:
+
 .. autoclass:: fastnc.bispectrum.Halofit
    :members:
 

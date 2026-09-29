@@ -44,6 +44,70 @@ class SemiAnalyticRepresentation2D(BispectrumRepresentation2D):
 
 
 @dataclass(frozen=True)
+class SemiAnalyticLowRankProductExpression3D(SemiAnalyticRepresentation3D):
+    r"""Low-rank three-leg product with shape-dependent amplitudes.
+
+    The represented approximation is
+    ``prod_i sum_a A_a(r1, r2) V_a(k_i, z)``.  ``A_a`` depends only on the
+    triangle shape, while all source-state dependence is confined to the
+    one-dimensional radial profiles ``V_a``.  The representation owns the
+    trained shape basis; route calculators own angular and LOS quadrature.
+    """
+
+    rank: int
+    amplitude_evaluator: Callable
+    radial_evaluator: Callable
+    trained_basis: str
+
+    def __post_init__(self):
+        if int(self.rank) < 1:
+            raise ValueError("rank must be positive")
+        if not callable(self.amplitude_evaluator):
+            raise TypeError("amplitude_evaluator must be callable")
+        if not callable(self.radial_evaluator):
+            raise TypeError("radial_evaluator must be callable")
+        if not str(self.trained_basis):
+            raise ValueError("trained_basis must not be empty")
+        object.__setattr__(self, "rank", int(self.rank))
+        object.__setattr__(self, "trained_basis", str(self.trained_basis))
+
+    def amplitudes(self, k1, k2, k3):
+        """Return ``A_a`` with the low-rank index on the first axis."""
+        k1, k2, k3 = np.broadcast_arrays(k1, k2, k3)
+        values = np.asarray(self.amplitude_evaluator(k1, k2, k3), dtype=float)
+        expected = (self.rank,) + k1.shape
+        if values.shape != expected:
+            raise ValueError(
+                f"amplitude_evaluator must return shape {expected}, got {values.shape}"
+            )
+        return values
+
+    def radial_profiles(self, k, z):
+        """Return ``V_a(k,z)`` with the low-rank index on the first axis."""
+        k, z = np.broadcast_arrays(k, z)
+        values = np.asarray(self.radial_evaluator(k, z), dtype=float)
+        expected = (self.rank,) + k.shape
+        if values.shape != expected:
+            raise ValueError(
+                f"radial_evaluator must return shape {expected}, got {values.shape}"
+            )
+        return values
+
+    def evaluate(self, k1, k2, k3, z):
+        """Evaluate the low-rank approximation on a closed triangle."""
+        k1, k2, k3, z = np.broadcast_arrays(k1, k2, k3, z)
+        amplitudes = self.amplitudes(k1, k2, k3)
+        legs = (
+            np.sum(amplitudes * self.radial_profiles(k1, z), axis=0),
+            np.sum(amplitudes * self.radial_profiles(k2, z), axis=0),
+            np.sum(amplitudes * self.radial_profiles(k3, z), axis=0),
+        )
+        return legs[0] * legs[1] * legs[2]
+
+    __call__ = evaluate
+
+
+@dataclass(frozen=True)
 class SemiAnalyticExpression3D(SemiAnalyticRepresentation3D):
     r"""Factorized expression used by the Appendix-C route.
 

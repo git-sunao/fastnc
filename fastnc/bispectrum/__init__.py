@@ -9,6 +9,7 @@ from .interpolation import (
     TriangleInterpolationConfig,
 )
 from .models import (
+    BiHalofitBh1SemiAnalyticConfig,
     BiHalofitBispectrum3D,
     BiHalofitFixedShapeOneHaloBispectrum3D,
     NFWOneHaloBispectrum3D,
@@ -27,6 +28,7 @@ from .representations import (
     NumericRepresentation2D,
     NumericRepresentation3D,
     SemiAnalyticExpression3D,
+    SemiAnalyticLowRankProductExpression3D,
     SemiAnalyticRadialExpression3D,
     SemiAnalyticRepresentation2D,
     SemiAnalyticRepresentation3D,
@@ -54,6 +56,7 @@ __all__ = [
     "BispectrumTerm2D",
     "BispectrumTerm3D",
     "BiHalofitBispectrum3D",
+    "BiHalofitBh1SemiAnalyticConfig",
     "BiHalofitFixedShapeOneHaloBispectrum3D",
     "Halofit",
     "InterpolatedNumericRepresentation2D",
@@ -64,6 +67,7 @@ __all__ = [
     "NumericRepresentation2D",
     "NumericRepresentation3D",
     "SemiAnalyticExpression3D",
+    "SemiAnalyticLowRankProductExpression3D",
     "SemiAnalyticRadialExpression3D",
     "SemiAnalyticRepresentation2D",
     "SemiAnalyticRepresentation3D",

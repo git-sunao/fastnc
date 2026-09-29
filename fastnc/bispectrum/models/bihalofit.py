@@ -1,14 +1,18 @@
 """Direct 3D BiHalofit term aggregate."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 import numpy as np
+from scipy.special import eval_jacobi
 
 from ..bispectrum import Bispectrum3D
 from ..halofit import Halofit
 from ..representations import (
     NumericExpression3D,
+    SemiAnalyticLowRankProductExpression3D,
     SemiAnalyticRadialExpression3D,
 )
 from ..support import Support3D
@@ -25,6 +29,74 @@ _BH3_PAIR_LAYOUTS = {
     "23": (1, 2, 0),
     "31": (2, 0, 1),
 }
+
+_BH1_TRAINED_BASIS_FILES = {
+    "broad-debug-v1": "bihalofit_bh1_broad_debug_v1.npz",
+}
+
+
+@dataclass(frozen=True)
+class BiHalofitBh1SemiAnalyticConfig:
+    """Construction settings for the trained Bh1 semi-analytic expression.
+
+    ``rank`` selects one of the validated empirical-interpolation bases.  The
+    trained basis is immutable model-family data: changing cosmology updates
+    only the recovered radial profiles and never repeats the offline SVD.
+    """
+
+    rank: int = 8
+    trained_basis: str = "broad-debug-v1"
+
+    def __post_init__(self):
+        rank = int(self.rank)
+        if rank not in {5, 6, 8, 10}:
+            raise ValueError("rank must be one of 5, 6, 8, or 10")
+        if self.trained_basis not in _BH1_TRAINED_BASIS_FILES:
+            available = ", ".join(sorted(_BH1_TRAINED_BASIS_FILES))
+            raise ValueError(
+                f"unknown trained_basis {self.trained_basis!r}; "
+                f"available bases: {available}"
+            )
+        object.__setattr__(self, "rank", rank)
+
+
+def _load_bh1_trained_basis(config):
+    filename = _BH1_TRAINED_BASIS_FILES[config.trained_basis]
+    path = Path(__file__).with_name("data") / filename
+    with np.load(path) as data:
+        rank = config.rank
+        return {
+            "degree": int(data["degree"]),
+            "basis_vectors": np.array(data[f"basis_vectors_{rank}"], copy=True),
+            "selected_shapes": np.array(data[f"selected_shapes_{rank}"], copy=True),
+            "interpolation_matrix": np.array(
+                data[f"interpolation_matrix_{rank}"], copy=True
+            ),
+        }
+
+
+def _dubiner_basis(r1, r2, degree):
+    """Evaluate the total-degree Dubiner basis on the Bh1 shape triangle."""
+    r1, r2 = np.broadcast_arrays(
+        np.asarray(r1, dtype=float), np.asarray(r2, dtype=float)
+    )
+    xi = 2.0 * (r1 - r2)
+    eta = r2
+    denominator = 1.0 - eta
+    collapsed = np.divide(
+        2.0 * xi,
+        denominator,
+        out=np.zeros_like(xi),
+        where=denominator > 1.0e-14,
+    ) - 1.0
+    vertical = 2.0 * eta - 1.0
+    return np.stack([
+        eval_jacobi(p, 0.0, 0.0, collapsed)
+        * denominator**p
+        * eval_jacobi(q, 2.0 * p + 1.0, 0.0, vertical)
+        for p in range(degree + 1)
+        for q in range(degree + 1 - p)
+    ])
 
 
 def _bh3_primitive_specs():
@@ -56,14 +128,38 @@ class BiHalofitBispectrum3D(Bispectrum3D):
         halofit: Halofit | None = None,
         support: Support3D | None = None,
         support_policy: str = "zero",
+        config_semi_analytic: BiHalofitBh1SemiAnalyticConfig | None = None,
     ):
         self.halofit = halofit or Halofit()
+        self.config_semi_analytic = (
+            BiHalofitBh1SemiAnalyticConfig()
+            if config_semi_analytic is None
+            else config_semi_analytic
+        )
+        if not isinstance(
+            self.config_semi_analytic, BiHalofitBh1SemiAnalyticConfig
+        ):
+            raise TypeError(
+                "config_semi_analytic must be a "
+                "BiHalofitBh1SemiAnalyticConfig"
+            )
+        self._bh1_trained_basis = _load_bh1_trained_basis(
+            self.config_semi_analytic
+        )
         self._support_policy = support_policy
         self._user_support = support is not None
         terms = [
             BispectrumTerm3D(
                 name="bihalofit:Bh1",
-                representations=(NumericExpression3D(self._evaluate_bh1),),
+                representations=(
+                    NumericExpression3D(self._evaluate_bh1),
+                    SemiAnalyticLowRankProductExpression3D(
+                        rank=self.config_semi_analytic.rank,
+                        amplitude_evaluator=self._bh1_shape_amplitudes,
+                        radial_evaluator=self._bh1_radial_profiles,
+                        trained_basis=self.config_semi_analytic.trained_basis,
+                    ),
+                ),
             )
         ]
         for pair, label, mode, ratio_power, coefficient, extra in (
@@ -184,9 +280,15 @@ class BiHalofitBispectrum3D(Bispectrum3D):
         support: Support3D | None = None,
         support_policy: str = "zero",
         halofit: Halofit | None = None,
+        config_semi_analytic: BiHalofitBh1SemiAnalyticConfig | None = None,
     ) -> "BiHalofitBispectrum3D":
         """Create and configure a Bihalofit wrapper from user inputs."""
-        obj = cls(halofit=halofit, support=support, support_policy=support_policy)
+        obj = cls(
+            halofit=halofit,
+            support=support,
+            support_policy=support_policy,
+            config_semi_analytic=config_semi_analytic,
+        )
         return obj.configure(cosmo=cosmo, k=k, pklin=pklin, z=z, growth=growth, lgr=lgr)
 
     @classmethod
@@ -201,6 +303,7 @@ class BiHalofitBispectrum3D(Bispectrum3D):
         transfer_power: float = 1.5,
         pklin_kind: str = "debug",
         support_policy: str = "zero",
+        config_semi_analytic: BiHalofitBh1SemiAnalyticConfig | None = None,
     ) -> "BiHalofitBispectrum3D":
         """Return a self-initialized Bihalofit object for debugging.
 
@@ -233,6 +336,7 @@ class BiHalofitBispectrum3D(Bispectrum3D):
             z=z_arr,
             growth=growth,
             support_policy=support_policy,
+            config_semi_analytic=config_semi_analytic,
         )
 
     def _validate_evaluation(self, params):
@@ -253,6 +357,53 @@ class BiHalofitBispectrum3D(Bispectrum3D):
         return self.halofit.get_bihalofit(
             k1, k2, k3, z, which="Bh1", **params
         )
+
+    def _bh1_shape_amplitudes(self, k1, k2, k3):
+        sides = np.sort(np.stack(np.broadcast_arrays(k1, k2, k3)), axis=0)
+        largest = sides[2]
+        r1 = np.divide(sides[0], largest)
+        r2 = np.divide(sides[1] + sides[0] - largest, largest)
+        trained = self._bh1_trained_basis
+        basis = _dubiner_basis(r1, r2, trained["degree"])
+        return np.tensordot(trained["basis_vectors"].T, basis, axes=(1, 0))
+
+    def _bh1_profile_at_shapes(self, k, z, shapes):
+        """Evaluate all representative one-leg profiles in one broadcast."""
+        self.halofit.update()
+        k, z = np.broadcast_arrays(
+            np.asarray(k, dtype=float), np.asarray(z, dtype=float)
+        )
+        shape_axis = (shapes.shape[0],) + (1,) * k.ndim
+        r1 = shapes[:, 0].reshape(shape_axis)
+        r2 = shapes[:, 1].reshape(shape_axis)
+        fit = self.halofit.get_bihalofit_coeffs(z[None, ...])
+        q = np.maximum(k[None, ...] * fit["r_sigma"], 1.0e-100)
+        an = 10.0 ** (
+            fit["log10an1"] + fit["log10an2"] * r1 ** fit["gan"]
+        )
+        alpha = 10.0 ** (
+            fit["log10aln1"] + fit["log10aln2"] * r2**2
+        )
+        alpha = np.minimum(
+            alpha, 1.0 - (2.0 / 3.0) * self.halofit.cosmo["ns"]
+        )
+        beta = 10.0 ** (
+            fit["log10ben1"] + fit["log10ben2"] * r2
+        )
+        return (
+            1.0 / (an * q**alpha + fit["bn"] * q**beta)
+            / (1.0 + 1.0 / (fit["cn"] * q))
+        )
+
+    def _bh1_radial_profiles(self, k, z):
+        trained = self._bh1_trained_basis
+        values = self._bh1_profile_at_shapes(
+            k, z, trained["selected_shapes"]
+        )
+        return np.linalg.solve(
+            trained["interpolation_matrix"],
+            values.reshape(self.config_semi_analytic.rank, -1),
+        ).reshape(values.shape)
 
     def _bh3_radial_values(self, k1, k2, k3, z):
         self.halofit.update()

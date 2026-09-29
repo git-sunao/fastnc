@@ -344,12 +344,16 @@ class SemiAnalyticCalculatorTests(unittest.TestCase):
         )
         slepian, semi_analytic, numeric = prediction._plan_hybrid_sources()
         self.assertIsNone(slepian)
-        self.assertEqual(len(semi_analytic.terms), 8)
-        self.assertTrue(all(
-            term.name.startswith("bihalofit:Bh3:23:")
-            for term in semi_analytic.terms
-        ))
-        self.assertEqual(len(numeric.terms), 17)
+        self.assertEqual(len(semi_analytic.terms), 9)
+        self.assertEqual(
+            {term.name for term in semi_analytic.terms},
+            {"bihalofit:Bh1"}
+            | {
+                term.name for term in projected.terms
+                if term.name.startswith("bihalofit:Bh3:23:")
+            },
+        )
+        self.assertEqual(len(numeric.terms), 16)
         self.assertEqual(
             {term.name for term in projected.terms},
             {term.name for term in semi_analytic.terms}
@@ -397,10 +401,10 @@ class SemiAnalyticCalculatorTests(unittest.TestCase):
         )
         projected = projector.project(source)
         modes = np.array([0, 1, 2, 4])
-        ell2 = np.array([40.0, 90.0, 180.0])
+        ell2 = np.array([32.5, 140.0, 520.0])
         ell3 = np.array([65.0, 140.0, 260.0])
         calculator = SemiAnalyticCalculator(
-            SemiAnalyticConfig(angular_nodes=512, mellin_nodes=1024)
+            SemiAnalyticConfig(angular_nodes=4096, mellin_nodes=1024)
         )
         actual = calculator.evaluate(
             projected, modes, ell2=ell2, ell3=ell3
@@ -414,7 +418,7 @@ class SemiAnalyticCalculatorTests(unittest.TestCase):
             angular_nodes=4096,
         )
         scale = np.max(np.abs(expected), axis=1, keepdims=True)
-        self.assertLess(np.max(np.abs(actual - expected) / scale), 2.0e-5)
+        self.assertLess(np.max(np.abs(actual - expected) / scale), 2.0e-7)
 
 
 if __name__ == "__main__":

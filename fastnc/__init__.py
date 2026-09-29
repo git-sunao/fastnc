@@ -24,6 +24,6 @@ __all__ = [
     "disable_logging",
 ]
 
-__version__ = "2.0.78"
+__version__ = "2.0.79"
 __author__ = 'Sunao Sugiyama, Rafael Heringer Gomes'
 __url__ = 'https://github.com/git-sunao/fastnc'
