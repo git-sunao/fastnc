@@ -30,3 +30,8 @@ matrix counts, low-rank retention, or coupling-cache reuse.
 Timing from a cold call includes construction of missing in-memory resources.
 A warm call represents repeated model evaluation only when the changed model
 state leaves those resources reusable.
+
+Use :meth:`fastnc.threepcf.ThreePCF.warm_up` before an inference loop to build
+these structural resources explicitly while discarding the temporary physical
+prediction used to construct them. Its start, completion, and total elapsed
+time are reported at ``INFO`` level.

@@ -90,6 +90,21 @@ class ThreePCFNumericTests(unittest.TestCase):
             atol=1.0e-12,
         )
 
+    def test_warm_up_keeps_structural_resources_but_clears_prediction(self):
+        self.manager.warm_up()
+
+        coupling = self.manager.coupling((0, 0, 0))
+        self.assertEqual(len(self.created), 1)
+        self.assertIsNone(self.manager._multipole)
+        self.assertEqual(self.manager._hkernel_tables, {})
+        self.assertEqual(self.manager._zetak_tables, {})
+        self.assertEqual(self.manager._zeta_tables, {})
+
+        result = self.manager.zeta()
+        self.assertIs(self.manager.coupling((0, 0, 0)), coupling)
+        self.assertEqual(len(self.created), 1)
+        self.assertIs(self.manager.zeta(), result)
+
     def test_non_fourier_basis_is_shared_by_multipole_and_coupling(self):
         manager = ThreePCF(
             ThreePCFConfig(

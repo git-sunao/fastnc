@@ -233,6 +233,41 @@ class ThreePCF:
             )
         return self._calculation_plan
 
+    def warm_up(
+        self,
+        *,
+        epsilons: Iterable[tuple[int, int, int]] | None = None,
+    ) -> None:
+        """Build reusable route resources without retaining a prediction.
+
+        The complete ``Zeta`` pipeline is evaluated once for ``epsilons`` so
+        that coupling matrices and route-specific structural kernels are
+        populated. Source-dependent multipoles, ``HKernel``, ``ZetaK``, and
+        ``Zeta`` are then discarded. Consequently, the next prediction is a
+        genuine warm physical evaluation rather than a cached return of the
+        value computed here. This is useful before an MCMC loop in which model
+        parameters change while the numerical grids and route configuration
+        remain fixed.
+        """
+        self._sync_source_state()
+        requested_epsilons = self._epsilons(epsilons)
+        log(
+            logger,
+            logging.INFO,
+            "warming ThreePCF route=%s epsilons=%d",
+            self.route,
+            len(requested_epsilons),
+        )
+        started = time.perf_counter()
+        self.zeta(epsilons=requested_epsilons)
+        self._clear_source_results()
+        log(
+            logger,
+            logging.INFO,
+            "ThreePCF warm-up finished in %.3f s; physical results cleared",
+            time.perf_counter() - started,
+        )
+
     def inspect(self, *, expand_terms: bool = True, file=None) -> CalculationPlan:
         """Print the calculation plan and return its structured representation."""
         plan = self.calculation_plan()
