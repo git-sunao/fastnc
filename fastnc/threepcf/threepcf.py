@@ -430,7 +430,22 @@ class ThreePCF:
         *,
         epsilons: Iterable[tuple[int, int, int]] | None = None,
     ) -> HKernelTable:
-        """Return numeric H kernels on the retained full FFT grid."""
+        r"""Return coupled Fourier kernels on the full internal ell grid.
+
+        For each physical component ``epsilon`` and allowed opening-angle mode
+        :math:`k`, this evaluates
+
+        .. math::
+
+           H_k(\ell_2,\ell_3)=\sum_L
+           B_L(\ell_2,\ell_3)G_{Lk}(\sigma;\psi),\qquad
+           \psi=\tan^{-1}(\ell_3/\ell_2),
+
+        with :math:`\sigma_i=\epsilon_i s_i`. Canonically equivalent
+        ``(sigma1, nu_k)`` combinations share one stored array; aliases retain
+        the requested ``(epsilon, k)`` labels. The table remains on the dense
+        FFTLog grid because radial transformation occurs downstream.
+        """
         self._sync_source_state()
         requested_epsilons = self._epsilons(epsilons)
         if requested_epsilons in self._hkernel_tables:
@@ -497,7 +512,15 @@ class ThreePCF:
         *,
         epsilons: Iterable[tuple[int, int, int]] | None = None,
     ) -> ZetaKTable:
-        """Return cached or term-wise assembled opening-angle modes."""
+        r"""Return route-independent 3PCF opening-angle modes.
+
+        ``ZetaK`` stores :math:`\zeta_k(\theta_1,\theta_2)` before the final
+        opening-angle sum. Numeric and semi-analytic terms pass through
+        ``HKernel`` and a double Hankel transform; Slepian terms construct the
+        same physical modes directly. Hybrid evaluation sums equal physical
+        keys from all routes, so route identity is deliberately absent from
+        the cache key and result table.
+        """
         self._sync_source_state()
         requested_epsilons = self._epsilons(epsilons)
         if requested_epsilons in self._zetak_tables:
@@ -566,7 +589,23 @@ class ThreePCF:
         self,
         requested_epsilons: tuple[tuple[int, int, int], ...],
     ) -> ZetaKTable:
-        """Transform the shared BispectrumMultipole/HKernel pipeline."""
+        r"""Double-Hankel transform the shared ``HKernel`` pipeline.
+
+        For effective Bessel orders :math:`m_k,n_k` and total spin
+        :math:`\Sigma`, the implemented convention is
+
+        .. math::
+
+           \zeta_k={(-i)^\Sigma\over(2\pi)^3}
+           \int d\ln\ell_2\,d\ln\ell_3\,
+           \ell_2^2\ell_3^2 H_k
+           J_{m_k}(\ell_2\theta_1)J_{n_k}(\ell_3\theta_2).
+
+        The prefactor and :math:`\ell_i^2` measures are inserted here because
+        ``double_hankel_transform`` accepts the complete logarithmic-measure
+        integrand. The tuned dense result is downsampled exactly onto the
+        user-requested theta bins.
+        """
 
         spin_spec = SpinSpec(self.config.spin)
         htable = self.hkernel(epsilons=requested_epsilons)
@@ -694,7 +733,14 @@ class ThreePCF:
         epsilons: Iterable[tuple[int, int, int]] | None = None,
         projection: str = "x",
     ) -> ZetaTable:
-        """Return the final 3PCF in the requested projection convention."""
+        r"""Resum opening-angle modes and return the requested projection.
+
+        The cached ``x``-projection is assembled as
+        :math:`\zeta(\theta_1,\theta_2,\phi)=\sum_k
+        \zeta_k(\theta_1,\theta_2)e^{i\nu_k\phi}`. Projection conversion is a
+        cheap phase rotation applied only to the returned table, so
+        ``projection`` is not part of the expensive cache key.
+        """
         self._sync_source_state()
         requested_epsilons = self._epsilons(epsilons)
         target_projection = _projection_name(projection)

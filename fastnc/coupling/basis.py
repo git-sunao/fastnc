@@ -12,7 +12,14 @@ def basis_fourier_terms(
     mode: int,
     basis: CouplingBasis,
 ) -> tuple[tuple[int, float | complex], ...]:
-    """Return ``(Fourier mode, coefficient)`` terms for one basis mode."""
+    r"""Expand one requested angular basis function into Fourier primitives.
+
+    The returned pairs satisfy :math:`P_L(\phi)=\sum_m a_m e^{im\phi}` for
+    ``fourier``, ``cosine``, ``sine``, or Legendre
+    :math:`P_L(\cos\phi)`. Coupling caches therefore store only primitive
+    Fourier kernels, whose analytic support contains exact zeros; other bases
+    are finite resummations and require no independent zero threshold.
+    """
     mode = int(mode)
     if basis == "fourier":
         return ((mode, 1.0),)

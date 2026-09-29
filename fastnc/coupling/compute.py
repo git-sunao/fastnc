@@ -107,12 +107,16 @@ def bar_beta(psi: float, Delta: float) -> float:
 
 
 def spin_phase_coeff(q: int, p: int, psi: float, *, atol: float = 1e-14) -> float:
-    """Fourier coefficient b_p^{(q)}(psi) for integer q and integer p.
+    r"""Evaluate the exact Fourier coefficient of the spin phase.
 
-    A(z;psi) = (cos(psi) z + sin(psi))/(cos(psi) + sin(psi) z).
-    The analytic one-sided expansions are used on the open intervals
-    (0,pi/4) and (pi/4,pi/2).  At psi=0, pi/4, pi/2 the support collapses
-    to p=q, 0, and -q respectively.
+    With
+    :math:`A(z;\psi)=(\cos\psi\,z+\sin\psi)/(\cos\psi+\sin\psi\,z)`, this
+    returns :math:`b_p^{(q)}` from
+    :math:`A(e^{i\Delta};\psi)^q=\sum_p b_p^{(q)}(\psi)e^{ip\Delta}`.
+    Convergent one-sided binomial series are used on ``(0, pi/4)`` and
+    ``(pi/4, pi/2)``. Their analytic support is enforced exactly, preventing
+    small quadrature residuals from masquerading as nonzero couplings. At the
+    endpoints the support collapses to ``p=q``, ``p=0``, and ``p=-q``.
     """
     q = int(q)
     p = int(p)
@@ -259,7 +263,20 @@ def exact_zero_delta(two_delta: int, sigma1: int, psi, *, atol: float = 1e-14):
 
 
 def coupling_delta(two_delta: int, sigma1: int, psi: float, *, atol: float = 1e-14) -> float:
-    """Compute G_delta(sigma1;psi), where sigma1 is the reference-vertex spin."""
+    r"""Evaluate the primitive Fourier spin-coupling kernel.
+
+    In the vertex-1 reference convention,
+
+    .. math::
+
+       G_\delta(\sigma_1;\psi)=\int_0^{2\pi}d\Delta\,
+       e^{i\delta\Delta+i\sigma_1\bar\beta(\psi,\Delta)}
+       =2\pi b_{-\delta}^{(\sigma_1/2)}(\psi).
+
+    Integer and half-integer labels are represented by doubled integer keys.
+    Analytic support is checked before coefficient evaluation, so an exact zero
+    is returned as ``0.0`` rather than a numerical residual.
+    """
     two_delta = int(two_delta)
     sigma1 = int(sigma1)
     if exact_zero_delta(two_delta, sigma1, psi, atol=atol):

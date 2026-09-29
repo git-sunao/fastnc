@@ -76,7 +76,14 @@ def _load_bh1_trained_basis(config):
 
 
 def _dubiner_basis(r1, r2, degree):
-    """Evaluate the total-degree Dubiner basis on the Bh1 shape triangle."""
+    r"""Evaluate total-degree Dubiner polynomials on the Bh1 shape triangle.
+
+    The physical domain with vertices ``(0,0)``, ``(1/2,0)``, and ``(1,1)``
+    is mapped by :math:`\xi=2(r_1-r_2)` and :math:`\eta=r_2` to the reference
+    triangle. Collapsed Jacobi coordinates improve conditioning; the apparent
+    ``1-eta`` denominator cancels against ``(1-eta)**p``, so every returned
+    basis function is still a finite polynomial in ``(r1,r2)``.
+    """
     r1, r2 = np.broadcast_arrays(
         np.asarray(r1, dtype=float), np.asarray(r2, dtype=float)
     )
@@ -396,6 +403,15 @@ class BiHalofitBispectrum3D(Bispectrum3D):
         )
 
     def _bh1_radial_profiles(self, k, z):
+        r"""Recover rank-many Bh1 radial profiles by empirical interpolation.
+
+        Offline training gives shape amplitudes :math:`A_a` and representative
+        shapes :math:`r^{(j)}`. At a new model state this evaluates the exact
+        one-leg profile only at those shapes and solves
+        :math:`H(k,z;r^{(j)})=M_{ja}V_a(k,z)`. The small fixed matrix ``M`` is
+        loaded with the trained basis; no SVD or dense shape fit occurs during
+        cosmology updates.
+        """
         trained = self._bh1_trained_basis
         values = self._bh1_profile_at_shapes(
             k, z, trained["selected_shapes"]

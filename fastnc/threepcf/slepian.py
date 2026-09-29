@@ -294,7 +294,15 @@ def _coefficient_window(size: int, fraction: float) -> np.ndarray:
 
 
 def fftlog_power_sum(ell, values, config: SlepianConfig) -> FFTLogPowerSum:
-    """Expand samples as ``sum_m c_m ell**nu_m`` on a log grid."""
+    r"""Expand one radial factor into complex powers on the ``ell`` grid.
+
+    The stored convention is
+    :math:`f(\ell)\simeq\sum_a c_a\ell^{\nu_a}` with
+    :math:`\nu_a=q+2\pi ia/(N\Delta\ln\ell)`. Edge tapering is applied before
+    the FFT and the coefficient window afterward. The returned coefficients
+    already include the :math:`\ell_0^{-i\eta_a}` origin phase and ``1/N``
+    normalization.
+    """
     ell = np.asarray(ell, dtype=float)
     values = np.asarray(values, dtype=complex)
     if ell.ndim != 1 or ell.size < 8 or values.shape != ell.shape:
@@ -398,7 +406,16 @@ def _hyp2f1(a, b, c, z: float, rtol: float):
 def _eta_zero_weber_unit_power(
     order_small: int, order_big: int, ratio: float
 ) -> complex:
-    """Evaluate the regular eta-zero Weber kernel for even order differences."""
+    r"""Evaluate the eta-zero Weber branch as an exact finite polynomial.
+
+    At zero imaginary Mellin index and positive even order difference
+    :math:`d=\nu-\mu`, one hypergeometric parameter is
+    :math:`1-d/2`, so the ordinary :math:`{}_2F_1` terminates at degree
+    :math:`d/2-1`. Evaluating that polynomial avoids the singular cancellation
+    between the two terms of the reflected connection formula at integer
+    connection exponent. Negative Bessel orders are restored with
+    :math:`J_{-n}=(-1)^nJ_n`.
+    """
     mu, sign_small = _canonical_bessel_order(order_small)
     nu_big, sign_big = _canonical_bessel_order(order_big)
     difference = nu_big - mu
@@ -460,7 +477,22 @@ def _weber_reflection_ratio(exponent) -> float:
 def _reflected_weber_unit_power(
     exponent, order_small: int, order_big: int, ratio: float, rtol: float
 ) -> complex:
-    """Evaluate the Weber kernel with hypergeometric series about ratio one."""
+    r"""Evaluate the unit Weber integral with a ``1-r**2`` connection formula.
+
+    The defining unit-scale integral is
+
+    .. math::
+
+       W_{\mu\nu}(s,r)=\int_0^\infty dt\,t^{s+1}
+       J_\mu(rt)J_\nu(t),\qquad 0<r<1.
+
+    Its ordinary closed form contains :math:`{}_2F_1(A,B;C;r^2)`, which loses
+    accuracy as :math:`r\to1`, especially for large imaginary ``s``. The
+    connection formula rewrites it as two series in :math:`1-r^2`; gamma
+    prefactors are assembled in log space. Integer connection exponents are
+    excluded by the caller because the two-term formula is then singular even
+    when the combined limit is finite.
+    """
     mu, sign_small = _canonical_bessel_order(order_small)
     nu_big, sign_big = _canonical_bessel_order(order_big)
     lam = -complex(exponent) - 1.0
@@ -498,6 +530,16 @@ def _reflected_weber_unit_power(
 def _weber_unit_power(
     exponent, order_small: int, order_big: int, ratio: float, rtol: float
 ):
+    r"""Evaluate a scale-free Weber-Schafheitlin power-law integral.
+
+    This returns :math:`W_{\mu\nu}(s,r)` defined in
+    :func:`_reflected_weber_unit_power`. It uses the terminating eta-zero
+    polynomial when available, the ``1-r**2`` connection formula above an
+    imaginary-index-dependent boundary, and otherwise the ordinary
+    :math:`r^2` hypergeometric series. Zeros of the reciprocal-gamma prefactor
+    are returned exactly rather than passed through a numerically singular
+    gamma ratio.
+    """
     mu, sign_small = _canonical_bessel_order(order_small)
     nu_big, sign_big = _canonical_bessel_order(order_big)
     if complex(exponent) == 0.0j and (nu_big - mu) % 2 == 0:
@@ -628,6 +670,15 @@ def _powerlaw_double_kernel(
     interpolation_cache: dict | None = None,
     max_ratio: float = 1.0,
 ):
+    r"""Restore physical scales around the unit Weber integral.
+
+    For :math:`I_s(x,\theta)=\int d\ell\,\ell^{s+1}
+    J_{n_x}(\ell x)J_{n_\theta}(\ell\theta)`, set
+    :math:`R=\max(x,\theta)` and :math:`r=\min(x,\theta)/R`. The evaluated form
+    is :math:`I_s=R^{-s-2}W(s,r)`. Bessel orders are swapped when ``x > theta``
+    so the Weber ratio always lies in ``(0,1]``. Equal-scale distributional
+    terms may be omitted for separate contact handling.
+    """
     geometry = geometry or WeberGeometry.from_coordinates(x, theta)
     ratios, active, inverse = geometry.unique_ratios(
         omit_diagonal=omit_diagonal, max_ratio=max_ratio
@@ -693,7 +744,20 @@ def constant_leg_kernel(
     geometry: WeberGeometry | None = None,
     interpolation_cache: dict | None = None,
 ) -> ConstantLegKernel:
-    """Decompose a constant-leg Bessel closure kernel away from its diagonal."""
+    r"""Split a constant-leg closure kernel into contact and regular parts.
+
+    The closure integral is represented distributionally as
+
+    .. math::
+
+       \int_0^\infty d\ell\,\ell J_{n_x}(\ell x)J_{n_\theta}(\ell\theta)
+       =c_\delta{\delta(x-\theta)\over\theta}+C^<(x,\theta)+C^>(x,\theta).
+
+    Here :math:`c_\delta=\cos[\pi(n_x-n_\theta)/2]` is evaluated exactly.
+    The two regular arrays contain only ``x < theta`` and ``x > theta``
+    respectively; the diagonal is zero because its distributional contact is
+    contracted separately. Equal absolute Bessel orders have no regular part.
+    """
     if not isinstance(config, SlepianConfig):
         raise TypeError("config must be a SlepianConfig")
     geometry = geometry or WeberGeometry.from_coordinates(x, theta)
@@ -738,7 +802,24 @@ def regular_mellin_matrix(
     constant_kernel: ConstantLegKernel | None = None,
     interpolation_cache: dict | None = None,
 ) -> RegularMellinMatrix:
-    """Construct the uncompressed regular matrix before Mellin coefficients."""
+    r"""Construct the cosmology-independent regular Mellin matrix ``F_ab``.
+
+    For single- and double-leg Mellin exponents :math:`\mu_b` and
+    :math:`\nu_a`, the stored tensor is schematically
+
+    .. math::
+
+       F_{ab}(\theta_1,\theta_2)=\int_0^\infty dx\,x\,
+       S_b(x,\theta_1)D_a(x,\theta_1)C_{\rm reg}(x,\theta_2).
+
+    ``S``, ``D``, and ``C_reg`` are analytic Bessel/Weber transforms of one
+    complex power at a time. The default ratio-Gauss implementation splits
+    ``x < theta2`` and ``x > theta2`` using ``x=theta2*r`` and
+    ``x=theta2/r``; this is the same integral as direct ``x`` quadrature but
+    avoids sampling the contact diagonal. ``F_ab`` contains no Mellin
+    coefficients, cosmology, redshift, or LOS weights and is therefore a
+    reusable grid-state object.
+    """
     ell = np.asarray(ell, dtype=float)
     single_exponents = np.asarray(single_exponents, dtype=complex)
     double_exponents = np.asarray(double_exponents, dtype=complex)
@@ -1062,7 +1143,13 @@ def contract_regular_mellin_matrix(
     single_coefficients,
     double_coefficients,
 ):
-    """Contract a full regular matrix with two sets of Mellin coefficients."""
+    r"""Contract ``F_ab`` with source-dependent Mellin coefficients.
+
+    The returned regular contribution is
+    :math:`\sum_{ab}d_a c_bF_{ab}(\theta_1,\theta_2)`. The ordering is
+    ``double`` index first and ``single`` index second, matching
+    ``matrix.values[a,b,...]``.
+    """
     if not isinstance(matrix, RegularMellinMatrix):
         raise TypeError("matrix must be a RegularMellinMatrix")
     single = np.asarray(single_coefficients, dtype=complex)
@@ -1080,7 +1167,15 @@ def compress_regular_mellin_matrix(
     rank: int | None = None,
     rtol: float = 1.0e-6,
 ) -> LowRankRegularMellinMatrix:
-    """Compress each theta-pair Mellin matrix with a common retained rank."""
+    r"""Compress each theta-pair ``F_ab`` by truncated singular values.
+
+    At every :math:`(\theta_1,\theta_2)`, this forms
+    :math:`F_{ab}\simeq\sum_{r=1}^R U_{ar}s_rV_{rb}`. If ``rank`` is absent,
+    one common ``R`` is chosen large enough that every theta-pair has relative
+    discarded Frobenius norm at most ``rtol``. ``relative_error`` records the
+    Frobenius error of the assembled four-dimensional tensor, not the final
+    cosmology-weighted prediction error.
+    """
     if not isinstance(matrix, RegularMellinMatrix):
         raise TypeError("matrix must be a RegularMellinMatrix")
     matrices = np.moveaxis(matrix.values, (0, 1), (-2, -1))
@@ -1146,9 +1241,18 @@ def contract_low_rank_regular_mellin_matrix_los(
     matrix: LowRankRegularMellinMatrix,
     factors: LOSMellinFactors,
 ):
-    """Contract low-rank ``F_ab`` before LOS quadrature.
+    r"""Contract low-rank ``F_ab`` at each LOS node before quadrature.
 
-    The dense LOS-integrated coefficient matrix is never materialized.
+    Rather than materializing the generally full-rank matrix
+    :math:`\bar C_{ab}=\int d\chi\,W(\chi)d_a(\chi)c_b(\chi)`, this computes
+
+    .. math::
+
+       \int d\chi\,W(\chi)\sum_r s_r
+       [d_a(\chi)U_{ar}][V_{rb}c_b(\chi)].
+
+    The contraction preserves the low rank of the cosmology-independent
+    ``F_ab`` and keeps memory linear in the number of LOS nodes.
     """
     if not isinstance(matrix, LowRankRegularMellinMatrix):
         raise TypeError("matrix must be a LowRankRegularMellinMatrix")

@@ -108,7 +108,12 @@ def _aliases(values, keys) -> Mapping[ComponentModeKey, Hashable]:
 
 @dataclass(frozen=True)
 class HKernelTable:
-    """Angularly coupled kernels sampled on a full FFTLog ell grid."""
+    r"""Store :math:`H_k=\sum_L B_LG_{Lk}` on the full FFTLog ell grid.
+
+    This is passive route-independent data. ``values`` has axes
+    ``(key, ell2, ell3)``; ``aliases`` map physical ``(epsilon, k)`` requests
+    to deduplicated storage keys.
+    """
 
     grid: TunedFFTGrid
     keys: tuple[Hashable, ...]
@@ -151,7 +156,12 @@ class HKernelTable:
 
 @dataclass(frozen=True)
 class ZetaKTable:
-    """Opening-angle modes on the final user-facing theta grid."""
+    r"""Store :math:`\zeta_k(\theta_1,\theta_2)` before angle resummation.
+
+    ``values`` has axes ``(key, theta1, theta2)``. Keys contain no route label,
+    allowing numeric, Slepian, and semi-analytic contributions to the same
+    physical mode to be added without duplication.
+    """
 
     theta: np.ndarray
     keys: tuple[Hashable, ...]
@@ -190,7 +200,12 @@ class ZetaKTable:
 
 @dataclass(frozen=True)
 class ZetaTable:
-    """Final 3PCF components on side-length and opening-angle grids."""
+    r"""Store final 3PCF components on ``(theta1, theta2, phi)`` grids.
+
+    ``values`` has axes ``(component, theta1, theta2, phi)``. The component is
+    the requested epsilon triple; ``sigmas`` records the corresponding signed
+    spins needed for reversible shear-projection phase rotations.
+    """
 
     theta: np.ndarray
     phi: np.ndarray
@@ -238,7 +253,13 @@ class ZetaTable:
         return self.values[index]
 
     def to_projection(self, projection: str) -> "ZetaTable":
-        """Return a new table in another shear-projection convention."""
+        r"""Rotate cached 3PCF components to another shear projection.
+
+        Conversion multiplies each component by the geometry-dependent spin
+        phase prescribed by ``convert_projection``; it does not recompute any
+        bispectrum, coupling, or Hankel transform. Returning to the current
+        convention is therefore an identity operation.
+        """
         destination = _projection_name(projection)
         if destination == self.projection:
             return self

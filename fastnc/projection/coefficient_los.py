@@ -5,7 +5,15 @@ import numpy as np
 
 
 def integrate_coefficients(coefficients, chi, *, weight=1.0, axis: int = -1):
-    """Integrate coefficient samples over a designated LOS axis."""
+    r"""Integrate route coefficients over comoving distance.
+
+    This evaluates :math:`\bar c_\alpha=\int d\chi\,W(\chi)c_\alpha(\chi)`
+    with the trapezoidal rule along ``axis``. ``weight`` contains LOS kernels
+    and any geometrical prefactor such as :math:`\chi^{-4}`. The coefficient
+    index :math:`\alpha` and all external axes are spectators, allowing a
+    calculator to contract ``bar c`` with a cosmology-independent basis after
+    projection instead of constructing a dense projected bispectrum first.
+    """
     coefficients = np.asarray(coefficients)
     chi = np.asarray(chi, dtype=float)
     if chi.ndim != 1:

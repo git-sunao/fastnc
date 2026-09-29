@@ -48,10 +48,16 @@ class SemiAnalyticLowRankProductExpression3D(SemiAnalyticRepresentation3D):
     r"""Low-rank three-leg product with shape-dependent amplitudes.
 
     The represented approximation is
-    ``prod_i sum_a A_a(r1, r2) V_a(k_i, z)``.  ``A_a`` depends only on the
-    triangle shape, while all source-state dependence is confined to the
-    one-dimensional radial profiles ``V_a``.  The representation owns the
-    trained shape basis; route calculators own angular and LOS quadrature.
+
+    .. math::
+
+       B(k_1,k_2,k_3,z)\simeq\prod_{i=1}^3
+       \left[\sum_{a=1}^R A_a(r_1,r_2)V_a(k_i,z)\right].
+
+    ``A_a`` depends only on triangle shape, while all source-state dependence
+    is confined to one-dimensional radial profiles ``V_a``. The representation
+    owns the trained basis and approximation rank; route calculators own
+    angular grids, LOS quadrature, and transform caches.
     """
 
     rank: int

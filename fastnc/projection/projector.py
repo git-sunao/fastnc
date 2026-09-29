@@ -214,7 +214,15 @@ class LOSProjector:
         axis: int = -1,
         sample_combination=None,
     ):
-        """Integrate route-produced coefficients along their LOS axis."""
+        r"""Apply this projector to route-produced coefficient samples.
+
+        A finite-width projector evaluates
+        :math:`\int d\chi\,W(\chi)c(\chi)`, with ``weight()`` supplying kernels
+        and prefactors. A delta-like projector instead selects its sole LOS
+        sample exactly and applies neither quadrature nor a
+        :math:`\chi^{-4}` factor. Route calculators therefore share one API
+        without approximating a Dirac delta by a narrow window.
+        """
         if self._evaluate_at_point:
             self.weight(sample_combination)
             coefficients = np.asarray(coefficients)

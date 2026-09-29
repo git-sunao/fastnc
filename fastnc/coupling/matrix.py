@@ -525,7 +525,14 @@ class CouplingMatrix(CouplingKernel):
         lazy: bool | None = None,
         fallback_direct: bool | None = None,
     ) -> float | complex | np.ndarray:
-        """Evaluate one coupling mode in the configured angular basis."""
+        r"""Evaluate one coupling mode by resumming Fourier primitives.
+
+        For basis coefficients :math:`a_{Lm}`, this returns
+        :math:`\sum_m a_{Lm}G_{mk}(\sigma;\psi)`. Primitive Fourier values use
+        the configured analytic/cache path. Sine coefficients include their
+        :math:`1/(2i)` factors here, so the cached primitive remains real while
+        the resumed coupling may be complex.
+        """
         result = None
         for fourier_mode, coefficient in basis_fourier_terms(mode, self.basis):
             primitive = self._call_fourier(
