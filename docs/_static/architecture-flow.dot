@@ -1,0 +1,64 @@
+digraph fastnc_architecture {
+  graph [rankdir=TB, bgcolor="transparent", pad=0.22, nodesep=0.34,
+         ranksep=0.48, splines=polyline, newrank=true, fontname="Helvetica"];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11,
+        margin="0.16,0.10", penwidth=1.25, color="#64748b", fontcolor="#172033"];
+  edge [color="#64748b", fontcolor="#475569", fontname="Helvetica",
+        fontsize=9.5, penwidth=1.25, arrowsize=0.72];
+
+  b3d [label="Bispectrum3D\nterms + representations", fillcolor="#dff2e4", color="#5b9b6d"];
+  projector [label="LOSProjector\nkernels + z/chi quadrature", fillcolor="#dff2e4", color="#5b9b6d"];
+  projected [label="Projected Bispectrum2D\nretains 3D source + projector", fillcolor="#dff2e4", color="#5b9b6d"];
+  native [label="Native Bispectrum2D\nangular definitions", fillcolor="#dff2e4", color="#5b9b6d"];
+
+  config [label="ThreePCFConfig\nspin, basis, grids, truncation", fillcolor="#e7ebf1", color="#718096"];
+  threepcf [label="ThreePCF\nfixed theta + phi", fillcolor="#dce3ed", color="#607089", penwidth=1.8];
+  planner [label="CalculationPlan\nterm-wise route assignment", fillcolor="#e7ebf1", color="#718096"];
+
+  numeric [label="NUMERIC\nangular quadrature", fillcolor="#dceeff", color="#5c98cf"];
+  semi [label="SEMI-ANALYTIC\nanalytic multipoles\n+ coefficient LOS", fillcolor="#fff0cf", color="#d39a35"];
+  slepian [label="SLEPIAN\nMellin / Weber\nradial transform", fillcolor="#fbe3d5", color="#d38154"];
+
+  multipoles [label="BispectrumMultipole\nlazy evaluator", fillcolor="#dceeff", color="#5c98cf"];
+  hkernel [label="HKernel assembly\ncoupling contraction", fillcolor="#dceeff", color="#5c98cf"];
+  coupling [label="Coupling matrices", fillcolor="#ffffff", color="#94a3b8", style="rounded,filled,dashed"];
+  radial [label="Structural radial kernels\nWeber, F_ab, low-rank", fillcolor="#ffffff", color="#94a3b8", style="rounded,filled,dashed"];
+
+  htable [label="HKernelTable\nell x ell", fillcolor="#ece5f6", color="#9276ba"];
+  zktable [label="ZetaKTable\ntheta x theta x mode", fillcolor="#e5daf3", color="#8062aa", penwidth=1.8];
+  ztable [label="ZetaTable\ntheta x theta x phi", fillcolor="#ece5f6", color="#9276ba"];
+
+  {rank=same; b3d; projector; native;}
+  {rank=same; config; projected;}
+  {rank=same; numeric; semi; slepian;}
+  {rank=same; coupling; hkernel; radial;}
+
+  b3d -> projected [label="physical source"];
+  projector -> projected [label="projection recipe"];
+  projected -> threepcf;
+  native -> threepcf;
+  config -> threepcf;
+  threepcf -> planner [label="inspect / execute"];
+
+  planner -> numeric;
+  planner -> semi;
+  planner -> slepian;
+  numeric -> multipoles;
+  semi -> multipoles;
+  multipoles -> hkernel;
+  coupling -> hkernel [style=dashed];
+  radial -> slepian [style=dashed];
+
+  hkernel -> htable;
+  htable -> zktable [label="double Hankel / FFTLog"];
+  slepian -> zktable;
+  zktable -> ztable [label="mode resummation"];
+
+  legend_definition [label="physical definition", fillcolor="#dff2e4", color="#5b9b6d", fontsize=9];
+  legend_assembly [label="assembly", fillcolor="#e7ebf1", color="#718096", fontsize=9];
+  legend_calculator [label="calculator", fillcolor="#dceeff", color="#5c98cf", fontsize=9];
+  legend_result [label="passive result", fillcolor="#ece5f6", color="#9276ba", fontsize=9];
+  {rank=same; legend_definition; legend_assembly; legend_calculator; legend_result;}
+  ztable -> legend_definition [style=invis, minlen=1];
+  legend_definition -> legend_assembly -> legend_calculator -> legend_result [style=invis, weight=10];
+}
