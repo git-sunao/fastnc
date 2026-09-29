@@ -11,6 +11,17 @@ Clone the repository and install it into a dedicated environment:
    python -m pip install -e .
 
 The core dependencies are NumPy, SciPy, Astropy, pandas, mpi4py, and h5py.
+Calculation-plan inspection works without extra packages. To render its DAG as
+SVG in Jupyter, install the optional Python interface and a Graphviz ``dot``
+executable:
+
+.. code-block:: console
+
+   python -m pip install -e ".[graph]"
+
+Graphviz itself can be installed from the system package manager or from
+``conda-forge``. The Python package alone does not provide ``dot``.
+
 For documentation development, install the additional requirements and build
 the HTML pages with Sphinx:
 

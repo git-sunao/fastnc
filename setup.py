@@ -33,5 +33,6 @@ if __name__ == '__main__':
         packages=find_packages(),
         package_data={"fastnc.bispectrum.models": ["data/*.npz"]},
         install_requires=get_requirements(),
+        extras_require={"graph": ["graphviz>=0.20"]},
         classifiers=['Programming Language :: Python :: 3'],
     )

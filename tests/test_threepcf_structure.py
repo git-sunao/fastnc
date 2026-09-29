@@ -14,6 +14,7 @@ class ThreePCFStructureTests(unittest.TestCase):
             threepcf.__all__,
             [
                 "ComponentModeKey",
+                "CalculationPlan",
                 "BruteForce3PCFAdaptiveTrial",
                 "BruteForce3PCFConfig",
                 "BruteForce3PCFResult",
@@ -22,6 +23,7 @@ class ThreePCFStructureTests(unittest.TestCase):
                 "HKernelTable",
                 "ThreePCF",
                 "ThreePCFConfig",
+                "TermRouteAssignment",
                 "SlepianConfig",
                 "SemiAnalyticCalculator",
                 "SemiAnalyticConfig",

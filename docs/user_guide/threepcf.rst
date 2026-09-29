@@ -35,6 +35,37 @@ then share the HKernel-to-ZetaK pipeline with numeric contributions. Hybrid
 results are added at ZetaK, so final cache identity describes physical
 components rather than internal routes.
 
+Inspecting the calculation graph
+--------------------------------
+
+Route assignment can be inspected without evaluating a bispectrum or building
+any numerical kernel:
+
+.. code-block:: python
+
+   plan = threepcf.calculation_plan()
+   print(plan)
+
+``CalculationPlan`` is the same immutable assignment consumed by hybrid
+execution. It groups terms by concrete route and shows where Slepian and
+HKernel-based contributions merge. ``threepcf.inspect()`` is a convenience
+method that prints and returns this object.
+
+The dependency-free renderer works in terminals. A notebook can display a
+Graphviz SVG after installing the optional graph support and the Graphviz
+``dot`` executable:
+
+.. code-block:: console
+
+   pip install "fastnc[graph]"
+
+.. code-block:: python
+
+   plan.graph(expand_terms=False)
+
+``plan.to_dot()`` always returns DOT source and does not import Graphviz. Use
+``expand_terms=True`` to display every term instead of a compact route group.
+
 Lazy evaluation
 ---------------
 
