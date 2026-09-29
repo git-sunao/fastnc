@@ -124,7 +124,7 @@ closing side ``ell1``. Non-numeric representations remain attached.
    interpolation = TriangleInterpolationConfig(
        ell2=np.geomspace(10.0, 5000.0, 80),
        ell3=np.geomspace(10.0, 5000.0, 80),
-       mu23=np.linspace(-1.0, 1.0, 65),
+       mu23=np.linspace(-0.999, 1.0, 65),
    )
    b2d_interpolated = b2d.interpolate(interpolation, prepare=True)
 

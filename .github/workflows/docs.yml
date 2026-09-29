@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "docs/**"
+      - "tutorials/**"
       - "fastnc/**"
       - "pyproject.toml"
       - "setup.py"
@@ -37,9 +38,11 @@ jobs:
 
       - name: Install package and documentation dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install --yes pandoc
           python -m pip install --upgrade pip
           pip install .
-          pip install sphinx furo
+          pip install -r docs/requirements.txt
 
       - name: Build documentation
         run: |

@@ -18,3 +18,120 @@
   margin: 0.8rem auto 0;
   color: #475569;
 }
+
+/* Make autodoc pages scan like an API reference, not a continuous article. */
+dl.py {
+  margin: 0 0 2.75rem;
+}
+
+dl.py > dt.sig {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  overflow-x: auto;
+  color: var(--color-foreground-primary);
+  background: color-mix(
+    in srgb,
+    var(--color-brand-primary) 9%,
+    var(--color-background-primary)
+  );
+  border-top: 3px solid var(--color-brand-primary);
+  border-bottom: 1px solid color-mix(
+    in srgb,
+    var(--color-brand-primary) 32%,
+    var(--color-foreground-border)
+  );
+  border-radius: 3px 3px 0 0;
+  line-height: 1.55;
+  text-indent: 0;
+}
+
+dl.py.class > dt.sig,
+dl.py.exception > dt.sig {
+  background: color-mix(
+    in srgb,
+    var(--color-brand-primary) 15%,
+    var(--color-background-primary)
+  );
+}
+
+dl.py > dt.sig .property,
+dl.py > dt.sig .sig-prename {
+  color: var(--color-brand-primary);
+}
+
+dl.py > dt.sig .sig-name {
+  font-weight: 750;
+}
+
+dl.py > dt.sig .sig-param {
+  color: color-mix(
+    in srgb,
+    var(--color-foreground-primary) 82%,
+    var(--color-brand-primary)
+  );
+}
+
+dl.py > dd {
+  margin-left: 0;
+  padding: 1rem 0.8rem 0 1rem;
+  border-left: 1px solid color-mix(
+    in srgb,
+    var(--color-foreground-border) 72%,
+    transparent
+  );
+}
+
+/* Nested methods remain visible without competing with their parent class. */
+dl.py > dd dl.py {
+  margin: 1.5rem 0 1.8rem;
+}
+
+dl.py > dd dl.py > dt.sig {
+  padding: 0.45rem 0.65rem;
+  background: color-mix(
+    in srgb,
+    var(--color-brand-primary) 5%,
+    var(--color-background-secondary)
+  );
+  border-top-width: 1px;
+  border-left: 3px solid color-mix(
+    in srgb,
+    var(--color-brand-primary) 62%,
+    var(--color-foreground-border)
+  );
+}
+
+dl.py .field-list {
+  margin-top: 0.8rem;
+}
+
+dl.py .field-list > dt {
+  color: var(--color-foreground-secondary);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+dl.py .field-list > dd {
+  margin-bottom: 0.7rem;
+}
+
+dl.py .viewcode-link {
+  margin-left: 0.7rem;
+  font-size: 0.78em;
+  font-weight: 600;
+}
+
+@media (max-width: 46rem) {
+  dl.py > dt.sig {
+    padding: 0.55rem 0.6rem;
+    font-size: 0.9rem;
+  }
+
+  dl.py > dd {
+    padding-left: 0.65rem;
+  }
+}

@@ -24,11 +24,16 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.githubpages",
+    "nbsphinx",
+    "nbsphinx_link",
 ]
+
+nbsphinx_execute = "never"
+nbsphinx_allow_errors = False
 
 autosummary_generate = True
 autodoc_typehints = "description"
-autodoc_class_signature = "separated"
+autodoc_class_signature = "mixed"
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
 

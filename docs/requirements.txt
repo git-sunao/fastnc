@@ -1,2 +1,4 @@
 sphinx>=7.2
 furo>=2024.1.29
+nbsphinx>=0.9.5
+nbsphinx-link>=1.3.1
