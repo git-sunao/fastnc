@@ -214,12 +214,15 @@ def _pair_terms_3d(owner, pair, kind):
     )
 
 
-def _semi_analytic_pair23_terms_3d(owner):
-    r"""Return pair 23 split into powers of ``k1/k``.
+def _semi_analytic_pair23_terms_3d(owner, kind="tree"):
+    r"""Return one pair-23 SPT contribution split into powers of ``k1/k``.
 
     Writing ``x=k2/k``, ``y=k3/k``, and ``k^2=k2^2+k3^2``, direct expansion
-    of ``2 F2(k2,k3)`` gives contributions with ``p=0,2,4``. Each has
-    ``W(k1,z)=1`` and ``V=P_L(k2,z)P_L(k3,z)``.
+    of the tree and tidal kernels gives contributions with ``p=0,2,4``;
+    the quadratic-bias kernel has only ``p=0``. Each component has
+    ``W(k1,z)=1`` and ``V=P_L(k2,z)P_L(k3,z)``. Galaxy-bias coefficients
+    remain term weights and are therefore applied consistently by numeric,
+    projection, and semi-analytic calculators.
     """
 
     def v(k2, k3, z):
@@ -243,8 +246,36 @@ def _semi_analytic_pair23_terms_3d(owner):
         with np.errstate(divide="ignore", invalid="ignore"):
             return 1.0 / (7.0 * x**2 * y**2)
 
+    def quadratic_u0(x, y):
+        return np.ones(np.broadcast_shapes(np.shape(x), np.shape(y)))
+
+    def tidal_u0(x, y):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return 1.0 / (4.0 * x**2 * y**2) - 1.0 / 3.0
+
+    def tidal_u2(x, y):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return -1.0 / (2.0 * x**2 * y**2)
+
+    def tidal_u4(x, y):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return 1.0 / (4.0 * x**2 * y**2)
+
+    specifications = {
+        "tree": ("tree:F2", ((0.0, u0), (2.0, u2), (4.0, u4))),
+        "quadratic": ("bias:quadratic", ((0.0, quadratic_u0),)),
+        "tidal": (
+            "bias:tidal",
+            ((0.0, tidal_u0), (2.0, tidal_u2), (4.0, tidal_u4)),
+        ),
+    }
+    try:
+        prefix, components = specifications[kind]
+    except KeyError as exc:
+        raise ValueError("kind must be 'tree', 'quadratic', or 'tidal'") from exc
+
     terms = []
-    for power, u in ((0.0, u0), (2.0, u2), (4.0, u4)):
+    for power, u in components:
         expression = SemiAnalyticExpression3D(
             exponents=np.array([0.0]),
             coefficient_evaluator=lambda z: np.ones(np.shape(z) + (1,)),
@@ -263,7 +294,7 @@ def _semi_analytic_pair23_terms_3d(owner):
 
         terms.append(
             BispectrumTerm3D(
-                name=f"tree:F2:23:p{int(power)}",
+                name=f"{prefix}:23:p{int(power)}",
                 representations=(NumericExpression3D(numeric), expression),
             )
         )
@@ -307,7 +338,7 @@ class SPTMatterBispectrum3D(Bispectrum3D):
             raise TypeError("linear_power must be callable as linear_power(k, z)")
         self.linear_power = linear_power
         terms = [*_pair_terms_3d(self, "12", "tree")]
-        terms.extend(_semi_analytic_pair23_terms_3d(self))
+        terms.extend(_semi_analytic_pair23_terms_3d(self, "tree"))
         terms.extend(_pair_terms_3d(self, "31", "tree"))
         super().__init__(tuple(terms), support=support)
 
@@ -429,8 +460,10 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
         S_{ij}=\mu_{ij}^2-\frac13.
 
     Terms from pairs 12 and 31 expose every exact finite Slepian harmonic.
-    Pair-23 terms remain numeric-only because leg 1 cannot be the eliminated
-    constant leg of the current ZetaK convention.
+    Pair-23 terms are instead finite sums of Appendix-C semi-analytic
+    expressions in powers of :math:`k_1/\sqrt{k_2^2+k_3^2}`. Thus the hybrid
+    route assigns ``12|3`` and ``31|2`` to Slepian and ``23|1`` to the
+    semi-analytic calculator without changing the numeric reference formula.
     """
 
     def __init__(
@@ -452,14 +485,9 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
             WeightedTerm3D(self._tree_coefficient, term)
             for term in _pair_terms_3d(self, "12", "tree")
         ]
-        terms.append(
-            WeightedTerm3D(
-                self._tree_coefficient,
-                BispectrumTerm3D(
-                    name="tree:F2:23",
-                    representations=(NumericExpression3D(self._evaluate_tree_23),),
-                ),
-            )
+        terms.extend(
+            WeightedTerm3D(self._tree_coefficient, term)
+            for term in _semi_analytic_pair23_terms_3d(self, "tree")
         )
         terms.extend(
             WeightedTerm3D(self._tree_coefficient, term)
@@ -469,16 +497,9 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
             WeightedTerm3D(self._quadratic_coefficient, term)
             for term in _pair_terms_3d(self, "12", "quadratic")
         )
-        terms.append(
-            WeightedTerm3D(
-                self._quadratic_coefficient,
-                BispectrumTerm3D(
-                    name="bias:quadratic:23",
-                    representations=(
-                        NumericExpression3D(self._evaluate_quadratic_23),
-                    ),
-                ),
-            )
+        terms.extend(
+            WeightedTerm3D(self._quadratic_coefficient, term)
+            for term in _semi_analytic_pair23_terms_3d(self, "quadratic")
         )
         terms.extend(
             WeightedTerm3D(self._quadratic_coefficient, term)
@@ -488,14 +509,9 @@ class SPTGalaxyBispectrum3D(Bispectrum3D):
             WeightedTerm3D(self._tidal_coefficient, term)
             for term in _pair_terms_3d(self, "12", "tidal")
         )
-        terms.append(
-            WeightedTerm3D(
-                self._tidal_coefficient,
-                BispectrumTerm3D(
-                    name="bias:tidal:23",
-                    representations=(NumericExpression3D(self._evaluate_tidal_23),),
-                ),
-            )
+        terms.extend(
+            WeightedTerm3D(self._tidal_coefficient, term)
+            for term in _semi_analytic_pair23_terms_3d(self, "tidal")
         )
         terms.extend(
             WeightedTerm3D(self._tidal_coefficient, term)

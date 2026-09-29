@@ -243,18 +243,74 @@ class MigratedPhysicalModelTests(unittest.TestCase):
             + 2.0 * b1**2 * bK2 * tidal
         )
         np.testing.assert_allclose(model(k1, k2, k3, z), expected)
-        self.assertEqual(len(model.terms), 25)
-        numeric_only = {
-            "tree:F2:23",
-            "bias:quadratic:23",
-            "bias:tidal:23",
-        }
+        self.assertEqual(len(model.terms), 29)
         for term in model.terms:
-            if term.name in numeric_only:
+            if ":23:p" in term.name:
+                term.get_representation(SemiAnalyticExpression3D)
                 with self.assertRaises(LookupError):
                     term.get_representation(SlepianExpression3D)
             else:
                 term.get_representation(SlepianExpression3D)
+
+    def test_spt_galaxy_pair23_semi_analytic_components_match_numeric_pair(self):
+        model = SPTGalaxyBispectrum3D(
+            self.linear_power,
+            b1=lambda z: 1.4 + 0.2 * np.asarray(z),
+            b2=lambda z: 0.3 - 0.1 * np.asarray(z),
+            bK2=-0.25,
+        )
+        k1 = np.array([0.7, 0.9, 1.2])
+        k2 = np.array([0.8, 1.1, 1.4])
+        k3 = np.array([1.0, 1.3, 1.5])
+        z = np.array([0.2, 0.5, 0.8])
+        scale = np.sqrt(k2**2 + k3**2)
+
+        cases = (
+            (
+                "tree:F2:23:",
+                model._tree_coefficient(z)
+                * model._evaluate_tree_23(k1, k2, k3, z),
+            ),
+            (
+                "bias:quadratic:23:",
+                model._quadratic_coefficient(z)
+                * model._evaluate_quadratic_23(k1, k2, k3, z),
+            ),
+            (
+                "bias:tidal:23:",
+                model._tidal_coefficient(z)
+                * model._evaluate_tidal_23(k1, k2, k3, z),
+            ),
+        )
+        for prefix, expected in cases:
+            selected = tuple(
+                weighted
+                for weighted in model.iter_terms()
+                if weighted.term.name.startswith(prefix)
+            )
+            numeric = sum(
+                weighted.evaluate_numeric(k1, k2, k3, z)
+                for weighted in selected
+            )
+            reconstructed = 0.0j
+            for weighted in selected:
+                expression = weighted.term.get_representation(
+                    SemiAnalyticExpression3D
+                )
+                mellin = np.sum(
+                    expression.coefficients(z)
+                    * k1[..., None] ** expression.exponents,
+                    axis=-1,
+                )
+                reconstructed += (
+                    weighted.coefficient(z)
+                    * expression.evaluate_u(k2 / scale, k3 / scale)
+                    * expression.evaluate_v(k2, k3, z)
+                    * (k1 / scale) ** expression.power
+                    * mellin
+                )
+            np.testing.assert_allclose(numeric, expected, rtol=2.0e-14)
+            np.testing.assert_allclose(reconstructed, expected, rtol=2.0e-14)
 
     def test_one_halo_is_one_weighted_product_term(self):
         model = NFWOneHaloBispectrum3D(

@@ -17,6 +17,7 @@ from fastnc.bispectrum import (
     SlepianRadialFactor3D,
     SlepianRepresentation2D,
     SlepianRepresentation3D,
+    SPTGalaxyBispectrum3D,
     SPTMatterBispectrum3D,
 )
 from fastnc.projection import LOSProjector
@@ -265,6 +266,33 @@ class SlepianRouteTests(unittest.TestCase):
             np.testing.assert_array_equal(hybrid, expected)
             scale = max(np.max(np.abs(hybrid)), np.max(np.abs(numeric)))
             self.assertLess(np.max(np.abs(hybrid - numeric)) / scale, 2.0e-3)
+
+    def test_hybrid_spt_galaxy_plan_uses_structured_routes_for_every_term(self):
+        source = SPTGalaxyBispectrum3D(
+            lambda k, z: np.asarray(k) ** -0.75 / (1.0 + np.asarray(z)) ** 2,
+            b1=lambda z: 1.5 + 0.1 * np.asarray(z),
+            b2=0.4,
+            bK2=-0.2,
+        )
+        projected = LOSProjector.delta_like(z=0.5, chi=1000.0).project(source)
+        prediction = ThreePCF(
+            ThreePCFConfig(Lmax=4, kmax=1, n_ell=16),
+            projected,
+            theta=np.geomspace(3.0e-3, 2.0e-2, 2),
+            phi=np.array([0.5]),
+            route="hybrid",
+        )
+        plan = prediction.calculation_plan()
+
+        self.assertEqual(len(plan.assignments_for("slepian")), 22)
+        self.assertEqual(len(plan.assignments_for("semi_analytic")), 7)
+        self.assertFalse(plan.assignments_for("numeric"))
+        self.assertTrue(
+            all(":23:p" not in name for name in plan.term_names("slepian"))
+        )
+        self.assertTrue(
+            all(":23:p" in name for name in plan.term_names("semi_analytic"))
+        )
 
     def test_finite_width_spt_hybrid_zetak_and_zeta_match_numeric(self):
         def linear_power(k, z):
