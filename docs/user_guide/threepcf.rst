@@ -82,6 +82,23 @@ Calling only ``zeta`` is sufficient for ordinary use. Each earlier stage is
 constructed on demand and retained. Repeating an identical request does not
 rebuild its upstream tables.
 
+Warming an inference calculation
+--------------------------------
+
+Before an MCMC loop, reusable route resources can be constructed explicitly:
+
+.. code-block:: python
+
+   threepcf.warm_up(epsilons=((1, 1, 1),))
+
+``warm_up`` evaluates the complete pipeline once to populate coupling matrices
+and route-specific structural kernels. It then discards source-dependent
+multipoles, HKernel, ZetaK, and Zeta tables. The next call to ``zeta`` therefore
+performs a genuine physical prediction using warm structural resources; it is
+not an immediate return of the prediction evaluated during warm-up. This is
+the relevant setup for timing repeated cosmology or model-parameter updates on
+fixed numerical grids.
+
 Spin and projection
 -------------------
 

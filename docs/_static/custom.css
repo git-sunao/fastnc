@@ -1,0 +1,20 @@
+.architecture-flow {
+  margin: 1.5rem 0 2rem;
+  padding: 1rem;
+  overflow-x: auto;
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--color-foreground-border) 70%, transparent);
+  border-radius: 8px;
+}
+
+.architecture-flow img {
+  display: block;
+  min-width: 38rem;
+  margin: 0 auto;
+}
+
+.architecture-flow figcaption {
+  max-width: 52rem;
+  margin: 0.8rem auto 0;
+  color: #475569;
+}
