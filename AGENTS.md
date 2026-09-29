@@ -90,7 +90,8 @@ between exact Bh1 and an explicitly approximate fixed-shape Bh1 model, and
 retain stable grouped evaluation of squeezed cyclic Bh3 contributions.
 
 Before planning or starting new implementation work, read `dev/markdown-note/todo.md` and
-check whether the change resolves, depends on,
+`dev/markdown-note/quick-todo.md`. Move clarified quick-inbox items into the main TODO,
+remove migrated entries from the inbox, and check whether the change resolves, depends on,
 or must preserve a recorded deferred issue. Update the TODO when new evidence
 changes the scope or acceptance criteria of an item.
 
