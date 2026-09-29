@@ -9,12 +9,7 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from fastnc.bispectrum import (
-    Bispectrum2D,
-    NumericRepresentation2D,
-    SemiAnalyticRepresentation2D,
-    SlepianRepresentation2D,
-)
+from fastnc.bispectrum import Bispectrum2D
 from fastnc.coupling import CouplingCacheSession, CouplingMatrix
 from fastnc.coupling.cache import resolve_coupling_cache_file
 from fastnc.hankel import double_hankel_transform, make_fftlog_grid
@@ -25,6 +20,7 @@ from .config import ThreePCFConfig
 from .conventions import SpinSpec, as_effective_spin_triple
 from .conventions.projection import _projection_name
 from .numeric import contract_hkernel
+from .plan import CalculationPlan, build_calculation_plan
 from .slepian import SlepianCalculator
 from .semi_analytic import SemiAnalyticCalculator
 from .tables import (
@@ -95,6 +91,7 @@ class ThreePCF:
         self._numeric_source: Bispectrum2D | None = None
         self._semi_analytic_source: Bispectrum2D | None = None
         self._slepian_source: Bispectrum2D | None = None
+        self._calculation_plan: CalculationPlan | None = None
         self._hybrid_plan_ready = False
         self._slepian_calculator: SlepianCalculator | None = None
         self._semi_analytic_calculator: SemiAnalyticCalculator | None = None
@@ -150,6 +147,7 @@ class ThreePCF:
         self._numeric_source = None
         self._semi_analytic_source = None
         self._slepian_source = None
+        self._calculation_plan = None
         self._hybrid_plan_ready = False
         self._slepian_calculator = None
         self._semi_analytic_calculator = None
@@ -210,6 +208,7 @@ class ThreePCF:
         log(logger, logging.INFO, "bispectrum replaced; clearing source-dependent results")
         self._bispectrum = bispectrum
         self._bispectrum_state_token = self._source_state_token()
+        self._calculation_plan = None
         self._clear_source_results()
 
     def set_route(self, route: str) -> None:
@@ -220,6 +219,25 @@ class ThreePCF:
         log(logger, logging.INFO, "route changed from %s to %s", self._route, updated)
         self._route = updated
         self._clear_route_results()
+
+    def calculation_plan(self) -> CalculationPlan:
+        """Return the term-wise execution plan without running the calculation.
+
+        The returned plan is the same route assignment consumed by hybrid
+        execution. It can be printed directly in a terminal or rendered with
+        its optional Graphviz backend in a notebook.
+        """
+        if self._calculation_plan is None:
+            self._calculation_plan = build_calculation_plan(
+                self._bispectrum, self.route
+            )
+        return self._calculation_plan
+
+    def inspect(self, *, expand_terms: bool = True, file=None) -> CalculationPlan:
+        """Print the calculation plan and return its structured representation."""
+        plan = self.calculation_plan()
+        print(plan.to_text(expand_terms=expand_terms), file=file)
+        return plan
 
     def _cache_session(self) -> CouplingCacheSession | None:
         if not self.config.use_coupling_cache:
@@ -255,13 +273,6 @@ class ThreePCF:
             log(logger, logging.DEBUG, "coupling cache hit sigma=%s", sigma)
         return self._couplings[sigma]
 
-    @staticmethod
-    def _term_supports(term, representation_type) -> bool:
-        return any(
-            isinstance(representation, representation_type)
-            for representation in term.representations
-        )
-
     def _plan_hybrid_sources(
         self,
     ) -> tuple[Bispectrum2D | None, Bispectrum2D | None, Bispectrum2D | None]:
@@ -275,24 +286,10 @@ class ThreePCF:
                 self._numeric_source,
             )
 
-        slepian_names = []
-        semi_analytic_names = []
-        numeric_names = []
-        unsupported = []
-        for term in self._bispectrum.terms:
-            if self._term_supports(term, SlepianRepresentation2D):
-                slepian_names.append(term.name)
-            elif self._term_supports(term, SemiAnalyticRepresentation2D):
-                semi_analytic_names.append(term.name)
-            elif self._term_supports(term, NumericRepresentation2D):
-                numeric_names.append(term.name)
-            else:
-                unsupported.append(term.name)
-        if unsupported:
-            raise TypeError(
-                "hybrid route found terms with no supported representation: "
-                f"{unsupported}"
-            )
+        plan = self.calculation_plan()
+        slepian_names = list(plan.term_names("slepian"))
+        semi_analytic_names = list(plan.term_names("semi_analytic"))
+        numeric_names = list(plan.term_names("numeric"))
 
         self._slepian_source = (
             self._bispectrum.select_terms(*slepian_names)

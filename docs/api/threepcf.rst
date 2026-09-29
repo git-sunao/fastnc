@@ -1,6 +1,12 @@
 ThreePCF API
 ============
 
+.. autoclass:: fastnc.threepcf.CalculationPlan
+   :members:
+
+.. autoclass:: fastnc.threepcf.TermRouteAssignment
+   :members:
+
 .. autoclass:: fastnc.threepcf.ComponentModeKey
    :members:
 

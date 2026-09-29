@@ -8,6 +8,7 @@ from .bruteforce import (
     BruteForceX3PCF,
 )
 from .config import SlepianConfig, ThreePCFConfig
+from .plan import CalculationPlan, TermRouteAssignment
 from .semi_analytic import SemiAnalyticCalculator, SemiAnalyticConfig
 from .tables import (
     ComponentModeKey,
@@ -21,6 +22,7 @@ from .threepcf import ThreePCF
 
 __all__ = [
     "ComponentModeKey",
+    "CalculationPlan",
     "BruteForce3PCFAdaptiveTrial",
     "BruteForce3PCFConfig",
     "BruteForce3PCFResult",
@@ -29,6 +31,7 @@ __all__ = [
     "HKernelTable",
     "ThreePCF",
     "ThreePCFConfig",
+    "TermRouteAssignment",
     "SlepianConfig",
     "SemiAnalyticCalculator",
     "SemiAnalyticConfig",
